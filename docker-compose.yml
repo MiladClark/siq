@@ -1,0 +1,48 @@
+# Local development & self-hosting stack for siq.
+# Quick local services (with `pnpm dev` on host):
+#   docker compose up -d postgres livekit
+# Full containerized stack (VPS / self-host):
+#   docker compose --profile full up -d --build
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: siq
+      POSTGRES_PASSWORD: siq
+      POSTGRES_DB: siq
+    ports:
+      - "5432:5432"
+    volumes:
+      - siq_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siq -d siq"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --dev --bind 0.0.0.0
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    restart: unless-stopped
+
+  app:
+    profiles: ["full"]
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  siq_pgdata:

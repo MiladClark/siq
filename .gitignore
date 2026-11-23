@@ -3,20 +3,32 @@ node_modules/
 .pnp
 .pnp.*
 
-# Next.js
+# Next.js & build artifacts
 .next/
 out/
 build/
+*.tsbuildinfo
+next-env.d.ts
 
-# Environment
+# Environment & local secrets
 .env
 .env.local
 .env.*.local
 
-# Debug & OS
+# Local dev uploads & runtime state
+.local-uploads/
+public/uploads/
+.vercel/
+
+# Logs
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 pnpm-debug.log*
+*.log
+
+# OS & Editor files
 .DS_Store
-*.tsbuildinfo
-next-env.d.ts
-.vercel
+Thumbs.db
+.vscode/
+.idea/

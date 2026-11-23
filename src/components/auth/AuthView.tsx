@@ -149,8 +149,8 @@ export function AuthView({
         </div>
 
         <div className="flex items-center justify-between text-xs text-zinc-500">
-          <span className="font-mono">Phase 1 · Auth & Workspace Core</span>
-          <span className="font-mono">LTR + فارسی Ready</span>
+          <span className="font-mono">Private Voice · Screen Share · Chat</span>
+          <span className="font-mono">LTR + فارسی</span>
         </div>
       </section>
 

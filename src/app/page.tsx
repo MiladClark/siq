@@ -11,13 +11,16 @@ export default async function HomePage() {
     redirect("/login");
   }
 
-  const { channels, members } = await getWorkspaceInitialData();
+  const { channels, members, voiceOccupancy, capabilities } =
+    await getWorkspaceInitialData();
 
   return (
     <WorkspaceShell
       initialUser={user}
       initialChannels={channels}
       initialMembers={members}
+      initialVoiceOccupancy={voiceOccupancy}
+      initialCapabilities={capabilities}
     />
   );
 }
