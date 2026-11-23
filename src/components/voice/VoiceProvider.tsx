@@ -2,14 +2,17 @@
 
 import {
   ConnectionState,
+  LocalAudioTrack,
   LocalParticipant,
   Participant,
   RemoteAudioTrack,
   RemoteParticipant,
+  RemoteTrackPublication,
   Room,
   RoomEvent,
   Track,
   VideoPresets,
+  VideoQuality,
 } from "livekit-client";
 import {
   createContext,
@@ -22,15 +25,31 @@ import {
   useState,
 } from "react";
 import { RemoteAudioPlayer } from "@/components/voice/AudioRenderer";
+import {
+  createNoiseProcessor,
+  type NoiseCancellationMode,
+} from "@/lib/noise-processor";
+import {
+  DEFAULT_SCREEN_SHARE_CONFIG,
+  loadAppPreferences,
+  saveAppPreferences,
+  type ScreenShareConfig,
+} from "@/lib/preferences";
 import { playSound } from "@/lib/sounds";
 import {
   pickAvatarColor,
   type ChannelItem,
+  type PublicUser,
   type VoiceNetworkSample,
   type VoiceNetworkStats,
+  type VoiceParticipantSummary,
 } from "@/lib/types";
 
-export type ScreenSharePreset = "1080p60" | "1080p30" | "720p30";
+export interface JoinVoiceOptions {
+  watchIdentity?: string | null;
+  seedOccupants?: VoiceParticipantSummary[];
+  currentUser?: PublicUser;
+}
 
 export interface VoiceParticipantView {
   identity: string;
@@ -60,16 +79,24 @@ interface VoiceContextValue {
   activeChannel: ChannelItem | null;
   connectionState: ConnectionState;
   error: string | null;
+  notice: string | null;
   participants: VoiceParticipantView[];
   networkStats: VoiceNetworkStats;
   isMuted: boolean;
   isDeafened: boolean;
   isCameraOn: boolean;
   isScreenSharing: boolean;
-  screenPreset: ScreenSharePreset;
-  setScreenPreset: (preset: ScreenSharePreset) => void;
-  noiseSuppression: boolean;
-  toggleNoiseSuppression: () => Promise<void>;
+  screenShareConfig: ScreenShareConfig;
+  updateScreenShareConfig: (patch: Partial<ScreenShareConfig>) => void;
+  startScreenShare: (override?: Partial<ScreenShareConfig>) => Promise<boolean>;
+  stopScreenShare: () => Promise<void>;
+  noiseMode: NoiseCancellationMode;
+  activeNoiseEngine: NoiseCancellationMode;
+  setNoiseMode: (mode: NoiseCancellationMode) => Promise<void>;
+  echoCancellation: boolean;
+  setEchoCancellation: (enabled: boolean) => Promise<void>;
+  autoGainControl: boolean;
+  setAutoGainControl: (enabled: boolean) => Promise<void>;
   devices: MediaDevicesList;
   selectedAudioInput: string;
   selectedAudioOutput: string;
@@ -83,13 +110,15 @@ interface VoiceContextValue {
   toggleLocalMuteUser: (identity: string) => void;
   kickParticipant: (targetIdentity: string, roomName?: string) => Promise<void>;
   serverMuteParticipant: (targetIdentity: string, roomName?: string) => Promise<void>;
-  joinVoiceChannel: (channel: ChannelItem) => Promise<void>;
+  watchTargetIdentity: string | null;
+  setWatchTargetIdentity: (identity: string | null) => void;
+  joinVoiceChannel: (channel: ChannelItem, options?: JoinVoiceOptions) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => Promise<void>;
   toggleDeafen: () => Promise<void>;
   toggleCamera: () => Promise<void>;
-  toggleScreenShare: () => Promise<void>;
   clearError: () => void;
+  clearNotice: () => void;
 }
 
 const VOLUME_STORAGE_KEY = "siq_user_volumes_v1";
@@ -172,12 +201,10 @@ function buildParticipantView(
   };
 }
 
-/** Extract real WebRTC RTT (ms) and outbound packet loss (%) from LiveKit's internal engine */
 async function readLiveKitStats(
   room: Room
 ): Promise<{ pingMs: number | null; packetLossPct: number } | null> {
   try {
-    // Access LiveKit's internal pcManager (publisher & subscriber RTCPeerConnections)
     const engine = (
       room as unknown as {
         engine?: {
@@ -211,7 +238,11 @@ async function readLiveKitStats(
           rttSeconds = stat.currentRoundTripTime;
         }
         if (stat.type === "remote-inbound-rtp" && stat.kind === "audio") {
-          if (typeof stat.roundTripTime === "number" && stat.roundTripTime > 0 && rttSeconds === null) {
+          if (
+            typeof stat.roundTripTime === "number" &&
+            stat.roundTripTime > 0 &&
+            rttSeconds === null
+          ) {
             rttSeconds = stat.roundTripTime;
           }
           if (typeof stat.packetsLost === "number") {
@@ -237,6 +268,22 @@ async function readLiveKitStats(
   }
 }
 
+function getResolutionDimensions(res: ScreenShareConfig["resolution"]): {
+  width: number;
+  height: number;
+} | undefined {
+  switch (res) {
+    case "720p":
+      return { width: 1280, height: 720 };
+    case "1080p":
+      return { width: 1920, height: 1080 };
+    case "1440p":
+      return { width: 2560, height: 1440 };
+    case "source":
+      return undefined; // Native screen resolution
+  }
+}
+
 export function VoiceProvider({
   children,
   onOccupancyChanged,
@@ -245,25 +292,46 @@ export function VoiceProvider({
   onOccupancyChanged?: () => void;
 }) {
   const roomRef = useRef<Room | null>(null);
+  const switchingRef = useRef<boolean>(false);
   const preDeafenMutedRef = useRef<boolean>(false);
   const preLocalMuteVolumeRef = useRef<Record<string, number>>({});
   const serverHostRef = useRef<string>("");
+  const isLiveKitCloudRef = useRef<boolean>(false);
 
   const [activeChannel, setActiveChannel] = useState<ChannelItem | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [participants, setParticipants] = useState<VoiceParticipantView[]>([]);
   const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
   const [networkStats, setNetworkStats] = useState<VoiceNetworkStats>(EMPTY_NETWORK_STATS);
+  const [watchTargetIdentity, setWatchTargetIdentity] = useState<string | null>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [screenPreset, setScreenPreset] = useState<ScreenSharePreset>("1080p60");
-  const [noiseSuppression, setNoiseSuppression] = useState(true);
+
+  const [noiseMode, setNoiseModeState] = useState<NoiseCancellationMode>("krisp");
+  const [activeNoiseEngine, setActiveNoiseEngine] =
+    useState<NoiseCancellationMode>("krisp");
+  const [echoCancellation, setEchoCancellationState] = useState(true);
+  const [autoGainControl, setAutoGainControlState] = useState(true);
+  const [screenShareConfig, setScreenShareConfig] = useState<ScreenShareConfig>(
+    DEFAULT_SCREEN_SHARE_CONFIG
+  );
+
+  // Hydrate persisted audio/screen preferences on mount
+  useEffect(() => {
+    const prefs = loadAppPreferences();
+    setNoiseModeState(prefs.noiseMode);
+    setActiveNoiseEngine(prefs.noiseMode);
+    setEchoCancellationState(prefs.echoCancellation);
+    setAutoGainControlState(prefs.autoGainControl);
+    setScreenShareConfig(prefs.screenShareConfig);
+  }, []);
 
   const [devices, setDevices] = useState<MediaDevicesList>({
     audioInputs: [],
@@ -300,6 +368,17 @@ export function VoiceProvider({
     ];
 
     room.remoteParticipants.forEach((rp: RemoteParticipant) => {
+      // Ensure remote screen share tracks always subscribe at HIGH quality
+      const screenPub = rp.getTrackPublication(
+        Track.Source.ScreenShare
+      ) as RemoteTrackPublication | undefined;
+      if (screenPub && screenPub.isSubscribed) {
+        try {
+          screenPub.setVideoQuality(VideoQuality.HIGH);
+        } catch {
+          // ignore if track isn't simulcast
+        }
+      }
       list.push(buildParticipantView(rp, false, speakers));
     });
 
@@ -325,6 +404,116 @@ export function VoiceProvider({
     }
   }, []);
 
+  /** Attach or remove the active AI Noise Processor on the live microphone track */
+  const applyNoiseProcessorToCurrentMic = useCallback(
+    async (
+      targetMode: NoiseCancellationMode,
+      aec: boolean,
+      agc: boolean,
+      forceRepublishMic = false
+    ) => {
+      const room = roomRef.current;
+      if (!room || room.state !== ConnectionState.Connected) {
+        setActiveNoiseEngine(targetMode);
+        return;
+      }
+
+      const browserNoiseSuppression = targetMode === "standard";
+
+      if (forceRepublishMic && room.localParticipant.isMicrophoneEnabled) {
+        await room.localParticipant.setMicrophoneEnabled(false);
+        await room.localParticipant.setMicrophoneEnabled(true, {
+          autoGainControl: agc,
+          echoCancellation: aec,
+          noiseSuppression: browserNoiseSuppression,
+          deviceId: selectedAudioInput || undefined,
+        });
+      }
+
+      const micPub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const localTrack = micPub?.track as LocalAudioTrack | undefined;
+      if (!localTrack) {
+        setActiveNoiseEngine(targetMode);
+        return;
+      }
+
+      try {
+        await localTrack.stopProcessor();
+      } catch {
+        // ignore if no previous processor was running
+      }
+
+      if (targetMode === "off" || targetMode === "standard") {
+        setActiveNoiseEngine(targetMode);
+        return;
+      }
+
+      try {
+        const result = await createNoiseProcessor(
+          targetMode,
+          isLiveKitCloudRef.current
+        );
+        if (result.processor) {
+          await localTrack.setProcessor(result.processor);
+        }
+        setActiveNoiseEngine(result.effectiveMode);
+        if (result.notice) {
+          setNotice(result.notice);
+        }
+      } catch (err) {
+        console.warn("[noise-processor] fallback to standard:", err);
+        setActiveNoiseEngine("standard");
+        setNotice("AI noise filter unavailable on this browser; using standard suppression.");
+      }
+    },
+    [selectedAudioInput]
+  );
+
+  const setNoiseMode = useCallback(
+    async (mode: NoiseCancellationMode) => {
+      setNoiseModeState(mode);
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, noiseMode: mode });
+      setNotice(null);
+      await applyNoiseProcessorToCurrentMic(
+        mode,
+        echoCancellation,
+        autoGainControl,
+        mode === "standard" || mode === "off"
+      );
+    },
+    [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation]
+  );
+
+  const setEchoCancellation = useCallback(
+    async (enabled: boolean) => {
+      setEchoCancellationState(enabled);
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, echoCancellation: enabled });
+      await applyNoiseProcessorToCurrentMic(noiseMode, enabled, autoGainControl, true);
+    },
+    [applyNoiseProcessorToCurrentMic, autoGainControl, noiseMode]
+  );
+
+  const setAutoGainControl = useCallback(
+    async (enabled: boolean) => {
+      setAutoGainControlState(enabled);
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, autoGainControl: enabled });
+      await applyNoiseProcessorToCurrentMic(noiseMode, echoCancellation, enabled, true);
+    },
+    [applyNoiseProcessorToCurrentMic, echoCancellation, noiseMode]
+  );
+
+  const updateScreenShareConfig = useCallback((patch: Partial<ScreenShareConfig>) => {
+    setScreenShareConfig((prev) => {
+      const next = { ...prev, ...patch };
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, screenShareConfig: next });
+      return next;
+    });
+  }, []);
+
   const setUserVolume = useCallback((identity: string, volume: number) => {
     const clamped = Math.max(0, Math.min(2, Number(volume.toFixed(2))));
     setUserVolumes((prev) => {
@@ -332,7 +521,7 @@ export function VoiceProvider({
       try {
         window.localStorage.setItem(VOLUME_STORAGE_KEY, JSON.stringify(next));
       } catch {
-        // ignore storage quota errors
+        // ignore
       }
       return next;
     });
@@ -409,7 +598,7 @@ export function VoiceProvider({
     [activeChannel?.slug]
   );
 
-  // Sample live WebRTC ping & packet loss every 2 seconds while connected
+  // Live WebRTC ping + packet loss telemetry every 2s
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected) {
       setNetworkStats(EMPTY_NETWORK_STATS);
@@ -427,7 +616,6 @@ export function VoiceProvider({
       let pingMs = measured?.pingMs ?? null;
       const packetLossPct = measured?.packetLossPct ?? 0;
 
-      // Fallback lightweight HTTP ping measurement if WebRTC stats haven't warmed up yet
       if (pingMs === null) {
         try {
           const t0 = performance.now();
@@ -478,6 +666,7 @@ export function VoiceProvider({
     setParticipants([]);
     setActiveSpeakerIds(new Set());
     setNetworkStats(EMPTY_NETWORK_STATS);
+    setWatchTargetIdentity(null);
     setIsMuted(false);
     setIsDeafened(false);
     setIsCameraOn(false);
@@ -486,7 +675,11 @@ export function VoiceProvider({
   }, [onOccupancyChanged]);
 
   const joinVoiceChannel = useCallback(
-    async (channel: ChannelItem) => {
+    async (channel: ChannelItem, options?: JoinVoiceOptions) => {
+      if (options?.watchIdentity !== undefined) {
+        setWatchTargetIdentity(options.watchIdentity);
+      }
+
       if (
         activeChannel?.id === channel.id &&
         roomRef.current?.state === ConnectionState.Connected
@@ -495,13 +688,64 @@ export function VoiceProvider({
       }
 
       setError(null);
-      if (roomRef.current) {
-        await roomRef.current.disconnect();
-        roomRef.current = null;
+      setNotice(null);
+
+      // Build optimistic participants list immediately so existing people NEVER disappear
+      // and you smoothly append into the room with zero reload flicker.
+      const optimisticList: VoiceParticipantView[] = [];
+      if (options?.currentUser) {
+        optimisticList.push({
+          identity: options.currentUser.id,
+          name: options.currentUser.displayName,
+          username: options.currentUser.username,
+          avatarColor: options.currentUser.avatarColor,
+          avatarUrl: options.currentUser.avatarUrl,
+          role: options.currentUser.role,
+          isLocal: true,
+          isSpeaking: false,
+          isMuted: false,
+          isCameraOn: false,
+          isScreenSharing: false,
+          cameraTrack: null,
+          screenTrack: null,
+          screenAudioTrack: null,
+          micAudioTrack: null,
+        });
+      }
+      if (options?.seedOccupants) {
+        for (const occ of options.seedOccupants) {
+          if (optimisticList.some((p) => p.identity === occ.identity)) continue;
+          optimisticList.push({
+            identity: occ.identity,
+            name: occ.name,
+            username: occ.username,
+            avatarColor: occ.avatarColor,
+            avatarUrl: occ.avatarUrl ?? null,
+            isLocal: false,
+            isSpeaking: false,
+            isMuted: false,
+            isCameraOn: false,
+            isScreenSharing: Boolean(occ.isScreenSharing),
+            cameraTrack: null,
+            screenTrack: null,
+            screenAudioTrack: null,
+            micAudioTrack: null,
+          });
+        }
       }
 
+      switchingRef.current = true;
       setActiveChannel(channel);
       setConnectionState(ConnectionState.Connecting);
+      if (optimisticList.length > 0) {
+        setParticipants(optimisticList);
+      }
+
+      if (roomRef.current) {
+        const oldRoom = roomRef.current;
+        roomRef.current = null;
+        await oldRoom.disconnect();
+      }
       setNetworkStats(EMPTY_NETWORK_STATS);
 
       try {
@@ -512,41 +756,55 @@ export function VoiceProvider({
         });
         const data = await res.json();
         if (!res.ok) {
+          switchingRef.current = false;
           setError(data.error ?? "Could not connect to voice server.");
           setActiveChannel(null);
+          setParticipants([]);
           setConnectionState(ConnectionState.Disconnected);
           return;
         }
 
         try {
-          serverHostRef.current = new URL(data.url).host;
+          const parsedUrl = new URL(data.url);
+          serverHostRef.current = parsedUrl.host;
+          isLiveKitCloudRef.current = parsedUrl.host.endsWith(".livekit.cloud");
         } catch {
           serverHostRef.current = "livekit-edge";
+          isLiveKitCloudRef.current = false;
         }
 
         const room = new Room({
-          adaptiveStream: true,
+          adaptiveStream: false,
           dynacast: true,
           audioCaptureDefaults: {
-            autoGainControl: true,
-            echoCancellation: true,
-            noiseSuppression,
+            autoGainControl,
+            echoCancellation,
+            noiseSuppression: noiseMode === "standard",
             deviceId: selectedAudioInput || undefined,
           },
           videoCaptureDefaults: {
             resolution: VideoPresets.h720.resolution,
             deviceId: selectedVideoInput || undefined,
           },
+          publishDefaults: {
+            simulcast: false,
+            videoCodec: "vp9",
+            screenShareSimulcastLayers: [],
+          },
         });
 
         roomRef.current = room;
+        switchingRef.current = false;
 
         const handleRoomUpdate = () => syncParticipants();
 
         room
           .on(RoomEvent.ConnectionStateChanged, (state) => {
+            if (roomRef.current !== room) return;
             setConnectionState(state);
-            syncParticipants();
+            if (state === ConnectionState.Connected) {
+              syncParticipants();
+            }
           })
           .on(RoomEvent.ParticipantConnected, () => {
             playSound("peer-join");
@@ -571,13 +829,14 @@ export function VoiceProvider({
             syncParticipants();
           })
           .on(RoomEvent.Disconnected, () => {
-            if (roomRef.current === room) {
+            if (roomRef.current === room && !switchingRef.current) {
               roomRef.current = null;
               playSound("leave");
               setActiveChannel(null);
               setConnectionState(ConnectionState.Disconnected);
               setParticipants([]);
               setNetworkStats(EMPTY_NETWORK_STATS);
+              setWatchTargetIdentity(null);
               setIsCameraOn(false);
               setIsScreenSharing(false);
               onOccupancyChanged?.();
@@ -589,11 +848,17 @@ export function VoiceProvider({
 
         try {
           await room.localParticipant.setMicrophoneEnabled(true, {
-            autoGainControl: true,
-            echoCancellation: true,
-            noiseSuppression,
+            autoGainControl,
+            echoCancellation,
+            noiseSuppression: noiseMode === "standard",
             deviceId: selectedAudioInput || undefined,
           });
+          await applyNoiseProcessorToCurrentMic(
+            noiseMode,
+            echoCancellation,
+            autoGainControl,
+            false
+          );
         } catch {
           setError("Microphone permission denied. Connected in listen-only mode.");
         }
@@ -602,6 +867,7 @@ export function VoiceProvider({
         syncParticipants();
         onOccupancyChanged?.();
       } catch (err) {
+        switchingRef.current = false;
         const msg = err instanceof Error ? err.message : "Failed to join voice channel.";
         setError(msg);
         if (roomRef.current) {
@@ -609,12 +875,16 @@ export function VoiceProvider({
           roomRef.current = null;
         }
         setActiveChannel(null);
+        setParticipants([]);
         setConnectionState(ConnectionState.Disconnected);
       }
     },
     [
       activeChannel?.id,
-      noiseSuppression,
+      applyNoiseProcessorToCurrentMic,
+      autoGainControl,
+      echoCancellation,
+      noiseMode,
       onOccupancyChanged,
       refreshDevices,
       selectedAudioInput,
@@ -632,17 +902,33 @@ export function VoiceProvider({
     }
     try {
       await room.localParticipant.setMicrophoneEnabled(nextEnabled, {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression,
+        autoGainControl,
+        echoCancellation,
+        noiseSuppression: noiseMode === "standard",
         deviceId: selectedAudioInput || undefined,
       });
+      if (nextEnabled) {
+        await applyNoiseProcessorToCurrentMic(
+          noiseMode,
+          echoCancellation,
+          autoGainControl,
+          false
+        );
+      }
       playSound(nextEnabled ? "unmute" : "mute");
       syncParticipants();
     } catch {
       setError("Could not access microphone.");
     }
-  }, [isDeafened, noiseSuppression, selectedAudioInput, syncParticipants]);
+  }, [
+    applyNoiseProcessorToCurrentMic,
+    autoGainControl,
+    echoCancellation,
+    isDeafened,
+    noiseMode,
+    selectedAudioInput,
+    syncParticipants,
+  ]);
 
   const toggleDeafen = useCallback(async () => {
     const room = roomRef.current;
@@ -680,62 +966,74 @@ export function VoiceProvider({
     }
   }, [selectedVideoInput, syncParticipants]);
 
-  const toggleScreenShare = useCallback(async () => {
-    const room = roomRef.current;
-    if (!room) return;
-    const nextEnabled = !room.localParticipant.isScreenShareEnabled;
-    try {
-      if (nextEnabled) {
-        const presetConfig =
-          screenPreset === "1080p60"
-            ? { width: 1920, height: 1080, frameRate: 60 }
-            : screenPreset === "1080p30"
-              ? { width: 1920, height: 1080, frameRate: 30 }
-              : { width: 1280, height: 720, frameRate: 30 };
+  /** Start or seamlessly restart (change source / quality) screen share without dropping voice */
+  const startScreenShare = useCallback(
+    async (override?: Partial<ScreenShareConfig>): Promise<boolean> => {
+      const room = roomRef.current;
+      if (!room) return false;
+
+      const cfg: ScreenShareConfig = { ...screenShareConfig, ...(override ?? {}) };
+      updateScreenShareConfig(cfg);
+
+      try {
+        // If already sharing, disable previous track cleanly first so browser re-prompts for source/settings
+        if (room.localParticipant.isScreenShareEnabled) {
+          await room.localParticipant.setScreenShareEnabled(false);
+        }
+
+        const dims = getResolutionDimensions(cfg.resolution);
+        const resolution = dims
+          ? { width: dims.width, height: dims.height, frameRate: cfg.fps }
+          : undefined;
 
         await room.localParticipant.setScreenShareEnabled(
           true,
           {
-            audio: true,
-            resolution: presetConfig,
-            contentHint: screenPreset === "1080p60" ? "motion" : "detail",
+            audio: cfg.shareAudio,
+            resolution,
+            contentHint: cfg.mode,
+            selfBrowserSurface: "exclude",
+            systemAudio: cfg.shareAudio ? "include" : "exclude",
+            suppressLocalAudioPlayback: true,
           },
           {
+            simulcast: false,
+            videoCodec: cfg.codec,
+            degradationPreference:
+              cfg.mode === "detail" ? "maintain-resolution" : "maintain-framerate",
             screenShareEncoding: {
-              maxBitrate: screenPreset === "1080p60" ? 5_000_000 : 3_000_000,
-              maxFramerate: presetConfig.frameRate,
+              maxBitrate: cfg.bitrateMbps * 1_000_000,
+              maxFramerate: cfg.fps,
             },
           }
         );
-        playSound("stream-start");
-      } else {
-        await room.localParticipant.setScreenShareEnabled(false);
-        playSound("stream-stop");
-      }
-      syncParticipants();
-    } catch (err) {
-      if (err instanceof Error && err.name === "NotAllowedError") {
-        return;
-      }
-      setError("Could not start screen sharing.");
-    }
-  }, [screenPreset, syncParticipants]);
 
-  const toggleNoiseSuppression = useCallback(async () => {
-    const next = !noiseSuppression;
-    setNoiseSuppression(next);
+        playSound("stream-start");
+        setWatchTargetIdentity(room.localParticipant.identity);
+        syncParticipants();
+        onOccupancyChanged?.();
+        return true;
+      } catch (err) {
+        if (err instanceof Error && err.name === "NotAllowedError") {
+          return false;
+        }
+        setError("Could not start screen sharing.");
+        return false;
+      }
+    },
+    [onOccupancyChanged, screenShareConfig, syncParticipants, updateScreenShareConfig]
+  );
+
+  const stopScreenShare = useCallback(async () => {
     const room = roomRef.current;
-    if (room && room.localParticipant.isMicrophoneEnabled) {
-      await room.localParticipant.setMicrophoneEnabled(false);
-      await room.localParticipant.setMicrophoneEnabled(true, {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: next,
-        deviceId: selectedAudioInput || undefined,
-      });
+    if (!room) return;
+    if (room.localParticipant.isScreenShareEnabled) {
+      await room.localParticipant.setScreenShareEnabled(false);
+      playSound("stream-stop");
       syncParticipants();
+      onOccupancyChanged?.();
     }
-  }, [noiseSuppression, selectedAudioInput, syncParticipants]);
+  }, [onOccupancyChanged, syncParticipants]);
 
   const setAudioInput = useCallback(async (deviceId: string) => {
     setSelectedAudioInput(deviceId);
@@ -770,16 +1068,24 @@ export function VoiceProvider({
       activeChannel,
       connectionState,
       error,
+      notice,
       participants,
       networkStats,
       isMuted,
       isDeafened,
       isCameraOn,
       isScreenSharing,
-      screenPreset,
-      setScreenPreset,
-      noiseSuppression,
-      toggleNoiseSuppression,
+      screenShareConfig,
+      updateScreenShareConfig,
+      startScreenShare,
+      stopScreenShare,
+      noiseMode,
+      activeNoiseEngine,
+      setNoiseMode,
+      echoCancellation,
+      setEchoCancellation,
+      autoGainControl,
+      setAutoGainControl,
       devices,
       selectedAudioInput,
       selectedAudioOutput,
@@ -793,27 +1099,38 @@ export function VoiceProvider({
       toggleLocalMuteUser,
       kickParticipant,
       serverMuteParticipant,
+      watchTargetIdentity,
+      setWatchTargetIdentity,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
       toggleCamera,
-      toggleScreenShare,
       clearError: () => setError(null),
+      clearNotice: () => setNotice(null),
     }),
     [
       activeChannel,
       connectionState,
       error,
+      notice,
       participants,
       networkStats,
       isMuted,
       isDeafened,
       isCameraOn,
       isScreenSharing,
-      screenPreset,
-      noiseSuppression,
-      toggleNoiseSuppression,
+      screenShareConfig,
+      updateScreenShareConfig,
+      startScreenShare,
+      stopScreenShare,
+      noiseMode,
+      activeNoiseEngine,
+      setNoiseMode,
+      echoCancellation,
+      setEchoCancellation,
+      autoGainControl,
+      setAutoGainControl,
       devices,
       selectedAudioInput,
       selectedAudioOutput,
@@ -827,12 +1144,12 @@ export function VoiceProvider({
       toggleLocalMuteUser,
       kickParticipant,
       serverMuteParticipant,
+      watchTargetIdentity,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
       toggleCamera,
-      toggleScreenShare,
     ]
   );
 

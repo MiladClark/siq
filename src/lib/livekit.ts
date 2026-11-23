@@ -30,6 +30,7 @@ export async function createLiveKitRoomToken(params: {
   username: string;
   avatarColor: string;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   role: "admin" | "member";
 }): Promise<string> {
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
@@ -45,6 +46,7 @@ export async function createLiveKitRoomToken(params: {
       username: params.username,
       avatarColor: params.avatarColor,
       avatarUrl: params.avatarUrl,
+      bannerUrl: params.bannerUrl,
       role: params.role,
     }),
     ttl: "6h",
@@ -93,12 +95,16 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
               // ignore malformed metadata
             }
           }
+          const isScreenSharing = (p.tracks ?? []).some(
+            (t) => t.source === 3 && !t.muted // TrackSource.SCREEN_SHARE = 3
+          );
           return {
             identity: p.identity,
             name: p.name || username || "Member",
             username,
             avatarColor,
             avatarUrl,
+            isScreenSharing,
           };
         });
       })

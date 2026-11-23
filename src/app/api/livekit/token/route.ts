@@ -49,6 +49,7 @@ export async function POST(request: Request) {
       username: user.username,
       avatarColor: user.avatarColor,
       avatarUrl: user.avatarUrl,
+      bannerUrl: user.bannerUrl,
       role: user.role,
     });
 
