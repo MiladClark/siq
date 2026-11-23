@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --color-canvas: #09090b;
+  --color-rail: #0e0f12;
+  --color-surface: #121316;
+  --color-elevated: #18191e;
+  --color-accent: #10b981;
+  --color-accent-hover: #059669;
+  --color-danger: #f43f5e;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: #09090b;
+  color: #f4f4f5;
+  font-family: var(--font-geist-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle custom scrollbars for matte dark workspace */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Subtle architectural dot/hairline grid for auth backdrop */
+.siq-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
