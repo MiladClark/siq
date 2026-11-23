@@ -4,9 +4,14 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { users } from "@/db/schema";
-import { AVATAR_PALETTE, pickAvatarColor, type PublicUser } from "@/lib/types";
+import {
+  AVATAR_PALETTE,
+  pickAvatarColor,
+  type PrivateUser,
+  type PublicUser,
+} from "@/lib/types";
 
-export { AVATAR_PALETTE, pickAvatarColor, type PublicUser };
+export { AVATAR_PALETTE, pickAvatarColor, type PrivateUser, type PublicUser };
 
 export const SESSION_COOKIE_NAME = "siq_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -87,6 +92,7 @@ export async function clearSessionCookie(): Promise<void> {
   });
 }
 
+/** Public serializer: strictly strips email so no user can see another user's email. */
 export function serializeUser(row: typeof users.$inferSelect): PublicUser {
   return {
     id: row.id,
@@ -100,7 +106,15 @@ export function serializeUser(row: typeof users.$inferSelect): PublicUser {
   };
 }
 
-export async function getCurrentUser(): Promise<PublicUser | null> {
+/** Private serializer: ONLY for the currently authenticated user's own session/settings. */
+export function serializePrivateUser(row: typeof users.$inferSelect): PrivateUser {
+  return {
+    ...serializeUser(row),
+    email: row.email ?? null,
+  };
+}
+
+export async function getCurrentUser(): Promise<PrivateUser | null> {
   if (!isDatabaseConfigured()) {
     return null;
   }
@@ -122,7 +136,7 @@ export async function getCurrentUser(): Promise<PublicUser | null> {
     if (!user) {
       return null;
     }
-    return serializeUser(user);
+    return serializePrivateUser(user);
   } catch {
     return null;
   }

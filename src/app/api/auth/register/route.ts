@@ -1,4 +1,4 @@
-import { count, eq, sql } from "drizzle-orm";
+import { count, eq, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { channels, inviteCodes, users } from "@/db/schema";
@@ -6,7 +6,7 @@ import {
   createSessionToken,
   hashPassword,
   pickAvatarColor,
-  serializeUser,
+  serializePrivateUser,
   setSessionCookie,
 } from "@/lib/auth";
 import { registerSchema } from "@/lib/validators";
@@ -58,18 +58,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: firstIssue }, { status: 400 });
     }
 
-    const { username, displayName, password, inviteCode } = parsed.data;
+    const { username, email, displayName, password, inviteCode } = parsed.data;
     const db = getDb();
 
     const [existing] = await db
-      .select({ id: users.id })
+      .select({ id: users.id, username: users.username, email: users.email })
       .from(users)
-      .where(eq(users.username, username))
+      .where(or(eq(users.username, username), eq(users.email, email)))
       .limit(1);
 
     if (existing) {
+      if (existing.username === username) {
+        return NextResponse.json(
+          { error: "That username is already taken." },
+          { status: 409 }
+        );
+      }
       return NextResponse.json(
-        { error: "That username is already taken." },
+        { error: "An account with that email already exists." },
         { status: 409 }
       );
     }
@@ -126,6 +132,7 @@ export async function POST(request: Request) {
       .insert(users)
       .values({
         username,
+        email,
         displayName,
         passwordHash,
         avatarColor,
@@ -159,7 +166,7 @@ export async function POST(request: Request) {
     });
     await setSessionCookie(token);
 
-    return NextResponse.json({ user: serializeUser(createdUser) }, { status: 201 });
+    return NextResponse.json({ user: serializePrivateUser(createdUser) }, { status: 201 });
   } catch (error) {
     console.error("[auth/register]", error);
     return NextResponse.json(

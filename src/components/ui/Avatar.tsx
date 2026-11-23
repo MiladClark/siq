@@ -3,14 +3,26 @@
 interface AvatarProps {
   name: string;
   color: string;
-  size?: "sm" | "md" | "lg";
+  avatarUrl?: string | null;
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
   online?: boolean;
+  ringClassName?: string;
 }
 
 const SIZE_CLASSES = {
+  xs: "h-5 w-5 text-[9px]",
   sm: "h-7 w-7 text-[11px]",
   md: "h-8 w-8 text-xs",
   lg: "h-12 w-12 text-base",
+  xl: "h-16 w-16 text-xl",
+} as const;
+
+const DOT_CLASSES = {
+  xs: "h-2 w-2",
+  sm: "h-2.5 w-2.5",
+  md: "h-2.5 w-2.5",
+  lg: "h-3.5 w-3.5",
+  xl: "h-4 w-4",
 } as const;
 
 function getInitials(name: string): string {
@@ -23,19 +35,36 @@ function getInitials(name: string): string {
   return trimmed.slice(0, 2).toUpperCase();
 }
 
-export function Avatar({ name, color, size = "md", online }: AvatarProps) {
+export function Avatar({
+  name,
+  color,
+  avatarUrl,
+  size = "md",
+  online,
+  ringClassName = "ring-[#0E0F12]",
+}: AvatarProps) {
   return (
     <div className="relative inline-flex shrink-0">
-      <div
-        className={`${SIZE_CLASSES[size]} flex items-center justify-center rounded-full font-semibold tracking-tight text-zinc-950 select-none`}
-        style={{ backgroundColor: color }}
-        aria-hidden="true"
-      >
-        {getInitials(name)}
-      </div>
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={avatarUrl}
+          alt={name}
+          className={`${SIZE_CLASSES[size]} rounded-full object-cover select-none`}
+          style={{ backgroundColor: color }}
+        />
+      ) : (
+        <div
+          className={`${SIZE_CLASSES[size]} flex items-center justify-center rounded-full font-semibold tracking-tight text-zinc-950 select-none`}
+          style={{ backgroundColor: color }}
+          aria-hidden="true"
+        >
+          {getInitials(name)}
+        </div>
+      )}
       {online !== undefined && (
         <span
-          className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#0E0F12] ${
+          className={`absolute -bottom-0.5 -right-0.5 ${DOT_CLASSES[size]} rounded-full ring-2 ${ringClassName} ${
             online ? "bg-emerald-400" : "bg-zinc-600"
           }`}
           title={online ? "Online" : "Offline"}

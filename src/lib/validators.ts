@@ -8,6 +8,13 @@ export const usernameSchema = z
   .max(24, "Username must be at most 24 characters.")
   .regex(/^[a-z0-9_-]+$/, "Use lowercase letters, numbers, underscores, or hyphens.");
 
+export const emailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .email("Please enter a valid email address.")
+  .max(255, "Email is too long.");
+
 export const displayNameSchema = z
   .string()
   .trim()
@@ -21,21 +28,37 @@ export const passwordSchema = z
 
 export const registerSchema = z.object({
   username: usernameSchema,
+  email: emailSchema,
   displayName: displayNameSchema,
   password: passwordSchema,
   inviteCode: z.string().trim().max(32).optional().default(""),
 });
 
 export const loginSchema = z.object({
-  username: z.string().trim().toLowerCase().min(1, "Username is required."),
+  identifier: z.string().trim().toLowerCase().min(1, "Username or email is required.").optional(),
+  username: z.string().trim().toLowerCase().optional(),
   password: z.string().min(1, "Password is required."),
+}).refine((d) => Boolean((d.identifier || d.username)?.trim()), {
+  message: "Username or email is required.",
 });
 
 export const updateProfileSchema = z.object({
   displayName: displayNameSchema.optional(),
+  email: emailSchema.optional(),
   avatarColor: z
     .string()
     .regex(/^#[0-9A-Fa-f]{6}$/, "Invalid color hex.")
+    .optional(),
+  avatarUrl: z
+    .string()
+    .refine(
+      (val) =>
+        val.startsWith("/api/uploads/") ||
+        val.startsWith("https://") ||
+        val.startsWith("http://"),
+      "Invalid avatar URL."
+    )
+    .nullable()
     .optional(),
 });
 

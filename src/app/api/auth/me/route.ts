@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { users } from "@/db/schema";
-import { getCurrentUser, serializeUser } from "@/lib/auth";
+import { getCurrentUser, serializePrivateUser } from "@/lib/auth";
 import { updateProfileSchema } from "@/lib/validators";
 
 export async function GET() {
@@ -33,24 +33,43 @@ export async function PATCH(request: Request) {
       );
     }
 
+    const db = getDb();
     const updates: Partial<typeof users.$inferInsert> = {
       lastSeenAt: new Date(),
     };
+
     if (parsed.data.displayName !== undefined) {
       updates.displayName = parsed.data.displayName;
     }
     if (parsed.data.avatarColor !== undefined) {
       updates.avatarColor = parsed.data.avatarColor;
     }
+    if (parsed.data.avatarUrl !== undefined) {
+      updates.avatarUrl = parsed.data.avatarUrl;
+    }
+    if (parsed.data.email !== undefined) {
+      const [conflict] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.email, parsed.data.email), ne(users.id, user.id)))
+        .limit(1);
 
-    const db = getDb();
+      if (conflict) {
+        return NextResponse.json(
+          { error: "That email is already registered to another account." },
+          { status: 409 }
+        );
+      }
+      updates.email = parsed.data.email;
+    }
+
     const [updated] = await db
       .update(users)
       .set(updates)
       .where(eq(users.id, user.id))
       .returning();
 
-    return NextResponse.json({ user: serializeUser(updated) });
+    return NextResponse.json({ user: serializePrivateUser(updated) });
   } catch (error) {
     console.error("[auth/me PATCH]", error);
     return NextResponse.json({ error: "Failed to update profile." }, { status: 500 });

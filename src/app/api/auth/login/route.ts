@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { users } from "@/db/schema";
 import {
   createSessionToken,
-  serializeUser,
+  serializePrivateUser,
   setSessionCookie,
   verifyPassword,
 } from "@/lib/auth";
@@ -28,18 +28,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const { username, password } = parsed.data;
+    const identifier = (parsed.data.identifier || parsed.data.username || "").trim().toLowerCase();
+    const { password } = parsed.data;
     const db = getDb();
 
     const [user] = await db
       .select()
       .from(users)
-      .where(eq(users.username, username))
+      .where(or(eq(users.username, identifier), eq(users.email, identifier)))
       .limit(1);
 
     if (!user) {
       return NextResponse.json(
-        { error: "Incorrect username or password." },
+        { error: "Incorrect username/email or password." },
         { status: 401 }
       );
     }
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
     const valid = await verifyPassword(password, user.passwordHash);
     if (!valid) {
       return NextResponse.json(
-        { error: "Incorrect username or password." },
+        { error: "Incorrect username/email or password." },
         { status: 401 }
       );
     }
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     });
     await setSessionCookie(token);
 
-    return NextResponse.json({ user: serializeUser(updated) });
+    return NextResponse.json({ user: serializePrivateUser(updated) });
   } catch (error) {
     console.error("[auth/login]", error);
     return NextResponse.json(

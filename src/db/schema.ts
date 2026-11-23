@@ -20,6 +20,7 @@ export interface MessageAttachment {
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   username: varchar("username", { length: 32 }).notNull().unique(),
+  email: varchar("email", { length: 255 }).unique(),
   displayName: varchar("display_name", { length: 64 }).notNull(),
   passwordHash: text("password_hash").notNull(),
   avatarColor: varchar("avatar_color", { length: 16 }).notNull().default("#10B981"),

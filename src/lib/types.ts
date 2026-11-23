@@ -1,3 +1,4 @@
+/** Public profile visible to all workspace members — NEVER includes email. */
 export interface PublicUser {
   id: string;
   username: string;
@@ -7,6 +8,11 @@ export interface PublicUser {
   role: "admin" | "member";
   lastSeenAt: string;
   createdAt: string;
+}
+
+/** Private profile visible ONLY to the authenticated user themselves. */
+export interface PrivateUser extends PublicUser {
+  email: string | null;
 }
 
 export interface ChannelItem {
@@ -47,6 +53,7 @@ export interface MessageItem {
     username: string;
     displayName: string;
     avatarColor: string;
+    avatarUrl: string | null;
     role: "admin" | "member";
   };
 }
@@ -56,9 +63,38 @@ export interface VoiceParticipantSummary {
   name: string;
   username?: string;
   avatarColor: string;
+  avatarUrl?: string | null;
 }
 
 export type VoiceOccupancyMap = Record<string, VoiceParticipantSummary[]>;
+
+export interface NotificationItem {
+  id: string;
+  channelId: string;
+  channelName: string;
+  authorId: string;
+  authorDisplayName: string;
+  authorAvatarColor: string;
+  authorAvatarUrl: string | null;
+  content: string;
+  hasAttachments: boolean;
+  createdAt: string;
+  read: boolean;
+}
+
+export interface VoiceNetworkSample {
+  timestamp: number;
+  pingMs: number;
+}
+
+export interface VoiceNetworkStats {
+  lastPingMs: number | null;
+  avgPingMs: number | null;
+  packetLossPct: number;
+  history: VoiceNetworkSample[];
+  serverHost: string;
+  encrypted: boolean;
+}
 
 export const AVATAR_PALETTE = [
   "#10B981", // Emerald
