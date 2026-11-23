@@ -25,6 +25,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   avatarColor: varchar("avatar_color", { length: 16 }).notNull().default("#10B981"),
   avatarUrl: text("avatar_url"),
+  bannerUrl: text("banner_url"),
   role: varchar("role", { length: 16 }).$type<"admin" | "member">().notNull().default("member"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -60,6 +60,17 @@ export const updateProfileSchema = z.object({
     )
     .nullable()
     .optional(),
+  bannerUrl: z
+    .string()
+    .refine(
+      (val) =>
+        val.startsWith("/api/uploads/") ||
+        val.startsWith("https://") ||
+        val.startsWith("http://"),
+      "Invalid banner URL."
+    )
+    .nullable()
+    .optional(),
 });
 
 export const createInviteSchema = z.object({

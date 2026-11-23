@@ -15,6 +15,7 @@ async function hydrateMessages(
       displayName: string;
       avatarColor: string;
       avatarUrl: string | null;
+      bannerUrl: string | null;
       role: "admin" | "member";
     };
   }>
@@ -99,6 +100,7 @@ export async function GET(
             displayName: users.displayName,
             avatarColor: users.avatarColor,
             avatarUrl: users.avatarUrl,
+            bannerUrl: users.bannerUrl,
             role: users.role,
           },
         })
@@ -121,6 +123,7 @@ export async function GET(
           displayName: users.displayName,
           avatarColor: users.avatarColor,
           avatarUrl: users.avatarUrl,
+          bannerUrl: users.bannerUrl,
           role: users.role,
         },
       })
@@ -199,6 +202,7 @@ export async function POST(
           displayName: user.displayName,
           avatarColor: user.avatarColor,
           avatarUrl: user.avatarUrl,
+          bannerUrl: user.bannerUrl,
           role: user.role,
         },
       },

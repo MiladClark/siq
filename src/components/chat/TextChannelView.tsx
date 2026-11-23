@@ -37,6 +37,8 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
+import { convertImageFileToWebP } from "@/lib/image-webp";
+import type { MessageDensity, TextScale } from "@/lib/preferences";
 import { playSound } from "@/lib/sounds";
 import type {
   ChannelItem,
@@ -49,6 +51,8 @@ interface TextChannelViewProps {
   channel: ChannelItem;
   currentUser: PublicUser;
   blobReady: boolean;
+  density?: MessageDensity;
+  textScale?: TextScale;
   onOpenUserProfile: (target: ProfilePopoverTarget) => void;
 }
 
@@ -222,9 +226,17 @@ export function TextChannelView({
   channel,
   currentUser,
   blobReady,
+  density = "comfortable",
+  textScale = "md",
   onOpenUserProfile,
 }: TextChannelViewProps) {
   const { openMenu } = useContextMenu();
+  const textSizeClass =
+    textScale === "sm"
+      ? "text-[13px]"
+      : textScale === "lg"
+        ? "text-[15.5px]"
+        : "text-sm";
 
   const cachedInitial = channelMessageCache.get(channel.id);
   const [messages, setMessages] = useState<MessageItem[]>(cachedInitial ?? []);
@@ -389,8 +401,10 @@ export function TextChannelView({
     setError(null);
     setUploadingCount((c) => c + fileArray.length);
 
-    for (const file of fileArray) {
+    for (const rawFile of fileArray) {
       try {
+        // Automatically compress/convert static images (JPG/PNG) to lightweight WebP before upload
+        const file = await convertImageFileToWebP(rawFile);
         const formData = new FormData();
         formData.append("file", file);
 
@@ -405,7 +419,7 @@ export function TextChannelView({
           setPendingAttachments((prev) => [...prev, data.attachment]);
         }
       } catch {
-        setError(`Network error uploading ${file.name}.`);
+        setError(`Network error uploading ${rawFile.name}.`);
       } finally {
         setUploadingCount((c) => Math.max(0, c - 1));
       }
@@ -718,8 +732,14 @@ export function TextChannelView({
 
                 <article
                   onContextMenu={(e) => handleMessageContextMenu(e, msg, canDelete)}
-                  className={`group relative flex gap-3 rounded-lg px-2 py-1 transition-colors hover:bg-white/[0.025] ${
-                    isGrouped ? "mt-0" : "mt-2.5 pt-1.5"
+                  className={`group relative flex gap-3 rounded-lg px-2 transition-colors hover:bg-white/[0.025] ${
+                    density === "compact"
+                      ? isGrouped
+                        ? "mt-0 py-0.5"
+                        : "mt-1.5 py-0.5"
+                      : isGrouped
+                        ? "mt-0 py-1"
+                        : "mt-2.5 py-1 pt-1.5"
                   }`}
                 >
                   {/* Hover Actions */}
@@ -809,7 +829,7 @@ export function TextChannelView({
                     {msg.content && (
                       <p
                         dir="auto"
-                        className="whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200"
+                        className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
                       >
                         {renderLinkifiedText(msg.content)}
                       </p>

@@ -100,6 +100,7 @@ export function serializeUser(row: typeof users.$inferSelect): PublicUser {
     displayName: row.displayName,
     avatarColor: row.avatarColor,
     avatarUrl: row.avatarUrl,
+    bannerUrl: row.bannerUrl,
     role: row.role,
     lastSeenAt: row.lastSeenAt.toISOString(),
     createdAt: row.createdAt.toISOString(),

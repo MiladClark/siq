@@ -1,6 +1,6 @@
 "use client";
 
-import { Shield, Volume2, X } from "lucide-react";
+import { Play, Shield, Volume2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
@@ -11,9 +11,12 @@ export interface ProfilePopoverTarget {
   username?: string;
   avatarColor: string;
   avatarUrl?: string | null;
+  bannerUrl?: string | null;
   role?: "admin" | "member";
   online?: boolean;
   inVoiceChannelName?: string | null;
+  voiceChannelId?: string | null;
+  isScreenSharing?: boolean;
   anchorRect: {
     top: number;
     left: number;
@@ -27,9 +30,14 @@ export interface ProfilePopoverTarget {
 interface UserProfilePopoverProps {
   target: ProfilePopoverTarget | null;
   onClose: () => void;
+  onWatchStream?: (target: ProfilePopoverTarget) => void;
 }
 
-export function UserProfilePopover({ target, onClose }: UserProfilePopoverProps) {
+export function UserProfilePopover({
+  target,
+  onClose,
+  onWatchStream,
+}: UserProfilePopoverProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [coords, setCoords] = useState<{ top: number; left: number }>({
     top: 0,
@@ -56,17 +64,19 @@ export function UserProfilePopover({ target, onClose }: UserProfilePopoverProps)
 
   useLayoutEffect(() => {
     if (!target || !ref.current) return;
-    const cardW = ref.current.offsetWidth || 272;
-    const cardH = ref.current.offsetHeight || 200;
+    const cardW = ref.current.offsetWidth || 276;
+    const cardH = ref.current.offsetHeight || 220;
     const pad = 12;
 
-    // Prefer opening to the right of the clicked element; flip left if near right edge
     let left = target.anchorRect.right + 10;
     if (left + cardW > window.innerWidth - pad) {
       left = target.anchorRect.left - cardW - 10;
     }
     if (left < pad) {
-      left = Math.max(pad, Math.min(target.anchorRect.left, window.innerWidth - cardW - pad));
+      left = Math.max(
+        pad,
+        Math.min(target.anchorRect.left, window.innerWidth - cardW - pad)
+      );
     }
 
     let top = target.anchorRect.top - 8;
@@ -91,20 +101,32 @@ export function UserProfilePopover({ target, onClose }: UserProfilePopoverProps)
           style={{ top: coords.top, left: coords.left }}
           role="dialog"
           aria-label={`${target.displayName} profile`}
-          className="fixed z-[75] w-[272px] overflow-hidden rounded-xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/70"
+          className="fixed z-[75] w-[276px] overflow-hidden rounded-xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/75"
         >
-          {/* Accent header strip */}
+          {/* Banner Image or Accent Gradient */}
           <div
-            className="relative h-16 w-full"
-            style={{
-              background: `linear-gradient(135deg, ${target.avatarColor}38 0%, #14151A 100%)`,
-            }}
+            className="relative h-24 w-full overflow-hidden"
+            style={
+              !target.bannerUrl
+                ? {
+                    background: `linear-gradient(135deg, ${target.avatarColor}45 0%, #14151A 100%)`,
+                  }
+                : undefined
+            }
           >
+            {target.bannerUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={target.bannerUrl}
+                alt={`${target.displayName} banner`}
+                className="h-full w-full object-cover"
+              />
+            )}
             <button
               type="button"
               onClick={onClose}
               aria-label="Close profile popover"
-              className="absolute right-2.5 top-2.5 rounded-lg bg-black/35 p-1 text-zinc-300 transition-colors hover:bg-black/60 hover:text-white"
+              className="absolute right-2.5 top-2.5 rounded-lg bg-black/50 p-1 text-zinc-200 backdrop-blur-xs transition-colors hover:bg-black/75 hover:text-white"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -160,6 +182,21 @@ export function UserProfilePopover({ target, onClose }: UserProfilePopoverProps)
                 </span>
               )}
             </div>
+
+            {/* Direct Watch Stream CTA when user is live */}
+            {target.isScreenSharing && onWatchStream && (
+              <button
+                type="button"
+                onClick={() => {
+                  onWatchStream(target);
+                  onClose();
+                }}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98]"
+              >
+                <Play className="h-3.5 w-3.5 fill-current" />
+                <span>Watch Stream</span>
+              </button>
+            )}
           </div>
         </motion.div>
       )}

@@ -47,6 +47,9 @@ export async function PATCH(request: Request) {
     if (parsed.data.avatarUrl !== undefined) {
       updates.avatarUrl = parsed.data.avatarUrl;
     }
+    if (parsed.data.bannerUrl !== undefined) {
+      updates.bannerUrl = parsed.data.bannerUrl;
+    }
     if (parsed.data.email !== undefined) {
       const [conflict] = await db
         .select({ id: users.id })

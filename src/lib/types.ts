@@ -5,6 +5,7 @@ export interface PublicUser {
   displayName: string;
   avatarColor: string;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   role: "admin" | "member";
   lastSeenAt: string;
   createdAt: string;
@@ -54,6 +55,7 @@ export interface MessageItem {
     displayName: string;
     avatarColor: string;
     avatarUrl: string | null;
+    bannerUrl?: string | null;
     role: "admin" | "member";
   };
 }
@@ -64,6 +66,8 @@ export interface VoiceParticipantSummary {
   username?: string;
   avatarColor: string;
   avatarUrl?: string | null;
+  bannerUrl?: string | null;
+  isScreenSharing?: boolean;
 }
 
 export type VoiceOccupancyMap = Record<string, VoiceParticipantSummary[]>;
