@@ -15,10 +15,14 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
     "@phosphor-icons/react": "^2.1.10",
+    "@vercel/blob": "^2.9.0",
     "bcryptjs": "^3.0.2",
     "drizzle-orm": "^0.44.2",
     "jose": "^6.0.11",
+    "livekit-client": "^2.25.0",
+    "livekit-server-sdk": "^2.20.1",
     "next": "^15.3.3",
+    "pg": "^8.23.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^3.25.51"
@@ -26,6 +30,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.8",
     "@types/node": "^22.15.29",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "dotenv-cli": "^8.0.0",

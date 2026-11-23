@@ -75,7 +75,16 @@ export const updateChannelSchema = z.object({
 });
 
 export const attachmentSchema = z.object({
-  url: z.string().url(),
+  url: z
+    .string()
+    .min(1)
+    .refine(
+      (val) =>
+        val.startsWith("/api/uploads/") ||
+        val.startsWith("https://") ||
+        val.startsWith("http://"),
+      "Invalid attachment URL."
+    ),
   name: z.string().min(1).max(200),
   contentType: z.string().min(1).max(120),
   size: z.number().int().min(0).max(25 * 1024 * 1024),
