@@ -1,11 +1,16 @@
 "use client";
 
+import type { PresenceStatus } from "@/lib/types";
+
+export type AvatarStatus = Exclude<PresenceStatus, "invisible"> | "offline";
+
 interface AvatarProps {
   name: string;
   color: string;
   avatarUrl?: string | null;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   online?: boolean;
+  status?: AvatarStatus;
   speaking?: boolean;
   speakingOffsetClassName?: string;
   ringClassName?: string;
@@ -37,16 +42,39 @@ function getInitials(name: string): string {
   return trimmed.slice(0, 2).toUpperCase();
 }
 
+export function resolveDisplayStatus(
+  isRecentlyActive: boolean,
+  presenceStatus?: PresenceStatus | null
+): AvatarStatus {
+  if (!isRecentlyActive || presenceStatus === "invisible") return "offline";
+  if (presenceStatus === "idle") return "idle";
+  if (presenceStatus === "dnd") return "dnd";
+  return "online";
+}
+
 export function Avatar({
   name,
   color,
   avatarUrl,
   size = "md",
   online,
+  status,
   speaking = false,
   speakingOffsetClassName = "ring-offset-[#0E0F12]",
   ringClassName = "ring-[#0E0F12]",
 }: AvatarProps) {
+  const resolvedStatus: AvatarStatus | undefined =
+    status !== undefined ? status : online !== undefined ? (online ? "online" : "offline") : undefined;
+
+  const statusTitle =
+    resolvedStatus === "online"
+      ? "Online"
+      : resolvedStatus === "idle"
+        ? "Idle"
+        : resolvedStatus === "dnd"
+          ? "Do Not Disturb"
+          : "Offline";
+
   return (
     <span
       className={`relative inline-flex aspect-square shrink-0 items-center justify-center rounded-full leading-none transition-shadow duration-100 ${
@@ -74,13 +102,26 @@ export function Avatar({
           {getInitials(name)}
         </span>
       )}
-      {online !== undefined && (
+      {resolvedStatus !== undefined && (
         <span
-          className={`absolute -bottom-0.5 -right-0.5 ${DOT_CLASSES[size]} rounded-full ring-2 ${ringClassName} ${
-            online ? "bg-emerald-400" : "bg-zinc-600"
+          title={statusTitle}
+          className={`absolute -bottom-0.5 -right-0.5 flex items-center justify-center ${DOT_CLASSES[size]} rounded-full ring-2 ${ringClassName} ${
+            resolvedStatus === "online"
+              ? "bg-emerald-400"
+              : resolvedStatus === "idle"
+                ? "bg-amber-400"
+                : resolvedStatus === "dnd"
+                  ? "bg-rose-500"
+                  : "bg-zinc-600"
           }`}
-          title={online ? "Online" : "Offline"}
-        />
+        >
+          {resolvedStatus === "dnd" && (
+            <span className="h-[2px] w-[55%] rounded-full bg-[#0E0F12]" />
+          )}
+          {resolvedStatus === "offline" && (
+            <span className="h-[46%] w-[46%] rounded-full bg-[#0E0F12]" />
+          )}
+        </span>
       )}
     </span>
   );

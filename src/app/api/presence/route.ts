@@ -1,10 +1,15 @@
-import { and, asc, desc, eq, gt, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { channels, messages, users } from "@/db/schema";
 import { getCurrentUser, serializeUser } from "@/lib/auth";
-import { fetchVoiceOccupancy, isLiveKitConfigured } from "@/lib/livekit";
+import { fetchVoiceOccupancySnapshot, isLiveKitConfigured } from "@/lib/livekit";
 import { isBlobStorageConfigured } from "@/lib/storage";
+import {
+  loadUserDms,
+  loadUserFriends,
+  loadUserServers,
+} from "@/lib/workspace-data";
 
 export async function GET(request: Request) {
   if (!isDatabaseConfigured()) {
@@ -27,18 +32,30 @@ export async function GET(request: Request) {
 
     await db.update(users).set({ lastSeenAt: now }).where(eq(users.id, user.id));
 
-    const [memberRows, channelRows, voiceOccupancy, recentMessageRows] = await Promise.all([
+    const [memberRows, voiceSnap, userServers] = await Promise.all([
       db.select().from(users).orderBy(asc(users.createdAt)),
-      db
-        .select()
-        .from(channels)
-        .orderBy(asc(channels.type), asc(channels.position), asc(channels.createdAt)),
-      fetchVoiceOccupancy(),
-      validSince
+      fetchVoiceOccupancySnapshot(),
+      loadUserServers(user.id),
+    ]);
+
+    const serializedMembers = memberRows.map(serializeUser);
+    const userMap = new Map(serializedMembers.map((m) => [m.id, m]));
+
+    const [friends, dms] = await Promise.all([
+      loadUserFriends(user.id, userMap),
+      loadUserDms(user.id, userMap),
+    ]);
+
+    const visibleChannelIds = userServers.flatMap((s) => s.channels.map((c) => c.id));
+    const userDmIds = dms.map((d) => d.id);
+
+    const [recentChannelRows, recentDmRows] = await Promise.all([
+      validSince && visibleChannelIds.length > 0
         ? db
             .select({
               id: messages.id,
               channelId: messages.channelId,
+              serverId: channels.serverId,
               channelName: channels.name,
               content: messages.content,
               attachments: messages.attachments,
@@ -51,39 +68,88 @@ export async function GET(request: Request) {
             .from(messages)
             .innerJoin(channels, eq(messages.channelId, channels.id))
             .innerJoin(users, eq(messages.authorId, users.id))
-            .where(and(gt(messages.createdAt, validSince), ne(messages.authorId, user.id)))
+            .where(
+              and(
+                inArray(messages.channelId, visibleChannelIds),
+                gt(messages.createdAt, validSince),
+                ne(messages.authorId, user.id)
+              )
+            )
+            .orderBy(desc(messages.createdAt))
+            .limit(15)
+        : Promise.resolve([]),
+      validSince && userDmIds.length > 0
+        ? db
+            .select({
+              id: messages.id,
+              dmConversationId: messages.dmConversationId,
+              content: messages.content,
+              attachments: messages.attachments,
+              createdAt: messages.createdAt,
+              authorId: users.id,
+              authorDisplayName: users.displayName,
+              authorAvatarColor: users.avatarColor,
+              authorAvatarUrl: users.avatarUrl,
+            })
+            .from(messages)
+            .innerJoin(users, eq(messages.authorId, users.id))
+            .where(
+              and(
+                inArray(messages.dmConversationId, userDmIds),
+                gt(messages.createdAt, validSince),
+                ne(messages.authorId, user.id)
+              )
+            )
             .orderBy(desc(messages.createdAt))
             .limit(15)
         : Promise.resolve([]),
     ]);
 
+    const combinedNotifications = [
+      ...recentChannelRows.map((m) => ({
+        id: m.id,
+        kind: "message" as const,
+        channelId: m.channelId ?? "",
+        dmConversationId: null,
+        serverId: m.serverId ?? null,
+        channelName: m.channelName,
+        authorId: m.authorId,
+        authorDisplayName: m.authorDisplayName,
+        authorAvatarColor: m.authorAvatarColor,
+        authorAvatarUrl: m.authorAvatarUrl,
+        content: m.content,
+        hasAttachments: (m.attachments?.length ?? 0) > 0,
+        createdAt: m.createdAt.toISOString(),
+        read: false,
+      })),
+      ...recentDmRows.map((m) => ({
+        id: m.id,
+        kind: "message" as const,
+        channelId: "",
+        dmConversationId: m.dmConversationId ?? null,
+        serverId: null,
+        channelName: "Direct Message",
+        authorId: m.authorId,
+        authorDisplayName: m.authorDisplayName,
+        authorAvatarColor: m.authorAvatarColor,
+        authorAvatarUrl: m.authorAvatarUrl,
+        content: m.content,
+        hasAttachments: (m.attachments?.length ?? 0) > 0,
+        createdAt: m.createdAt.toISOString(),
+        read: false,
+      })),
+    ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
     return NextResponse.json(
       {
         serverTime: now.toISOString(),
-        members: memberRows.map(serializeUser),
-        channels: channelRows.map((ch) => ({
-          id: ch.id,
-          name: ch.name,
-          slug: ch.slug,
-          type: ch.type,
-          description: ch.description,
-          position: ch.position,
-          createdById: ch.createdById,
-        })),
-        voiceOccupancy,
-        recentNotifications: recentMessageRows.reverse().map((m) => ({
-          id: m.id,
-          channelId: m.channelId,
-          channelName: m.channelName,
-          authorId: m.authorId,
-          authorDisplayName: m.authorDisplayName,
-          authorAvatarColor: m.authorAvatarColor,
-          authorAvatarUrl: m.authorAvatarUrl,
-          content: m.content,
-          hasAttachments: (m.attachments?.length ?? 0) > 0,
-          createdAt: m.createdAt.toISOString(),
-          read: false,
-        })),
+        members: serializedMembers,
+        servers: userServers,
+        friends,
+        dmConversations: dms,
+        voiceOccupancy: voiceSnap ? voiceSnap.occupancy : null,
+        voiceRoomCreatedAt: voiceSnap ? voiceSnap.roomCreatedAt : null,
+        recentNotifications: combinedNotifications,
         capabilities: {
           livekitReady: isLiveKitConfigured(),
           blobReady: isBlobStorageConfigured(),

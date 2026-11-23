@@ -50,6 +50,8 @@ export interface JoinVoiceOptions {
   watchIdentity?: string | null;
   seedOccupants?: VoiceParticipantSummary[];
   currentUser?: PublicUser;
+  dmConversationId?: string;
+  startWithVideo?: boolean;
 }
 
 export interface VoiceParticipantView {
@@ -976,7 +978,11 @@ export function VoiceProvider({
         const res = await fetch("/api/livekit/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channelId: channel.id }),
+          body: JSON.stringify(
+            options?.dmConversationId
+              ? { dmConversationId: options.dmConversationId }
+              : { channelId: channel.id }
+          ),
         });
         const data = await res.json();
         if (attemptId !== joinAttemptIdRef.current) return;
@@ -1090,6 +1096,14 @@ export function VoiceProvider({
             autoGainControl,
             false
           );
+          if (options?.startWithVideo) {
+            await room.localParticipant
+              .setCameraEnabled(true, {
+                resolution: VideoPresets.h720.resolution,
+                deviceId: selectedVideoInput || undefined,
+              })
+              .catch(() => {});
+          }
         } catch {
           if (attemptId === joinAttemptIdRef.current) {
             setError("Microphone permission denied. Connected in listen-only mode.");

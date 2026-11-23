@@ -18,29 +18,39 @@ interface InviteRow {
 
 interface InviteModalProps {
   open: boolean;
+  serverId?: string | null;
+  serverName?: string | null;
   onClose: () => void;
 }
 
-export function InviteModal({ open, onClose }: InviteModalProps) {
+export function InviteModal({
+  open,
+  serverId = null,
+  serverName = null,
+  onClose,
+}: InviteModalProps) {
   const notify = useSystemNotify();
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [maxUses, setMaxUses] = useState(5);
+  const [maxUses, setMaxUses] = useState(10);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(7);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const loadInvites = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/invites");
+      const url = serverId
+        ? `/api/invites?serverId=${encodeURIComponent(serverId)}`
+        : "/api/invites";
+      const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) {
         notify({
           kind: "error",
           title: "Invites Error",
           message: data.error ?? "Failed to load invites.",
-          source: "Invites",
+          source: serverName ?? "Invites",
         });
       } else {
         setInvites(data.invites ?? []);
@@ -50,12 +60,12 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
         kind: "error",
         title: "Invites Error",
         message: "Network error while loading invites.",
-        source: "Invites",
+        source: serverName ?? "Invites",
       });
     } finally {
       setLoading(false);
     }
-  }, [notify]);
+  }, [notify, serverId, serverName]);
 
   useEffect(() => {
     if (open) {
@@ -69,7 +79,11 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
       const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxUses, expiresInDays }),
+        body: JSON.stringify({
+          serverId: serverId ?? undefined,
+          maxUses,
+          expiresInDays,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -77,7 +91,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
           kind: "error",
           title: "Invites Error",
           message: data.error ?? "Failed to create invite.",
-          source: "Invites",
+          source: serverName ?? "Invites",
         });
       } else if (data.invite) {
         setInvites((prev) => [data.invite, ...prev]);
@@ -87,7 +101,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
         kind: "error",
         title: "Invites Error",
         message: "Network error while creating invite.",
-        source: "Invites",
+        source: serverName ?? "Invites",
       });
     } finally {
       setCreating(false);
@@ -107,7 +121,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
         kind: "error",
         title: "Invites Error",
         message: "Could not revoke invite.",
-        source: "Invites",
+        source: serverName ?? "Invites",
       });
     }
   }
@@ -123,7 +137,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
         kind: "warning",
         title: "Clipboard Blocked",
         message: "Clipboard access denied.",
-        source: "Invites",
+        source: serverName ?? "Invites",
       });
     }
   }
@@ -137,7 +151,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
           role="dialog"
           aria-modal="true"
           aria-labelledby="invite-modal-title"
@@ -148,13 +162,13 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/70"
+            className="w-full max-w-lg rounded-2xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/70"
           >
             <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
               <div className="flex items-center gap-2.5">
                 <KeyRound className="h-4 w-4 text-emerald-400" />
                 <h2 id="invite-modal-title" className="text-sm font-semibold text-zinc-100">
-                  Invite friends
+                  {serverName ? `Invite friends to ${serverName}` : "Invite friends"}
                 </h2>
               </div>
               <button
@@ -168,7 +182,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
             </div>
 
             <div className="space-y-5 p-5">
-              <div className="rounded-lg border border-white/[0.07] bg-[#0E0F12] p-4">
+              <div className="rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <label
@@ -187,6 +201,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                       <option value={5}>5 uses</option>
                       <option value={10}>10 uses</option>
                       <option value={25}>25 uses</option>
+                      <option value={100}>100 uses</option>
                     </select>
                   </div>
 
@@ -222,7 +237,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                   className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  <span>{creating ? "Generating..." : "Generate invite code"}</span>
+                  <span>{creating ? "Generating..." : "Generate invite link"}</span>
                 </button>
               </div>
 
@@ -286,7 +301,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                                 </span>
                               )}
                             </div>
-                            <p className="mt-0.5 text-[11px] text-zinc-500">
+                            <p className="mt-0.5 text-[11px] tabular-nums text-zinc-500">
                               {inv.usesCount}/{inv.maxUses} used
                               {inv.expiresAt
                                 ? ` · expires ${new Date(inv.expiresAt).toLocaleDateString()}`
@@ -298,7 +313,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                             <button
                               type="button"
                               disabled={inactive}
-                              onClick={() => copyText(inv.code, `code-${inv.id}`)}
+                              onClick={() => void copyText(inv.code, `code-${inv.id}`)}
                               title="Copy invite code"
                               className="rounded-md border border-white/[0.08] bg-[#121316] p-1.5 text-zinc-300 transition-colors hover:border-white/[0.16] hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-40"
                             >
@@ -311,7 +326,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                             <button
                               type="button"
                               disabled={inactive}
-                              onClick={() => copyText(joinUrl, `link-${inv.id}`)}
+                              onClick={() => void copyText(joinUrl, `link-${inv.id}`)}
                               title="Copy direct invite link"
                               className="rounded-md border border-white/[0.08] bg-[#121316] p-1.5 text-zinc-300 transition-colors hover:border-white/[0.16] hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-40"
                             >
@@ -324,7 +339,7 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                             {!inv.revoked && (
                               <button
                                 type="button"
-                                onClick={() => handleRevoke(inv.id)}
+                                onClick={() => void handleRevoke(inv.id)}
                                 title="Revoke invite"
                                 className="rounded-md border border-white/[0.08] bg-[#121316] p-1.5 text-zinc-400 transition-colors hover:border-rose-500/40 hover:text-rose-400"
                               >

@@ -1,6 +1,7 @@
 import { eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
+import { ensureAppSchema } from "@/db/ensure-schema";
 import { users } from "@/db/schema";
 import {
   createSessionToken,
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
 
     const identifier = (parsed.data.identifier || parsed.data.username || "").trim().toLowerCase();
     const { password } = parsed.data;
+    await ensureAppSchema();
     const db = getDb();
 
     const [user] = await db

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { fetchVoiceOccupancy } from "@/lib/livekit";
+import { fetchVoiceOccupancySnapshot } from "@/lib/livekit";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -8,9 +8,12 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
-  const voiceOccupancy = await fetchVoiceOccupancy();
+  const snap = await fetchVoiceOccupancySnapshot();
   return NextResponse.json(
-    { voiceOccupancy },
+    {
+      voiceOccupancy: snap ? snap.occupancy : null,
+      voiceRoomCreatedAt: snap ? snap.roomCreatedAt : null,
+    },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

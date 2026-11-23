@@ -1,5 +1,9 @@
 import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
-import { pickAvatarColor, type VoiceOccupancyMap } from "@/lib/types";
+import {
+  pickAvatarColor,
+  type VoiceOccupancyMap,
+  type VoiceRoomCreatedAtMap,
+} from "@/lib/types";
 
 export function isLiveKitConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_LIVEKIT_URL?.trim();
@@ -63,19 +67,29 @@ export async function createLiveKitRoomToken(params: {
   return at.toJwt();
 }
 
-export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
+export interface VoiceOccupancySnapshot {
+  occupancy: VoiceOccupancyMap;
+  roomCreatedAt: VoiceRoomCreatedAtMap;
+}
+
+export async function fetchVoiceOccupancySnapshot(): Promise<VoiceOccupancySnapshot | null> {
   if (!isLiveKitConfigured()) {
-    return {};
+    return { occupancy: {}, roomCreatedAt: {} };
   }
 
   try {
     const client = getRoomServiceClient();
     const rooms = await client.listRooms();
     const occupancy: VoiceOccupancyMap = {};
+    const roomCreatedAt: VoiceRoomCreatedAtMap = {};
 
     await Promise.all(
       rooms.map(async (room) => {
         if (!room.numParticipants) return;
+        const createdSec = Number(room.creationTime ?? 0);
+        if (createdSec > 0) {
+          roomCreatedAt[room.name] = createdSec * 1000;
+        }
         const participants = await client.listParticipants(room.name);
         occupancy[room.name] = participants.map((p) => {
           let avatarColor = pickAvatarColor(p.identity);
@@ -98,6 +112,7 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
           const isScreenSharing = (p.tracks ?? []).some(
             (t) => t.source === 3 && !t.muted // TrackSource.SCREEN_SHARE = 3
           );
+          const joinedSec = Number(p.joinedAt ?? 0);
           return {
             identity: p.identity,
             name: p.name || username || "Member",
@@ -105,12 +120,13 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
             avatarColor,
             avatarUrl,
             isScreenSharing,
+            joinedAt: joinedSec > 0 ? joinedSec * 1000 : null,
           };
         });
       })
     );
 
-    return occupancy;
+    return { occupancy, roomCreatedAt };
   } catch (error) {
     console.warn(
       "[livekit] occupancy fetch skipped:",
@@ -118,4 +134,9 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
     );
     return null;
   }
+}
+
+export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
+  const snap = await fetchVoiceOccupancySnapshot();
+  return snap ? snap.occupancy : null;
 }

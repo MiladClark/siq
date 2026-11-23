@@ -1,14 +1,18 @@
 "use client";
 
-import { Hash, Volume2, X } from "lucide-react";
+import { Hash, Lock, Volume2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
-import type { ChannelItem } from "@/lib/types";
+import type { CategoryItem, ChannelItem, RoleItem } from "@/lib/types";
 
 interface ChannelModalProps {
   open: boolean;
+  serverId?: string | null;
   defaultType?: "text" | "voice";
+  defaultCategoryId?: string | null;
+  categories?: CategoryItem[];
+  roles?: RoleItem[];
   editingChannel?: ChannelItem | null;
   onClose: () => void;
   onSaved: (channel: ChannelItem, isEdit: boolean) => void;
@@ -16,7 +20,11 @@ interface ChannelModalProps {
 
 export function ChannelModal({
   open,
+  serverId = null,
   defaultType = "text",
+  defaultCategoryId = null,
+  categories = [],
+  roles = [],
   editingChannel = null,
   onClose,
   onSaved,
@@ -25,7 +33,14 @@ export function ChannelModal({
   const [name, setName] = useState("");
   const [type, setType] = useState<"text" | "voice">(defaultType);
   const [description, setDescription] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [allowedRoleIds, setAllowedRoleIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  const assignableRoles = roles
+    .filter((r) => !r.isDefault)
+    .sort((a, b) => b.position - a.position);
 
   useEffect(() => {
     if (!open) return;
@@ -33,12 +48,24 @@ export function ChannelModal({
       setName(editingChannel.name);
       setType(editingChannel.type);
       setDescription(editingChannel.description ?? "");
+      setCategoryId(editingChannel.categoryId ?? "");
+      setIsPrivate(Boolean(editingChannel.isPrivate));
+      setAllowedRoleIds(editingChannel.allowedRoleIds ?? []);
     } else {
       setName("");
       setType(defaultType);
       setDescription("");
+      setCategoryId(defaultCategoryId ?? "");
+      setIsPrivate(false);
+      setAllowedRoleIds([]);
     }
-  }, [open, defaultType, editingChannel]);
+  }, [open, defaultType, defaultCategoryId, editingChannel]);
+
+  function toggleAllowedRole(roleId: string) {
+    setAllowedRoleIds((prev) =>
+      prev.includes(roleId) ? prev.filter((id) => id !== roleId) : [...prev, roleId]
+    );
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -48,7 +75,23 @@ export function ChannelModal({
       const isEdit = Boolean(editingChannel);
       const url = isEdit ? `/api/channels/${editingChannel!.id}` : "/api/channels";
       const method = isEdit ? "PATCH" : "POST";
-      const body = isEdit ? { name, description } : { name, type, description };
+      const body = isEdit
+        ? {
+            name,
+            description,
+            categoryId: categoryId || null,
+            isPrivate,
+            allowedRoleIds: isPrivate ? allowedRoleIds : [],
+          }
+        : {
+            serverId: serverId ?? undefined,
+            categoryId: categoryId || null,
+            name,
+            type,
+            description,
+            isPrivate,
+            allowedRoleIds: isPrivate ? allowedRoleIds : [],
+          };
 
       const res = await fetch(url, {
         method,
@@ -90,7 +133,7 @@ export function ChannelModal({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
           role="dialog"
           aria-modal="true"
           aria-labelledby="channel-modal-title"
@@ -101,11 +144,11 @@ export function ChannelModal({
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/70"
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/70"
           >
             <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
               <h2 id="channel-modal-title" className="text-sm font-semibold text-zinc-100">
-                {editingChannel ? "Edit channel" : "Create channel"}
+                {editingChannel ? "Edit Channel" : "Create Channel"}
               </h2>
               <button
                 type="button"
@@ -117,7 +160,10 @@ export function ChannelModal({
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 p-5">
+            <form
+              onSubmit={handleSubmit}
+              className="max-h-[78dvh] space-y-4 overflow-y-auto p-5"
+            >
               {!editingChannel && (
                 <div className="space-y-1.5">
                   <span className="block text-xs font-medium text-zinc-300">Channel type</span>
@@ -177,6 +223,30 @@ export function ChannelModal({
                 />
               </div>
 
+              {categories.length > 0 && (
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="channel-category"
+                    className="block text-xs font-medium text-zinc-300"
+                  >
+                    Category
+                  </label>
+                  <select
+                    id="channel-category"
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
+                  >
+                    <option value="">No category (Top-level)</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label htmlFor="channel-desc" className="block text-xs font-medium text-zinc-300">
                   Topic (optional)
@@ -193,6 +263,73 @@ export function ChannelModal({
                 />
               </div>
 
+              {/* Private Channel Lock Toggle */}
+              <div className="rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                    <div>
+                      <p className="text-xs font-semibold text-zinc-100">Private Channel</p>
+                      <p className="text-[11px] text-zinc-500">
+                        Only selected roles and admins can view or join this channel.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isPrivate}
+                    onClick={() => setIsPrivate((v) => !v)}
+                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                      isPrivate ? "bg-emerald-500" : "bg-zinc-700"
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                        isPrivate ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {isPrivate && (
+                  <div className="mt-3 space-y-1.5 border-t border-white/[0.07] pt-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Allowed Roles
+                    </p>
+                    {assignableRoles.length === 0 ? (
+                      <p className="text-[11px] text-zinc-500">
+                        No custom roles yet — only Server Owners and Admins will have access.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {assignableRoles.map((role) => {
+                          const active = allowedRoleIds.includes(role.id);
+                          return (
+                            <button
+                              key={role.id}
+                              type="button"
+                              onClick={() => toggleAllowedRole(role.id)}
+                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                                active
+                                  ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                                  : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              <span
+                                className="h-2 w-2 rounded-full"
+                                style={{ backgroundColor: role.color }}
+                              />
+                              <span>{role.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
@@ -206,7 +343,7 @@ export function ChannelModal({
                   disabled={saving}
                   className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
                 >
-                  {saving ? "Saving..." : editingChannel ? "Save changes" : "Create channel"}
+                  {saving ? "Saving..." : editingChannel ? "Save Changes" : "Create Channel"}
                 </button>
               </div>
             </form>

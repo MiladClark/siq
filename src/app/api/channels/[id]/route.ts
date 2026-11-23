@@ -3,7 +3,24 @@ import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { channels } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getServerMemberPermissions } from "@/lib/server-auth";
 import { updateChannelSchema } from "@/lib/validators";
+
+async function canManageExistingChannel(
+  channel: typeof channels.$inferSelect,
+  user: { id: string; role: "admin" | "member" }
+): Promise<boolean> {
+  if (channel.serverId) {
+    const { isMember, permissions } = await getServerMemberPermissions(
+      channel.serverId,
+      user.id
+    );
+    if (isMember && (permissions.administrator || permissions.manageChannels)) {
+      return true;
+    }
+  }
+  return user.role === "admin" || channel.createdById === user.id;
+}
 
 export async function PATCH(
   request: Request,
@@ -26,9 +43,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Channel not found." }, { status: 404 });
   }
 
-  if (user.role !== "admin" && existing.createdById !== user.id) {
+  if (!(await canManageExistingChannel(existing, user))) {
     return NextResponse.json(
-      { error: "Only an admin or the channel creator can edit this channel." },
+      { error: "You do not have permission to edit this channel." },
       { status: 403 }
     );
   }
@@ -48,6 +65,11 @@ export async function PATCH(
     if (parsed.data.description !== undefined) {
       updates.description = parsed.data.description?.trim() || null;
     }
+    if (parsed.data.categoryId !== undefined) updates.categoryId = parsed.data.categoryId;
+    if (parsed.data.isPrivate !== undefined) updates.isPrivate = parsed.data.isPrivate;
+    if (parsed.data.allowedRoleIds !== undefined) {
+      updates.allowedRoleIds = parsed.data.allowedRoleIds;
+    }
 
     const [updated] = await db
       .update(channels)
@@ -58,10 +80,14 @@ export async function PATCH(
     return NextResponse.json({
       channel: {
         id: updated.id,
+        serverId: updated.serverId,
+        categoryId: updated.categoryId,
         name: updated.name,
         slug: updated.slug,
         type: updated.type,
         description: updated.description,
+        isPrivate: Boolean(updated.isPrivate),
+        allowedRoleIds: updated.allowedRoleIds ?? [],
         position: updated.position,
         createdById: updated.createdById,
       },
@@ -93,9 +119,9 @@ export async function DELETE(
     return NextResponse.json({ error: "Channel not found." }, { status: 404 });
   }
 
-  if (user.role !== "admin" && existing.createdById !== user.id) {
+  if (!(await canManageExistingChannel(existing, user))) {
     return NextResponse.json(
-      { error: "Only an admin or the channel creator can delete this channel." },
+      { error: "You do not have permission to delete this channel." },
       { status: 403 }
     );
   }

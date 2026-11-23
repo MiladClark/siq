@@ -1,24 +1,37 @@
 "use client";
 
 import {
+  ChevronDown,
+  ChevronRight,
   Copy,
+  FolderPlus,
+  Gamepad2,
   Hash,
   Headphones,
   KeyRound,
+  Lock,
+  LogOut,
   Menu,
+  MessageSquare,
   Mic,
   MicOff,
   Monitor,
+  PanelRight,
   Pencil,
+  Phone,
   PhoneOff,
   Play,
   Plus,
   RefreshCw,
+  Search,
   Settings,
+  Shield,
   Trash2,
   User,
+  UserPlus,
   Users,
   UserX,
+  Video,
   Volume2,
   VolumeX,
   X,
@@ -26,9 +39,14 @@ import {
 import { ConnectionState } from "livekit-client";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChannelHeaderTools } from "@/components/chat/ChannelHeaderTools";
 import { TextChannelView } from "@/components/chat/TextChannelView";
-import { Avatar } from "@/components/ui/Avatar";
+import { ActiveNowRail } from "@/components/dm/ActiveNowRail";
+import { DmConversationView } from "@/components/dm/DmConversationView";
+import { FindConversationModal } from "@/components/dm/FindConversationModal";
+import { FriendsHubView, type FriendsTab } from "@/components/dm/FriendsHubView";
+import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
 import {
   type ContextMenuEntry,
   ContextMenuProvider,
@@ -46,14 +64,32 @@ import {
 } from "@/components/ui/UserProfilePopover";
 import { ConnectionStatusButton } from "@/components/voice/ConnectionStatusPopover";
 import { ScreenShareModal } from "@/components/voice/ScreenShareModal";
+import {
+  StreamPreviewPopover,
+  type StreamPreviewTarget,
+} from "@/components/voice/StreamPreviewPopover";
 import { useVoice, VoiceProvider } from "@/components/voice/VoiceProvider";
 import { VoiceStage } from "@/components/voice/VoiceStage";
+import { CategoryModal } from "@/components/workspace/CategoryModal";
 import { ChannelModal } from "@/components/workspace/ChannelModal";
 import { InviteModal } from "@/components/workspace/InviteModal";
+import { ServerCreateJoinModal } from "@/components/workspace/ServerCreateJoinModal";
+import { ServerRail } from "@/components/workspace/ServerRail";
+import {
+  ServerSettingsModal,
+  type ServerSettingsTab,
+} from "@/components/workspace/ServerSettingsModal";
 import {
   SettingsModal,
   type SettingsTab,
 } from "@/components/workspace/SettingsModal";
+import { StatusPickerPopover } from "@/components/workspace/StatusPickerPopover";
+import {
+  canUserAccessChannel,
+  computeEffectivePermissions,
+  EMPTY_PERMISSIONS,
+  getMemberRolesInServer,
+} from "@/lib/permissions";
 import {
   type AppPreferences,
   DEFAULT_APP_PREFERENCES,
@@ -62,18 +98,26 @@ import {
 } from "@/lib/preferences";
 import { playSound } from "@/lib/sounds";
 import type {
+  CategoryItem,
   ChannelItem,
+  DmConversationItem,
+  FriendItem,
   NotificationItem,
   PrivateUser,
   PublicUser,
+  ServerDetail,
   VoiceOccupancyMap,
+  VoiceRoomCreatedAtMap,
 } from "@/lib/types";
 
 interface WorkspaceShellProps {
   initialUser: PrivateUser;
-  initialChannels: ChannelItem[];
+  initialServers: ServerDetail[];
+  initialFriends: FriendItem[];
+  initialDmConversations: DmConversationItem[];
   initialMembers: PublicUser[];
   initialVoiceOccupancy: VoiceOccupancyMap;
+  initialVoiceRoomCreatedAt: VoiceRoomCreatedAtMap;
   initialCapabilities: {
     livekitReady: boolean;
     blobReady: boolean;
@@ -82,20 +126,54 @@ interface WorkspaceShellProps {
 
 const ONLINE_WINDOW_MS = 120 * 1000;
 
+function formatVoiceTimer(elapsedMs: number): string {
+  const totalSec = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hrs = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return hrs > 0
+    ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}`
+    : `${pad(mins)}:${pad(secs)}`;
+}
+
 function isMemberOnline(
   member: PublicUser,
   currentUserId: string,
   nowMs: number
 ): boolean {
+  if (member.presenceStatus === "invisible") return false;
   if (member.id === currentUserId) return true;
   return nowMs - new Date(member.lastSeenAt).getTime() < ONLINE_WINDOW_MS;
 }
 
+function pickInitialChannelId(server: ServerDetail | undefined, userId: string): string {
+  if (!server) return "";
+  const assigned = server.memberRoleIds[userId] ?? [];
+  const perms = computeEffectivePermissions({
+    userId,
+    ownerId: server.ownerId,
+    serverRoles: server.roles,
+    assignedRoleIds: assigned,
+  });
+  const accessible = server.channels.filter((ch) =>
+    canUserAccessChannel({ channel: ch, permissions: perms, assignedRoleIds: assigned })
+  );
+  return (
+    accessible.find((c) => c.type === "text")?.id ??
+    accessible[0]?.id ??
+    ""
+  );
+}
+
 function WorkspaceInner({
   initialUser,
-  initialChannels,
+  initialServers,
+  initialFriends,
+  initialDmConversations,
   initialMembers,
   initialVoiceOccupancy,
+  initialVoiceRoomCreatedAt,
   initialCapabilities,
   onPresenceRef,
   onNotifyRef,
@@ -108,12 +186,19 @@ function WorkspaceInner({
   const { openMenu } = useContextMenu();
 
   const [user, setUser] = useState<PrivateUser>(initialUser);
-  const [channels, setChannels] = useState<ChannelItem[]>(initialChannels);
+  const [servers, setServers] = useState<ServerDetail[]>(initialServers);
+  const [friends, setFriends] = useState<FriendItem[]>(initialFriends);
+  const [dmConversations, setDmConversations] =
+    useState<DmConversationItem[]>(initialDmConversations);
   const [members, setMembers] = useState<PublicUser[]>(initialMembers);
   const [voiceOccupancy, setVoiceOccupancy] =
     useState<VoiceOccupancyMap>(initialVoiceOccupancy);
+  const [voiceRoomCreatedAt, setVoiceRoomCreatedAt] = useState<VoiceRoomCreatedAtMap>(
+    initialVoiceRoomCreatedAt
+  );
   const [capabilities, setCapabilities] = useState(initialCapabilities);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [timerNowMs, setTimerNowMs] = useState<number>(() => Date.now());
   const [appPrefs, setAppPrefs] = useState<AppPreferences>(DEFAULT_APP_PREFERENCES);
 
   const appPrefsRef = useRef(appPrefs);
@@ -131,17 +216,36 @@ function WorkspaceInner({
     });
   }, []);
 
-  const [selectedChannelId, setSelectedChannelId] = useState<string>(
-    initialChannels.find((c) => c.type === "text")?.id ?? initialChannels[0]?.id ?? ""
+  // Navigation state: Home (Friends / DMs) vs Server
+  const [viewMode, setViewMode] = useState<"home" | "server">(
+    initialServers.length > 0 ? "server" : "home"
   );
-  const selectedChannelIdRef = useRef(selectedChannelId);
-  selectedChannelIdRef.current = selectedChannelId;
+  const [activeServerId, setActiveServerId] = useState<string | null>(
+    initialServers[0]?.id ?? null
+  );
+  const [selectedChannelId, setSelectedChannelId] = useState<string>(() =>
+    pickInitialChannelId(initialServers[0], initialUser.id)
+  );
+  const [homeView, setHomeView] = useState<"friends" | "dm">("friends");
+  const [friendsTab, setFriendsTab] = useState<FriendsTab>("online");
+  const [activeDmId, setActiveDmId] = useState<string | null>(null);
+  const [showDmProfileSidebar, setShowDmProfileSidebar] = useState(true);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+
+  // Refs for presence/notification deduplication
+  const navStateRef = useRef({
+    viewMode,
+    selectedChannelId,
+    homeView,
+    activeDmId,
+  });
+  navStateRef.current = { viewMode, selectedChannelId, homeView, activeDmId };
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [toasts, setToasts] = useState<NotificationItem[]>([]);
   const seenNotificationIdsRef = useRef<Set<string>>(new Set());
   const recentSystemAlertRef = useRef<{ key: string; at: number } | null>(null);
-  const channelReadAtMsRef = useRef<Map<string, number>>(new Map());
+  const readWatermarkRef = useRef<Map<string, number>>(new Map());
   const lastNotifyCheckRef = useRef<string>(new Date().toISOString());
   const pendingVoiceMoveRef = useRef<{
     userId: string;
@@ -150,26 +254,175 @@ function WorkspaceInner({
     until: number;
   } | null>(null);
 
+  // Popovers & Modals
   const [profilePopover, setProfilePopover] = useState<ProfilePopoverTarget | null>(null);
+  const [streamPreview, setStreamPreview] = useState<StreamPreviewTarget | null>(null);
+  const streamPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [serverDropdownOpen, setServerDropdownOpen] = useState(false);
+  const serverDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const [jumpTarget, setJumpTarget] = useState<{ messageId: string; nonce: number } | null>(
+    null
+  );
+  const [unpinnedEvent, setUnpinnedEvent] = useState<{
+    messageId: string;
+    nonce: number;
+  } | null>(null);
+
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteServer, setInviteServer] = useState<{ id: string; name: string } | null>(
+    null
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
   const [screenShareModalOpen, setScreenShareModalOpen] = useState(false);
   const [isStageMaximized, setIsStageMaximized] = useState(false);
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [channelModalType, setChannelModalType] = useState<"text" | "voice">("text");
+  const [channelModalCategoryId, setChannelModalCategoryId] = useState<string | null>(null);
   const [editingChannel, setEditingChannel] = useState<ChannelItem | null>(null);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<CategoryItem | null>(null);
+  const [serverCreateJoinOpen, setServerCreateJoinOpen] = useState(false);
+  const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
+  const [serverSettingsTab, setServerSettingsTab] =
+    useState<ServerSettingsTab>("overview");
+  const [findConvOpen, setFindConvOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Derived active server, permissions & accessible channels
+  const activeServer = useMemo(
+    () => servers.find((s) => s.id === activeServerId) ?? servers[0] ?? null,
+    [servers, activeServerId]
+  );
+
+  const myAssignedRoleIds = useMemo(
+    () => (activeServer ? (activeServer.memberRoleIds[user.id] ?? []) : []),
+    [activeServer, user.id]
+  );
+
+  const myServerPermissions = useMemo(() => {
+    if (!activeServer) return EMPTY_PERMISSIONS;
+    return computeEffectivePermissions({
+      userId: user.id,
+      ownerId: activeServer.ownerId,
+      serverRoles: activeServer.roles,
+      assignedRoleIds: myAssignedRoleIds,
+    });
+  }, [activeServer, myAssignedRoleIds, user.id]);
+
+  const accessibleServerChannels = useMemo(() => {
+    if (!activeServer) return [];
+    return activeServer.channels.filter((ch) =>
+      canUserAccessChannel({
+        channel: ch,
+        permissions: myServerPermissions,
+        assignedRoleIds: myAssignedRoleIds,
+      })
+    );
+  }, [activeServer, myServerPermissions, myAssignedRoleIds]);
+
+  const allVoiceChannels = useMemo(
+    () =>
+      servers.flatMap((s) =>
+        s.channels
+          .filter((c) => c.type === "voice")
+          .map((channel) => ({ server: s, channel }))
+      ),
+    [servers]
+  );
+
+  const activeChannel = useMemo(
+    () =>
+      accessibleServerChannels.find((c) => c.id === selectedChannelId) ??
+      accessibleServerChannels[0] ??
+      null,
+    [accessibleServerChannels, selectedChannelId]
+  );
+
+  const activeDm = useMemo(
+    () => dmConversations.find((d) => d.id === activeDmId) ?? null,
+    [dmConversations, activeDmId]
+  );
+
+  const onlineMemberIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of members) {
+      if (isMemberOnline(m, user.id, nowMs)) set.add(m.id);
+    }
+    return set;
+  }, [members, user.id, nowMs]);
+
+  const activeServerMembers = useMemo(() => {
+    if (!activeServer) return members;
+    const idSet = new Set(activeServer.memberIds);
+    return members.filter((m) => idSet.has(m.id));
+  }, [activeServer, members]);
+
+  const onlineServerMembers = useMemo(
+    () => activeServerMembers.filter((m) => onlineMemberIds.has(m.id)),
+    [activeServerMembers, onlineMemberIds]
+  );
+
+  const offlineServerMembers = useMemo(
+    () => activeServerMembers.filter((m) => !onlineMemberIds.has(m.id)),
+    [activeServerMembers, onlineMemberIds]
+  );
+
+  const isVoiceConnected =
+    voice.activeChannel !== null &&
+    voice.connectionState !== ConnectionState.Disconnected;
+
+  // Close server dropdown on outside click
+  useEffect(() => {
+    if (!serverDropdownOpen) return;
+    function onDown(e: MouseEvent) {
+      if (
+        serverDropdownRef.current &&
+        !serverDropdownRef.current.contains(e.target as Node)
+      ) {
+        setServerDropdownOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setServerDropdownOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [serverDropdownOpen]);
+
+  // Ctrl+K / Cmd+K quick conversation & channel switcher
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setFindConvOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function openSettings(tab: SettingsTab = "account") {
     setSettingsTab(tab);
     setSettingsOpen(true);
   }
 
+  function openServerInvites(srv?: ServerDetail | null) {
+    const target = srv ?? activeServer;
+    setInviteServer(target ? { id: target.id, name: target.name } : null);
+    setInviteOpen(true);
+  }
+
   /** Apply incoming LiveKit occupancy cleanly while preserving optimistic local voice moves */
   const applyVoiceOccupancy = useCallback(
     (incoming: VoiceOccupancyMap | null | undefined) => {
-      if (!incoming) return; // Never wipe existing occupancy on transient fetch error
+      if (!incoming) return;
 
       const move = pendingVoiceMoveRef.current;
       if (move && Date.now() < move.until) {
@@ -206,28 +459,37 @@ function WorkspaceInner({
       }
       setVoiceOccupancy(incoming);
     },
-    [user.avatarColor, user.avatarUrl, user.displayName, user.id, user.username, voice.isScreenSharing]
+    [
+      user.avatarColor,
+      user.avatarUrl,
+      user.displayName,
+      user.id,
+      user.username,
+      voice.isScreenSharing,
+    ]
   );
 
-  /** Called by TextChannelView whenever messages are displayed on screen while visible */
+  /** Called by TextChannelView (for both channels and DMs) when messages render visibly */
   const handleMessagesSeen = useCallback(
-    (channelId: string, messageIds: string[], latestCreatedAt?: string) => {
+    (feedId: string, messageIds: string[], latestCreatedAt?: string) => {
       for (const id of messageIds) {
         seenNotificationIdsRef.current.add(id);
       }
       if (latestCreatedAt) {
         const ms = new Date(latestCreatedAt).getTime();
         if (!Number.isNaN(ms)) {
-          const prev = channelReadAtMsRef.current.get(channelId) ?? 0;
-          if (ms > prev) {
-            channelReadAtMsRef.current.set(channelId, ms);
-          }
+          const prev = readWatermarkRef.current.get(feedId) ?? 0;
+          if (ms > prev) readWatermarkRef.current.set(feedId, ms);
         }
       }
       setNotifications((prev) => {
         let changed = false;
         const next = prev.map((n) => {
-          if (!n.read && (n.channelId === channelId || messageIds.includes(n.id))) {
+          const matches =
+            n.channelId === feedId ||
+            n.dmConversationId === feedId ||
+            messageIds.includes(n.id);
+          if (!n.read && matches) {
             changed = true;
             return { ...n, read: true };
           }
@@ -236,7 +498,12 @@ function WorkspaceInner({
         return changed ? next : prev;
       });
       setToasts((prev) =>
-        prev.filter((t) => t.channelId !== channelId && !messageIds.includes(t.id))
+        prev.filter(
+          (t) =>
+            t.channelId !== feedId &&
+            t.dmConversationId !== feedId &&
+            !messageIds.includes(t.id)
+        )
       );
     },
     []
@@ -251,8 +518,11 @@ function WorkspaceInner({
       if (!res.ok) return;
       const data = await res.json();
       if (data.members) setMembers(data.members);
-      if (data.channels) setChannels(data.channels);
+      if (data.servers) setServers(data.servers);
+      if (data.friends) setFriends(data.friends);
+      if (data.dmConversations) setDmConversations(data.dmConversations);
       if (data.voiceOccupancy) applyVoiceOccupancy(data.voiceOccupancy);
+      if (data.voiceRoomCreatedAt) setVoiceRoomCreatedAt(data.voiceRoomCreatedAt);
       if (data.capabilities) setCapabilities(data.capabilities);
       if (data.serverTime) {
         lastNotifyCheckRef.current = data.serverTime;
@@ -261,22 +531,36 @@ function WorkspaceInner({
 
       const incoming: NotificationItem[] = data.recentNotifications ?? [];
       if (incoming.length > 0) {
+        const nav = navStateRef.current;
         const fresh = incoming.filter((n) => {
           if (seenNotificationIdsRef.current.has(n.id)) return false;
           seenNotificationIdsRef.current.add(n.id);
 
-          // Already viewed in that channel before switching away
-          const readWatermark = channelReadAtMsRef.current.get(n.channelId) ?? 0;
+          const feedKey = n.dmConversationId || n.channelId;
+          const readWatermark = readWatermarkRef.current.get(feedKey) ?? 0;
           const msgMs = new Date(n.createdAt).getTime();
           if (!Number.isNaN(msgMs) && msgMs <= readWatermark) {
             return false;
           }
 
-          // Currently actively looking at that exact channel
-          const viewingSameChannel =
-            document.visibilityState === "visible" &&
-            n.channelId === selectedChannelIdRef.current;
-          return !viewingSameChannel;
+          if (document.visibilityState === "visible") {
+            if (
+              n.dmConversationId &&
+              nav.viewMode === "home" &&
+              nav.homeView === "dm" &&
+              nav.activeDmId === n.dmConversationId
+            ) {
+              return false;
+            }
+            if (
+              !n.dmConversationId &&
+              nav.viewMode === "server" &&
+              n.channelId === nav.selectedChannelId
+            ) {
+              return false;
+            }
+          }
+          return true;
         });
 
         if (fresh.length > 0) {
@@ -292,6 +576,18 @@ function WorkspaceInner({
     }
   }, [applyVoiceOccupancy]);
 
+  const refreshServersNow = useCallback(async () => {
+    try {
+      const res = await fetch("/api/servers", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.servers) setServers(data.servers);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const syncVoiceOccupancyOnly = useCallback(async () => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
     try {
@@ -299,6 +595,7 @@ function WorkspaceInner({
       if (!res.ok) return;
       const data = await res.json();
       applyVoiceOccupancy(data.voiceOccupancy);
+      if (data.voiceRoomCreatedAt) setVoiceRoomCreatedAt(data.voiceRoomCreatedAt);
     } catch {
       // ignore transient poll error
     }
@@ -308,7 +605,6 @@ function WorkspaceInner({
     const cleanMsg = payload.message.trim();
     if (!cleanMsg) return;
 
-    // Deduplicate rapid identical alerts within 1.5s
     const dedupKey = `${payload.kind}:${payload.title}:${cleanMsg}`;
     const now = Date.now();
     if (
@@ -350,13 +646,12 @@ function WorkspaceInner({
   }, []);
 
   onNotifyRef.current = pushSystemNotification;
-
   onPresenceRef.current = () => {
     void syncVoiceOccupancyOnly();
     void syncPresence();
   };
 
-  // Fast 3s live voice occupancy refresh (keeps other voice channels live without flicker)
+  // Fast 3s live voice occupancy refresh
   useEffect(() => {
     const timer = setInterval(() => {
       void syncVoiceOccupancyOnly();
@@ -364,16 +659,56 @@ function WorkspaceInner({
     return () => clearInterval(timer);
   }, [syncVoiceOccupancyOnly]);
 
-  // Mark active channel read when returning focus to the browser tab
+  // 1s ticker for live voice channel session durations
+  const hasAnyVoiceActivity =
+    Object.values(voiceOccupancy).some((list) => list.length > 0) ||
+    voice.participants.length > 0;
+
+  useEffect(() => {
+    if (!hasAnyVoiceActivity) return;
+    setTimerNowMs(Date.now());
+    const t = setInterval(() => setTimerNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [hasAnyVoiceActivity]);
+
+  const scheduleHideStreamPreview = useCallback(() => {
+    if (streamPreviewTimerRef.current) clearTimeout(streamPreviewTimerRef.current);
+    streamPreviewTimerRef.current = setTimeout(() => {
+      setStreamPreview(null);
+    }, 180);
+  }, []);
+
+  const cancelHideStreamPreview = useCallback(() => {
+    if (streamPreviewTimerRef.current) {
+      clearTimeout(streamPreviewTimerRef.current);
+      streamPreviewTimerRef.current = null;
+    }
+  }, []);
+
+  // Mark active view read when returning focus to browser tab
   useEffect(() => {
     function handleVisibility() {
       if (document.visibilityState === "visible") {
-        const chId = selectedChannelIdRef.current;
-        if (chId) {
+        const nav = navStateRef.current;
+        const activeFeedId =
+          nav.viewMode === "home" && nav.homeView === "dm"
+            ? nav.activeDmId
+            : nav.viewMode === "server"
+              ? nav.selectedChannelId
+              : null;
+        if (activeFeedId) {
           setNotifications((prev) =>
-            prev.map((n) => (n.channelId === chId ? { ...n, read: true } : n))
+            prev.map((n) =>
+              n.channelId === activeFeedId || n.dmConversationId === activeFeedId
+                ? { ...n, read: true }
+                : n
+            )
           );
-          setToasts((prev) => prev.filter((t) => t.channelId !== chId));
+          setToasts((prev) =>
+            prev.filter(
+              (t) => t.channelId !== activeFeedId && t.dmConversationId !== activeFeedId
+            )
+          );
         }
         void syncVoiceOccupancyOnly();
       }
@@ -382,7 +717,7 @@ function WorkspaceInner({
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [syncVoiceOccupancyOnly]);
 
-  // Always-online Web Worker heartbeat (never throttled on Alt+Tab / background tabs)
+  // Always-online Web Worker heartbeat
   useEffect(() => {
     let worker: Worker | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
@@ -420,19 +755,34 @@ function WorkspaceInner({
     };
   }, [syncPresence]);
 
-  const textChannels = channels.filter((c) => c.type === "text");
-  const voiceChannels = channels.filter((c) => c.type === "voice");
-  const activeChannel =
-    channels.find((c) => c.id === selectedChannelId) ?? channels[0] ?? null;
+  // Navigation helpers
+  function selectServer(serverId: string, specificChannelId?: string) {
+    const targetSrv = servers.find((s) => s.id === serverId);
+    setViewMode("server");
+    setActiveServerId(serverId);
+    setServerDropdownOpen(false);
+    setMobileMenuOpen(false);
+    const nextChId =
+      specificChannelId ?? pickInitialChannelId(targetSrv, user.id);
+    setSelectedChannelId(nextChId);
+    if (nextChId) {
+      setNotifications((prev) =>
+        prev.map((n) => (n.channelId === nextChId ? { ...n, read: true } : n))
+      );
+      setToasts((prev) => prev.filter((t) => t.channelId !== nextChId));
+    }
+  }
 
-  const onlineMembers = members.filter((m) => isMemberOnline(m, user.id, nowMs));
-  const offlineMembers = members.filter((m) => !isMemberOnline(m, user.id, nowMs));
-
-  const isVoiceConnected =
-    voice.activeChannel !== null &&
-    voice.connectionState !== ConnectionState.Disconnected;
-
-  function selectChannel(channelId: string) {
+  function selectChannel(channelId: string, serverId?: string) {
+    if (serverId) {
+      setActiveServerId(serverId);
+    } else {
+      const ownerSrv = servers.find((s) =>
+        s.channels.some((c) => c.id === channelId)
+      );
+      if (ownerSrv) setActiveServerId(ownerSrv.id);
+    }
+    setViewMode("server");
     setSelectedChannelId(channelId);
     setMobileMenuOpen(false);
     setNotifications((prev) =>
@@ -441,8 +791,101 @@ function WorkspaceInner({
     setToasts((prev) => prev.filter((t) => t.channelId !== channelId));
   }
 
-  /** Snapshot live participants from the channel we're leaving & optimistically move self
-   *  into targetChannel so neither the old channel nor the new channel ever flickers or reloads. */
+  function selectHomeFriends(tab?: FriendsTab) {
+    setViewMode("home");
+    setHomeView("friends");
+    if (tab) setFriendsTab(tab);
+    setMobileMenuOpen(false);
+  }
+
+  function selectDmConversation(dmId: string) {
+    setViewMode("home");
+    setHomeView("dm");
+    setActiveDmId(dmId);
+    setMobileMenuOpen(false);
+    setNotifications((prev) =>
+      prev.map((n) => (n.dmConversationId === dmId ? { ...n, read: true } : n))
+    );
+    setToasts((prev) => prev.filter((t) => t.dmConversationId !== dmId));
+  }
+
+  function handleOpenNotification(item: NotificationItem) {
+    if (item.dmConversationId) {
+      selectDmConversation(item.dmConversationId);
+    } else if (item.channelId) {
+      selectChannel(item.channelId, item.serverId ?? undefined);
+    }
+  }
+
+  async function ensureDmConversation(
+    targetUserId: string
+  ): Promise<DmConversationItem | null> {
+    const existing = dmConversations.find((c) => c.peer.id === targetUserId);
+    if (existing) return existing;
+
+    try {
+      const res = await fetch("/api/dms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetUserId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.conversation) {
+        pushSystemNotification({
+          kind: "error",
+          title: "Direct Message",
+          message: data.error ?? "Could not start conversation.",
+          source: "Direct Messages",
+        });
+        return null;
+      }
+      const created: DmConversationItem = data.conversation;
+      setDmConversations((prev) => [
+        created,
+        ...prev.filter((c) => c.id !== created.id),
+      ]);
+      return created;
+    } catch {
+      pushSystemNotification({
+        kind: "error",
+        title: "Direct Message",
+        message: "Network error opening direct message.",
+        source: "Direct Messages",
+      });
+      return null;
+    }
+  }
+
+  async function handleStartDm(targetUserId: string) {
+    const conv = await ensureDmConversation(targetUserId);
+    if (conv) {
+      selectDmConversation(conv.id);
+    }
+  }
+
+  async function handleQuickMessage(targetUserId: string, text: string) {
+    const conv = await ensureDmConversation(targetUserId);
+    if (!conv) return;
+    const res = await fetch(`/api/dms/${conv.id}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: text }),
+    });
+    if (res.ok) {
+      selectDmConversation(conv.id);
+      void syncPresence();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      pushSystemNotification({
+        kind: "error",
+        title: "Direct Message",
+        message: data.error ?? "Failed to send message.",
+        source: "Direct Messages",
+      });
+    }
+  }
+
+  /** Optimistic smooth voice channel join across any server */
   const handleJoinVoiceChannel = useCallback(
     (targetChannel: ChannelItem, watchIdentity?: string | null) => {
       const prevChannel = voice.activeChannel;
@@ -466,7 +909,6 @@ function WorkspaceInner({
           next[slug] = list.filter((o) => o.identity !== user.id);
         }
 
-        // Preserve live remote participants from the room we are leaving so they NEVER flicker away
         if (prevChannel && prevChannel.slug !== targetChannel.slug) {
           next[prevChannel.slug] = voice.participants
             .filter((p) => p.identity !== user.id)
@@ -480,7 +922,6 @@ function WorkspaceInner({
             }));
         }
 
-        // Append self smoothly into target channel without shifting existing occupants
         const targetExisting = next[targetChannel.slug] ?? [];
         next[targetChannel.slug] = [
           ...targetExisting,
@@ -506,6 +947,33 @@ function WorkspaceInner({
     [user, voice, voiceOccupancy]
   );
 
+  async function handleStartDmCall(targetUserId: string, withVideo: boolean) {
+    const conv = await ensureDmConversation(targetUserId);
+    if (!conv) return;
+    selectDmConversation(conv.id);
+
+    const dmRoomSlug = `dm-${conv.id}`;
+    const syntheticVoice: ChannelItem = {
+      id: conv.id,
+      name: conv.peer.displayName,
+      slug: dmRoomSlug,
+      type: "voice",
+      description: "Direct Call",
+      position: 0,
+    };
+
+    const seedOccupants = (voiceOccupancy[dmRoomSlug] ?? []).filter(
+      (o) => o.identity !== user.id
+    );
+
+    void voice.joinVoiceChannel(syntheticVoice, {
+      dmConversationId: conv.id,
+      startWithVideo: withVideo,
+      seedOccupants,
+      currentUser: user,
+    });
+  }
+
   const handleLeaveVoiceChannel = useCallback(() => {
     const prevChannel = voice.activeChannel;
     if (prevChannel) {
@@ -516,7 +984,6 @@ function WorkspaceInner({
         until: Date.now() + 2600,
       };
 
-      // Snapshot remaining peers into voiceOccupancy before disconnecting so they stay rock-solid
       setVoiceOccupancy((prev) => {
         const next: VoiceOccupancyMap = {};
         for (const [slug, list] of Object.entries(prev)) {
@@ -564,30 +1031,42 @@ function WorkspaceInner({
               avatarColor: updated.avatarColor,
               avatarUrl: updated.avatarUrl,
               bannerUrl: updated.bannerUrl,
+              bio: updated.bio,
+              presenceStatus: updated.presenceStatus,
+              customActivity: updated.customActivity,
             }
           : m
       )
     );
   }
 
-  function openCreateChannel(type: "text" | "voice") {
+  // Channel & Category CRUD
+  function openCreateChannel(type: "text" | "voice", categoryId: string | null = null) {
     setEditingChannel(null);
     setChannelModalType(type);
+    setChannelModalCategoryId(categoryId);
     setChannelModalOpen(true);
   }
 
   function openEditChannel(ch: ChannelItem) {
     setEditingChannel(ch);
     setChannelModalType(ch.type);
+    setChannelModalCategoryId(ch.categoryId ?? null);
     setChannelModalOpen(true);
   }
 
   function handleChannelSaved(saved: ChannelItem, isEdit: boolean) {
-    if (isEdit) {
-      setChannels((prev) => prev.map((c) => (c.id === saved.id ? saved : c)));
-    } else {
-      setChannels((prev) => [...prev, saved]);
-      setSelectedChannelId(saved.id);
+    setServers((prev) =>
+      prev.map((srv) => {
+        if (srv.id !== (saved.serverId ?? activeServer?.id)) return srv;
+        const nextChannels = isEdit
+          ? srv.channels.map((c) => (c.id === saved.id ? saved : c))
+          : [...srv.channels, saved];
+        return { ...srv, channels: nextChannels };
+      })
+    );
+    if (!isEdit) {
+      selectChannel(saved.id, saved.serverId ?? activeServer?.id);
     }
   }
 
@@ -600,53 +1079,252 @@ function WorkspaceInner({
       if (voice.activeChannel?.id === ch.id) {
         await voice.leaveVoiceChannel();
       }
-      setChannels((prev) => {
-        const remaining = prev.filter((c) => c.id !== ch.id);
-        if (selectedChannelId === ch.id) {
-          setSelectedChannelId(remaining[0]?.id ?? "");
+      setServers((prev) =>
+        prev.map((srv) => ({
+          ...srv,
+          channels: srv.channels.filter((c) => c.id !== ch.id),
+        }))
+      );
+      if (selectedChannelId === ch.id) {
+        const remaining = accessibleServerChannels.filter((c) => c.id !== ch.id);
+        setSelectedChannelId(remaining[0]?.id ?? "");
+      }
+    }
+  }
+
+  function handleCategorySaved(saved: CategoryItem, isEdit: boolean) {
+    setServers((prev) =>
+      prev.map((srv) => {
+        if (srv.id !== saved.serverId) return srv;
+        const nextCats = isEdit
+          ? srv.categories.map((c) => (c.id === saved.id ? saved : c))
+          : [...srv.categories, saved];
+        return { ...srv, categories: nextCats };
+      })
+    );
+  }
+
+  async function handleDeleteCategory(cat: CategoryItem) {
+    if (!activeServer) return;
+    const confirmed = window.confirm(
+      `Delete category "${cat.name}"? Channels inside will remain top-level.`
+    );
+    if (!confirmed) return;
+
+    const res = await fetch(
+      `/api/servers/${activeServer.id}/categories/${cat.id}`,
+      { method: "DELETE" }
+    );
+    if (res.ok) {
+      setServers((prev) =>
+        prev.map((srv) =>
+          srv.id !== activeServer.id
+            ? srv
+            : {
+                ...srv,
+                categories: srv.categories.filter((c) => c.id !== cat.id),
+                channels: srv.channels.map((ch) =>
+                  ch.categoryId === cat.id ? { ...ch, categoryId: null } : ch
+                ),
+              }
+        )
+      );
+    }
+  }
+
+  async function handleLeaveServer(srv: ServerDetail) {
+    const confirmed = window.confirm(`Leave "${srv.name}"?`);
+    if (!confirmed) return;
+    const res = await fetch(`/api/servers/${srv.id}/leave`, { method: "POST" });
+    if (res.ok) {
+      const remaining = servers.filter((s) => s.id !== srv.id);
+      setServers(remaining);
+      if (activeServerId === srv.id) {
+        if (remaining.length > 0) {
+          selectServer(remaining[0].id);
+        } else {
+          setActiveServerId(null);
+          selectHomeFriends("online");
         }
-        return remaining;
+      }
+      pushSystemNotification({
+        kind: "info",
+        title: "Left Server",
+        message: `You left ${srv.name}.`,
+        source: "Servers",
+      });
+    } else {
+      const data = await res.json().catch(() => ({}));
+      pushSystemNotification({
+        kind: "error",
+        title: "Leave Server",
+        message: data.error ?? "Could not leave server.",
+        source: srv.name,
       });
     }
   }
 
-  /** Locate which voice channel (if any) a member is currently in + whether they're live streaming */
+  function handleServerDeleted(deletedId: string) {
+    const remaining = servers.filter((s) => s.id !== deletedId);
+    setServers(remaining);
+    if (activeServerId === deletedId) {
+      if (remaining.length > 0) {
+        selectServer(remaining[0].id);
+      } else {
+        setActiveServerId(null);
+        selectHomeFriends("online");
+      }
+    }
+    pushSystemNotification({
+      kind: "info",
+      title: "Server Deleted",
+      message: "The server has been removed.",
+      source: "Servers",
+    });
+  }
+
+  // Friend & Role actions from Profile Popover
+  async function handleQuickAddFriend(username: string) {
+    const res = await fetch("/api/friends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      pushSystemNotification({
+        kind: "success",
+        title: data.autoAccepted ? "Friend Added" : "Request Sent",
+        message: data.autoAccepted
+          ? `You are now friends with @${username}.`
+          : `Friend request sent to @${username}.`,
+        source: "Friends",
+      });
+      setProfilePopover((prev) =>
+        prev && prev.username === username
+          ? {
+              ...prev,
+              friendshipStatus: data.autoAccepted ? "friend" : "outgoing",
+            }
+          : prev
+      );
+      void syncPresence();
+    } else {
+      pushSystemNotification({
+        kind: "error",
+        title: "Friend Request",
+        message: data.error ?? "Could not send request.",
+        source: "Friends",
+      });
+    }
+  }
+
+  async function handleQuickAcceptFriend(friendshipId: string) {
+    const res = await fetch(`/api/friends/${friendshipId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "accept" }),
+    });
+    if (res.ok) {
+      setProfilePopover((prev) =>
+        prev && prev.friendshipId === friendshipId
+          ? { ...prev, friendshipStatus: "friend" }
+          : prev
+      );
+      void syncPresence();
+    }
+  }
+
+  async function handleToggleUserRoleFromPopover(targetUserId: string, roleId: string) {
+    if (!activeServer) return;
+    const currentIds = activeServer.memberRoleIds[targetUserId] ?? [];
+    const nextIds = currentIds.includes(roleId)
+      ? currentIds.filter((id) => id !== roleId)
+      : [...currentIds, roleId];
+
+    const res = await fetch(
+      `/api/servers/${activeServer.id}/members/${targetUserId}/roles`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roleIds: nextIds }),
+      }
+    );
+    if (res.ok) {
+      setServers((prev) =>
+        prev.map((s) =>
+          s.id !== activeServer.id
+            ? s
+            : {
+                ...s,
+                memberRoleIds: {
+                  ...s.memberRoleIds,
+                  [targetUserId]: nextIds,
+                },
+              }
+        )
+      );
+      const updatedRoleObjs = activeServer.roles
+        .filter((r) => !r.isDefault && nextIds.includes(r.id))
+        .sort((a, b) => b.position - a.position);
+      setProfilePopover((prev) =>
+        prev && prev.id === targetUserId
+          ? { ...prev, serverRoles: updatedRoleObjs }
+          : prev
+      );
+    }
+  }
+
+  /** Locate which voice channel (across all servers) a user is currently in */
   function findMemberVoiceInfo(memberId: string): {
+    server: ServerDetail | null;
     channel: ChannelItem | null;
     isScreenSharing: boolean;
   } {
-    if (voice.activeChannel) {
+    if (voice.activeChannel && !voice.activeChannel.slug.startsWith("dm-")) {
       const liveP = voice.participants.find((p) => p.identity === memberId);
       if (liveP) {
+        const srv =
+          servers.find((s) =>
+            s.channels.some((c) => c.id === voice.activeChannel?.id)
+          ) ?? null;
         return {
+          server: srv,
           channel: voice.activeChannel,
           isScreenSharing: liveP.isScreenSharing,
         };
       }
     }
-    for (const ch of voiceChannels) {
-      const occ = (voiceOccupancy[ch.slug] ?? []).find((o) => o.identity === memberId);
+    for (const { server, channel } of allVoiceChannels) {
+      const occ = (voiceOccupancy[channel.slug] ?? []).find(
+        (o) => o.identity === memberId
+      );
       if (occ) {
         return {
-          channel: ch,
+          server,
+          channel,
           isScreenSharing: Boolean(occ.isScreenSharing),
         };
       }
     }
-    return { channel: null, isScreenSharing: false };
+    return { server: null, channel: null, isScreenSharing: false };
   }
 
-  /** Jump directly into a friend's live stream (joining their voice channel if needed) */
-  function handleWatchUserStream(targetUserId: string, explicitChannelId?: string | null) {
+  function handleWatchUserStream(
+    targetUserId: string,
+    explicitChannelId?: string | null,
+    explicitServerId?: string | null
+  ) {
     const info = findMemberVoiceInfo(targetUserId);
-    const targetChannel =
-      (explicitChannelId
-        ? voiceChannels.find((c) => c.id === explicitChannelId)
-        : null) ?? info.channel;
+    const found = explicitChannelId
+      ? allVoiceChannels.find((x) => x.channel.id === explicitChannelId)
+      : null;
+    const targetChannel = found?.channel ?? info.channel;
+    const targetServerId = explicitServerId ?? found?.server.id ?? info.server?.id;
 
     if (!targetChannel) return;
 
-    selectChannel(targetChannel.id);
+    selectChannel(targetChannel.id, targetServerId);
     if (voice.activeChannel?.id === targetChannel.id && isVoiceConnected) {
       voice.setWatchTargetIdentity(targetUserId);
     } else {
@@ -657,6 +1335,62 @@ function WorkspaceInner({
   function openEnrichedProfilePopover(rawTarget: ProfilePopoverTarget) {
     const matchedMember = members.find((m) => m.id === rawTarget.id);
     const voiceInfo = findMemberVoiceInfo(rawTarget.id);
+    const isSelf = rawTarget.id === user.id;
+    const isRecentlyActive = matchedMember
+      ? isSelf || nowMs - new Date(matchedMember.lastSeenAt).getTime() < ONLINE_WINDOW_MS
+      : Boolean(rawTarget.online ?? true);
+    const displayStatus = resolveDisplayStatus(
+      isRecentlyActive,
+      isSelf ? user.presenceStatus : matchedMember?.presenceStatus
+    );
+
+    const liveParticipant =
+      voiceInfo.channel && voice.activeChannel?.id === voiceInfo.channel.id
+        ? voice.participants.find((p) => p.identity === rawTarget.id)
+        : undefined;
+
+    const voicePeers = voiceInfo.channel
+      ? (voice.activeChannel?.id === voiceInfo.channel.id
+          ? voice.participants.map((p) => {
+              const pm = members.find((item) => item.id === p.identity);
+              return {
+                identity: p.identity,
+                name: pm?.displayName ?? p.name,
+                avatarColor: pm?.avatarColor ?? p.avatarColor,
+                avatarUrl: pm ? pm.avatarUrl : p.avatarUrl,
+              };
+            })
+          : (voiceOccupancy[voiceInfo.channel.slug] ?? []).map((o) => {
+              const pm = members.find((item) => item.id === o.identity);
+              return {
+                identity: o.identity,
+                name: pm?.displayName ?? o.name,
+                avatarColor: pm?.avatarColor ?? o.avatarColor,
+                avatarUrl: pm ? pm.avatarUrl : (o.avatarUrl ?? null),
+              };
+            }))
+      : undefined;
+
+    const friendEntry = friends.find((f) => f.user.id === rawTarget.id);
+    const friendshipStatus =
+      friendEntry?.direction === "friend"
+        ? "friend"
+        : friendEntry?.direction === "incoming"
+          ? "incoming"
+          : friendEntry?.direction === "outgoing"
+            ? "outgoing"
+            : "none";
+
+    const srvRoles =
+      viewMode === "server" && activeServer
+        ? getMemberRolesInServer(activeServer, rawTarget.id)
+        : undefined;
+    const canManageRolesHere =
+      viewMode === "server" &&
+      Boolean(activeServer) &&
+      (myServerPermissions.administrator || myServerPermissions.manageRoles);
+
+    setStreamPreview(null);
     setProfilePopover({
       ...rawTarget,
       displayName: matchedMember?.displayName ?? rawTarget.displayName,
@@ -664,13 +1398,27 @@ function WorkspaceInner({
       avatarColor: matchedMember?.avatarColor ?? rawTarget.avatarColor,
       avatarUrl: matchedMember ? matchedMember.avatarUrl : rawTarget.avatarUrl,
       bannerUrl: matchedMember ? matchedMember.bannerUrl : rawTarget.bannerUrl,
+      bio: matchedMember ? matchedMember.bio : rawTarget.bio,
+      customActivity: isSelf
+        ? user.customActivity
+        : matchedMember
+          ? matchedMember.customActivity
+          : rawTarget.customActivity,
+      createdAt: matchedMember?.createdAt ?? rawTarget.createdAt ?? null,
       role: matchedMember?.role ?? rawTarget.role,
-      online:
-        rawTarget.online ??
-        (matchedMember ? isMemberOnline(matchedMember, user.id, nowMs) : true),
+      online: displayStatus !== "offline",
+      status: displayStatus,
+      serverTag: viewMode === "server" ? (activeServer?.tag ?? null) : null,
+      serverRoles: srvRoles,
+      availableRoles: viewMode === "server" ? activeServer?.roles : undefined,
+      canManageRoles: canManageRolesHere,
+      friendshipStatus,
+      friendshipId: friendEntry?.friendshipId ?? null,
       inVoiceChannelName: voiceInfo.channel?.name ?? rawTarget.inVoiceChannelName ?? null,
       voiceChannelId: voiceInfo.channel?.id ?? rawTarget.voiceChannelId ?? null,
+      voicePeers,
       isScreenSharing: voiceInfo.isScreenSharing || Boolean(rawTarget.isScreenSharing),
+      liveScreenTrack: liveParticipant?.screenTrack ?? null,
     });
   }
 
@@ -732,8 +1480,21 @@ function WorkspaceInner({
     const rect = e.currentTarget.getBoundingClientRect();
     const matchedMember = members.find((m) => m.id === person.id);
 
+    const canMute =
+      user.role === "admin" ||
+      myServerPermissions.administrator ||
+      myServerPermissions.muteMembers;
+    const canKick =
+      user.role === "admin" ||
+      myServerPermissions.administrator ||
+      myServerPermissions.kickMembers;
+
     const entries: ContextMenuEntry[] = [
-      { type: "header", id: "u-hdr", label: matchedMember?.displayName ?? person.displayName },
+      {
+        type: "header",
+        id: "u-hdr",
+        label: matchedMember?.displayName ?? person.displayName,
+      },
     ];
 
     if (voiceInfo.isScreenSharing) {
@@ -742,7 +1503,8 @@ function WorkspaceInner({
         id: "u-watch-live",
         label: "Watch Live Stream",
         icon: <Play className="h-3.5 w-3.5 text-emerald-400" />,
-        onSelect: () => handleWatchUserStream(person.id, voiceInfo.channel?.id),
+        onSelect: () =>
+          handleWatchUserStream(person.id, voiceInfo.channel?.id, voiceInfo.server?.id),
       });
     }
 
@@ -770,6 +1532,16 @@ function WorkspaceInner({
         });
       },
     });
+
+    if (!isSelf) {
+      entries.push({
+        type: "item",
+        id: "u-dm",
+        label: "Message",
+        icon: <MessageSquare className="h-3.5 w-3.5" />,
+        onSelect: () => void handleStartDm(person.id),
+      });
+    }
 
     const uname = person.username ?? matchedMember?.username;
     if (uname) {
@@ -809,25 +1581,27 @@ function WorkspaceInner({
       );
     }
 
-    if (!isSelf && user.role === "admin" && roomSlug) {
-      entries.push(
-        { type: "divider", id: "u-d-admin" },
-        {
+    if (!isSelf && roomSlug && (canMute || canKick)) {
+      entries.push({ type: "divider", id: "u-d-admin" });
+      if (canMute) {
+        entries.push({
           type: "item",
           id: "u-server-mute",
           label: "Server Mute",
           icon: <MicOff className="h-3.5 w-3.5" />,
           onSelect: () => void voice.serverMuteParticipant(person.id, roomSlug),
-        },
-        {
+        });
+      }
+      if (canKick) {
+        entries.push({
           type: "item",
           id: "u-kick",
           label: "Kick from Voice",
           icon: <UserX className="h-3.5 w-3.5" />,
           danger: true,
           onSelect: () => void voice.kickParticipant(person.id, roomSlug),
-        }
-      );
+        });
+      }
     }
 
     openMenu(e, entries);
@@ -837,7 +1611,11 @@ function WorkspaceInner({
     e: React.MouseEvent<HTMLElement>,
     channel: ChannelItem
   ) {
-    const canManage = user.role === "admin" || channel.createdById === user.id;
+    const canManage =
+      myServerPermissions.administrator ||
+      myServerPermissions.manageChannels ||
+      channel.createdById === user.id;
+
     const entries: ContextMenuEntry[] = [
       {
         type: "header",
@@ -898,520 +1676,1132 @@ function WorkspaceInner({
     openMenu(e, entries);
   }
 
-  const showMembersRail = appPrefs.showMembersSidebar && !isStageMaximized;
+  function handleCategoryContextMenu(
+    e: React.MouseEvent<HTMLElement>,
+    cat: CategoryItem
+  ) {
+    const canManage =
+      myServerPermissions.administrator || myServerPermissions.manageChannels;
+    if (!canManage) return;
+
+    const defaultType = /voice|صدا/i.test(cat.name) ? "voice" : "text";
+    openMenu(e, [
+      { type: "header", id: "cat-hdr", label: cat.name },
+      {
+        type: "item",
+        id: "cat-add-ch",
+        label: "Create Channel Here",
+        icon: <Plus className="h-3.5 w-3.5" />,
+        onSelect: () => openCreateChannel(defaultType, cat.id),
+      },
+      {
+        type: "item",
+        id: "cat-rename",
+        label: "Rename Category",
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        onSelect: () => {
+          setEditingCategory(cat);
+          setCategoryModalOpen(true);
+        },
+      },
+      { type: "divider", id: "cat-d1" },
+      {
+        type: "item",
+        id: "cat-del",
+        label: "Delete Category",
+        icon: <Trash2 className="h-3.5 w-3.5" />,
+        danger: true,
+        onSelect: () => void handleDeleteCategory(cat),
+      },
+    ]);
+  }
+
+  function handleServerRailContextMenu(
+    e: React.MouseEvent<HTMLElement>,
+    srv: ServerDetail
+  ) {
+    const assigned = srv.memberRoleIds[user.id] ?? [];
+    const perms = computeEffectivePermissions({
+      userId: user.id,
+      ownerId: srv.ownerId,
+      serverRoles: srv.roles,
+      assignedRoleIds: assigned,
+    });
+    const isOwner = srv.ownerId === user.id;
+
+    const entries: ContextMenuEntry[] = [
+      { type: "header", id: "srv-hdr", label: srv.name },
+    ];
+
+    if (perms.administrator || perms.manageServer || perms.createInvites) {
+      entries.push({
+        type: "item",
+        id: "srv-inv",
+        label: "Invite People",
+        icon: <KeyRound className="h-3.5 w-3.5 text-emerald-400" />,
+        onSelect: () => openServerInvites(srv),
+      });
+    }
+
+    entries.push({
+      type: "item",
+      id: "srv-set",
+      label: "Server Settings",
+      icon: <Settings className="h-3.5 w-3.5" />,
+      onSelect: () => {
+        selectServer(srv.id);
+        setServerSettingsTab("overview");
+        setServerSettingsOpen(true);
+      },
+    });
+
+    if (!isOwner) {
+      entries.push(
+        { type: "divider", id: "srv-d1" },
+        {
+          type: "item",
+          id: "srv-leave",
+          label: "Leave Server",
+          icon: <LogOut className="h-3.5 w-3.5" />,
+          danger: true,
+          onSelect: () => void handleLeaveServer(srv),
+        }
+      );
+    }
+
+    openMenu(e, entries);
+  }
+
+  // Notification badges for ServerRail
+  const incomingRequestsCount = friends.filter((f) => f.direction === "incoming").length;
+  const unreadDmCount = notifications.filter(
+    (n) => !n.read && Boolean(n.dmConversationId)
+  ).length;
+  const homeBadgeCount = incomingRequestsCount + unreadDmCount;
+
+  const unreadServerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of notifications) {
+      if (!n.read && !n.dmConversationId && n.channelId) {
+        if (n.serverId) {
+          set.add(n.serverId);
+        } else {
+          const srv = servers.find((s) =>
+            s.channels.some((c) => c.id === n.channelId)
+          );
+          if (srv) set.add(srv.id);
+        }
+      }
+    }
+    return set;
+  }, [notifications, servers]);
+
+  const canManageChannels =
+    myServerPermissions.administrator || myServerPermissions.manageChannels;
+  const canCreateInvites =
+    myServerPermissions.administrator ||
+    myServerPermissions.manageServer ||
+    myServerPermissions.createInvites;
+  const showMembersRail =
+    viewMode === "server" && appPrefs.showMembersSidebar && !isStageMaximized;
+
+  // Render helper for a single channel row (Text or Voice)
+  function renderChannelItem(channel: ChannelItem) {
+    const selected = viewMode === "server" && activeChannel?.id === channel.id;
+    const canManageThis =
+      canManageChannels || channel.createdById === user.id;
+
+    if (channel.type === "text") {
+      const hasUnread = notifications.some(
+        (n) => !n.read && n.channelId === channel.id
+      );
+
+      return (
+        <li
+          key={channel.id}
+          onContextMenu={(e) => handleChannelContextMenu(e, channel)}
+          className="group flex items-center gap-1"
+        >
+          <button
+            type="button"
+            onClick={() => selectChannel(channel.id)}
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
+              selected
+                ? "bg-white/[0.08] font-medium text-zinc-100"
+                : hasUnread
+                  ? "font-medium text-zinc-100 hover:bg-white/[0.04]"
+                  : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+            }`}
+          >
+            <span className="relative flex shrink-0 items-center">
+              <Hash
+                className={`h-4 w-4 ${
+                  selected ? "text-emerald-400" : "text-zinc-500"
+                }`}
+              />
+              {channel.isPrivate && (
+                <Lock className="absolute -right-1 -top-1 h-2.5 w-2.5 text-amber-400" />
+              )}
+            </span>
+            <span dir="auto" className="truncate">
+              {channel.name}
+            </span>
+            {hasUnread && !selected && (
+              <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />
+            )}
+          </button>
+
+          {canManageThis && (
+            <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+              <button
+                type="button"
+                onClick={() => openEditChannel(channel)}
+                title="Edit channel"
+                className="rounded p-1 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteChannel(channel)}
+                title="Delete channel"
+                className="rounded p-1 text-zinc-500 hover:bg-rose-500/15 hover:text-rose-400"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+        </li>
+      );
+    }
+
+    // Voice Channel Row
+    const isLiveHere = voice.activeChannel?.id === channel.id && isVoiceConnected;
+    const rawOccupants = isLiveHere
+      ? voice.participants.map((p) => {
+          const occMeta = (voiceOccupancy[channel.slug] ?? []).find(
+            (o) => o.identity === p.identity
+          );
+          return {
+            identity: p.identity,
+            name: p.name,
+            username: p.username,
+            avatarColor: p.avatarColor,
+            avatarUrl: p.avatarUrl,
+            role: p.role,
+            isSpeaking: p.isSpeaking,
+            isMuted: p.isMuted,
+            isScreenSharing: p.isScreenSharing,
+            screenTrack: p.screenTrack,
+            joinedAt: occMeta?.joinedAt ?? null,
+          };
+        })
+      : (voiceOccupancy[channel.slug] ?? []).map((o) => ({
+          identity: o.identity,
+          name: o.name,
+          username: o.username,
+          avatarColor: o.avatarColor,
+          avatarUrl: o.avatarUrl ?? null,
+          role: undefined,
+          isSpeaking: false,
+          isMuted: false,
+          isScreenSharing: Boolean(o.isScreenSharing),
+          screenTrack: null,
+          joinedAt: o.joinedAt ?? null,
+        }));
+
+    const occupants = rawOccupants.map((occ) => {
+      const m = members.find((item) => item.id === occ.identity);
+      return {
+        ...occ,
+        name: m?.displayName ?? occ.name,
+        username: m?.username ?? occ.username,
+        avatarColor: m?.avatarColor ?? occ.avatarColor,
+        avatarUrl: m ? m.avatarUrl : occ.avatarUrl,
+        role: m?.role ?? occ.role,
+        presenceStatus: m?.presenceStatus,
+      };
+    });
+
+    const roomStartedAt = voiceRoomCreatedAt[channel.slug] ?? null;
+
+    return (
+      <li key={channel.id} className="space-y-0.5">
+        <div
+          onContextMenu={(e) => handleChannelContextMenu(e, channel)}
+          className="group flex items-center gap-1"
+        >
+          <button
+            type="button"
+            onClick={() => selectChannel(channel.id)}
+            onDoubleClick={() => {
+              selectChannel(channel.id);
+              handleJoinVoiceChannel(channel);
+            }}
+            title="Double-click to join voice"
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
+              selected
+                ? "bg-white/[0.08] font-medium text-zinc-100"
+                : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+            }`}
+          >
+            <span className="relative flex shrink-0 items-center">
+              <Volume2
+                className={`h-4 w-4 ${
+                  isLiveHere
+                    ? "text-emerald-400"
+                    : selected
+                      ? "text-zinc-200"
+                      : "text-zinc-500"
+                }`}
+              />
+              {channel.isPrivate && (
+                <Lock className="absolute -right-1 -top-1 h-2.5 w-2.5 text-amber-400" />
+              )}
+            </span>
+            <span dir="auto" className="truncate">
+              {channel.name}
+            </span>
+            {occupants.length > 0 && (
+              <span
+                className={`ml-auto text-[11px] font-medium tabular-nums ${
+                  roomStartedAt ? "text-emerald-400/90" : "text-zinc-500"
+                }`}
+              >
+                {roomStartedAt
+                  ? formatVoiceTimer(timerNowMs - roomStartedAt)
+                  : occupants.length}
+              </span>
+            )}
+          </button>
+
+          {canManageThis && (
+            <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+              <button
+                type="button"
+                onClick={() => openEditChannel(channel)}
+                title="Edit channel"
+                className="rounded p-1 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteChannel(channel)}
+                title="Delete channel"
+                className="rounded p-1 text-zinc-500 hover:bg-rose-500/15 hover:text-rose-400"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {occupants.length > 0 && (
+          <ul className="space-y-0.5 pl-5 pr-1 pt-0.5">
+            {occupants.map((occ) => (
+              <li key={occ.identity}>
+                <button
+                  type="button"
+                  onClick={(e) =>
+                    openUserCard(e, {
+                      id: occ.identity,
+                      displayName: occ.name,
+                      username: occ.username,
+                      avatarColor: occ.avatarColor,
+                      avatarUrl: occ.avatarUrl,
+                      role: occ.role,
+                      online: true,
+                    })
+                  }
+                  onContextMenu={(e) =>
+                    handleUserContextMenu(
+                      e,
+                      {
+                        id: occ.identity,
+                        displayName: occ.name,
+                        username: occ.username,
+                        avatarColor: occ.avatarColor,
+                        avatarUrl: occ.avatarUrl,
+                        role: occ.role,
+                      },
+                      { voiceRoomSlug: channel.slug, allowVolumeControl: true }
+                    )
+                  }
+                  onMouseEnter={(e) => {
+                    if (!occ.isScreenSharing) return;
+                    cancelHideStreamPreview();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setStreamPreview({
+                      identity: occ.identity,
+                      displayName: occ.name,
+                      avatarColor: occ.avatarColor,
+                      avatarUrl: occ.avatarUrl,
+                      status: resolveDisplayStatus(true, occ.presenceStatus),
+                      channelId: channel.id,
+                      channelName: channel.name,
+                      startedAtMs: occ.joinedAt ?? roomStartedAt,
+                      liveScreenTrack: occ.screenTrack ?? null,
+                      anchorRect: {
+                        top: rect.top,
+                        left: rect.left,
+                        right: rect.right,
+                        bottom: rect.bottom,
+                        width: rect.width,
+                        height: rect.height,
+                      },
+                    });
+                  }}
+                  onMouseLeave={() => {
+                    if (occ.isScreenSharing) scheduleHideStreamPreview();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                >
+                  <Avatar
+                    name={occ.name}
+                    color={occ.avatarColor}
+                    avatarUrl={occ.avatarUrl}
+                    size="xs"
+                    speaking={occ.isSpeaking}
+                    speakingOffsetClassName="ring-offset-[#0E0F12]"
+                  />
+                  <span dir="auto" className="min-w-0 flex-1 truncate text-xs font-medium">
+                    {occ.name}
+                  </span>
+                  {occ.isScreenSharing && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openUserCard(e, {
+                          id: occ.identity,
+                          displayName: occ.name,
+                          username: occ.username,
+                          avatarColor: occ.avatarColor,
+                          avatarUrl: occ.avatarUrl,
+                          role: occ.role,
+                          online: true,
+                        });
+                      }}
+                      title="Live streaming — hover to preview or click to view"
+                      className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-xs transition-transform hover:scale-105"
+                    >
+                      LIVE
+                    </span>
+                  )}
+                  {occ.isMuted && (
+                    <MicOff className="h-3 w-3 shrink-0 text-rose-400" />
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  }
+
+  // Group server channels by category
+  const categoryIdSet = new Set((activeServer?.categories ?? []).map((c) => c.id));
+  const uncategorizedChannels = accessibleServerChannels.filter(
+    (ch) => !ch.categoryId || !categoryIdSet.has(ch.categoryId)
+  );
+  const sortedCategories = [...(activeServer?.categories ?? [])].sort(
+    (a, b) => a.position - b.position
+  );
+
+  // Active DM peer live profile
+  const activeDmPeer = activeDm
+    ? (members.find((m) => m.id === activeDm.peer.id) ?? activeDm.peer)
+    : null;
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#09090B] text-zinc-100 select-none">
+      {/* Mobile Backdrop */}
       <AnimatePresence>
         {mobileMenuOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-30 bg-black/60 md:hidden"
+            className="fixed inset-0 z-30 bg-black/65 md:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
         )}
       </AnimatePresence>
 
-      {/* Left Rail */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[264px] shrink-0 flex-col border-r border-white/[0.07] bg-[#0E0F12] transition-transform duration-200 md:static md:translate-x-0 ${
+      {/* Left Navigation Cluster: ServerRail + Secondary Sidebar */}
+      <div
+        className={`fixed inset-y-0 left-0 z-40 flex h-full shrink-0 transition-transform duration-200 md:static md:translate-x-0 ${
           mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        {/* Workspace Header */}
-        <div className="flex h-14 items-center justify-between border-b border-white/[0.07] px-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
-              <Headphones className="h-3.5 w-3.5" />
-            </div>
-            <span className="text-sm font-bold tracking-tight text-zinc-100">
-              siq
-            </span>
-          </div>
+        <ServerRail
+          servers={servers}
+          viewMode={viewMode}
+          activeServerId={activeServer?.id ?? null}
+          homeBadgeCount={homeBadgeCount}
+          unreadServerIds={unreadServerIds}
+          onSelectHome={() => selectHomeFriends()}
+          onSelectServer={(id) => selectServer(id)}
+          onOpenCreateJoin={() => setServerCreateJoinOpen(true)}
+          onServerContextMenu={handleServerRailContextMenu}
+        />
 
-          <div className="flex items-center gap-1">
-            {user.role === "admin" && (
-              <button
-                type="button"
-                onClick={() => setInviteOpen(true)}
-                title="Invite friends"
-                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-400"
+        {/* Secondary Sidebar (DMs/Friends in Home mode, Server Channels in Server mode) */}
+        <aside className="flex w-[252px] shrink-0 flex-col border-r border-white/[0.07] bg-[#0E0F12]">
+          {viewMode === "home" ? (
+            <>
+              {/* Home Top Search Pill */}
+              <div className="flex h-14 shrink-0 items-center gap-2 border-b border-white/[0.07] px-3">
+                <button
+                  type="button"
+                  onClick={() => setFindConvOpen(true)}
+                  className="flex flex-1 items-center gap-2 rounded-lg border border-white/[0.08] bg-[#16171C] px-3 py-1.5 text-left text-xs text-zinc-400 transition-colors hover:border-white/[0.15] hover:text-zinc-200"
+                >
+                  <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                  <span className="truncate">Find or start a conversation</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(false)}
+                  aria-label="Close sidebar"
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Friends Nav + Direct Messages List */}
+              <nav
+                className="flex-1 space-y-4 overflow-y-auto px-2.5 py-3"
+                aria-label="Direct messages"
               >
-                <KeyRound className="h-4 w-4" />
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(false)}
-              aria-label="Close sidebar"
-              className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+                <button
+                  type="button"
+                  onClick={() => selectHomeFriends()}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors ${
+                    homeView === "friends"
+                      ? "bg-white/[0.09] text-zinc-100"
+                      : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                  }`}
+                >
+                  <Users
+                    className={`h-4 w-4 ${
+                      homeView === "friends" ? "text-emerald-400" : "text-zinc-400"
+                    }`}
+                  />
+                  <span>Friends</span>
+                  {incomingRequestsCount > 0 && (
+                    <span className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white">
+                      {incomingRequestsCount}
+                    </span>
+                  )}
+                </button>
 
-        {/* Channel Lists */}
-        <nav className="flex-1 space-y-6 overflow-y-auto px-2.5 py-4" aria-label="Channels">
-          {/* Text Channels */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between px-2">
-              <span className="text-[11px] font-medium text-zinc-500">Text Channels</span>
-              <button
-                type="button"
-                onClick={() => openCreateChannel("text")}
-                title="New text channel"
-                className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <ul className="space-y-0.5">
-              {textChannels.map((channel) => {
-                const selected = activeChannel?.id === channel.id;
-                const canManage =
-                  user.role === "admin" || channel.createdById === user.id;
-                const hasUnread = notifications.some(
-                  (n) => !n.read && n.channelId === channel.id
-                );
-
-                return (
-                  <li
-                    key={channel.id}
-                    onContextMenu={(e) => handleChannelContextMenu(e, channel)}
-                    className="group flex items-center gap-1"
-                  >
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between px-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                      Direct Messages
+                    </span>
                     <button
                       type="button"
-                      onClick={() => selectChannel(channel.id)}
-                      className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
-                        selected
-                          ? "bg-white/[0.08] font-medium text-zinc-100"
-                          : hasUnread
-                            ? "font-medium text-zinc-100 hover:bg-white/[0.04]"
-                            : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                      }`}
+                      onClick={() => setFindConvOpen(true)}
+                      title="Start a Direct Message"
+                      className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
                     >
-                      <Hash
-                        className={`h-4 w-4 shrink-0 ${
-                          selected ? "text-emerald-400" : "text-zinc-500"
-                        }`}
-                      />
-                      <span dir="auto" className="truncate">
-                        {channel.name}
-                      </span>
-                      {hasUnread && !selected && (
-                        <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />
-                      )}
+                      <Plus className="h-3.5 w-3.5" />
                     </button>
+                  </div>
 
-                    {canManage && (
-                      <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-                        <button
-                          type="button"
-                          onClick={() => openEditChannel(channel)}
-                          title="Edit channel"
-                          className="rounded p-1 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteChannel(channel)}
-                          title="Delete channel"
-                          className="rounded p-1 text-zinc-500 hover:bg-rose-500/15 hover:text-rose-400"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-
-          {/* Voice Channels */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between px-2">
-              <span className="text-[11px] font-medium text-zinc-500">Voice Channels</span>
-              <button
-                type="button"
-                onClick={() => openCreateChannel("voice")}
-                title="New voice channel"
-                className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <ul className="space-y-1">
-              {voiceChannels.map((channel) => {
-                const selected = activeChannel?.id === channel.id;
-                const isLiveHere =
-                  voice.activeChannel?.id === channel.id && isVoiceConnected;
-                const canManage =
-                  user.role === "admin" || channel.createdById === user.id;
-
-                const rawOccupants = isLiveHere
-                  ? voice.participants.map((p) => ({
-                      identity: p.identity,
-                      name: p.name,
-                      username: p.username,
-                      avatarColor: p.avatarColor,
-                      avatarUrl: p.avatarUrl,
-                      role: p.role,
-                      isSpeaking: p.isSpeaking,
-                      isMuted: p.isMuted,
-                      isScreenSharing: p.isScreenSharing,
-                    }))
-                  : (voiceOccupancy[channel.slug] ?? []).map((o) => ({
-                      identity: o.identity,
-                      name: o.name,
-                      username: o.username,
-                      avatarColor: o.avatarColor,
-                      avatarUrl: o.avatarUrl ?? null,
-                      role: undefined,
-                      isSpeaking: false,
-                      isMuted: false,
-                      isScreenSharing: Boolean(o.isScreenSharing),
-                    }));
-
-                // Always merge latest avatarUrl / bannerUrl / displayName from live members state
-                const occupants = rawOccupants.map((occ) => {
-                  const m = members.find((item) => item.id === occ.identity);
-                  return {
-                    ...occ,
-                    name: m?.displayName ?? occ.name,
-                    username: m?.username ?? occ.username,
-                    avatarColor: m?.avatarColor ?? occ.avatarColor,
-                    avatarUrl: m ? m.avatarUrl : occ.avatarUrl,
-                    role: m?.role ?? occ.role,
-                  };
-                });
-
-                return (
-                  <li key={channel.id} className="space-y-0.5">
-                    <div
-                      onContextMenu={(e) => handleChannelContextMenu(e, channel)}
-                      className="group flex items-center gap-1"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => selectChannel(channel.id)}
-                        onDoubleClick={() => {
-                          selectChannel(channel.id);
-                          handleJoinVoiceChannel(channel);
-                        }}
-                        title="Double-click to join voice"
-                        className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
-                          selected
-                            ? "bg-white/[0.08] font-medium text-zinc-100"
-                            : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                        }`}
-                      >
-                        <Volume2
-                          className={`h-4 w-4 shrink-0 ${
-                            isLiveHere
-                              ? "text-emerald-400"
-                              : selected
-                                ? "text-zinc-200"
-                                : "text-zinc-500"
-                          }`}
-                        />
-                        <span dir="auto" className="truncate">
-                          {channel.name}
-                        </span>
-                        {occupants.length > 0 && (
-                          <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">
-                            {occupants.length}
-                          </span>
-                        )}
-                      </button>
-
-                      {canManage && (
-                        <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-                          <button
-                            type="button"
-                            onClick={() => openEditChannel(channel)}
-                            title="Edit channel"
-                            className="rounded p-1 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteChannel(channel)}
-                            title="Delete channel"
-                            className="rounded p-1 text-zinc-500 hover:bg-rose-500/15 hover:text-rose-400"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      )}
+                  {dmConversations.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-white/[0.07] px-3 py-5 text-center text-[11px] text-zinc-500">
+                      No conversations yet. Click + to message a friend.
                     </div>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {dmConversations.map((conv) => {
+                        const livePeer =
+                          members.find((m) => m.id === conv.peer.id) ?? conv.peer;
+                        const isOnline = onlineMemberIds.has(livePeer.id);
+                        const status = resolveDisplayStatus(
+                          isOnline,
+                          livePeer.presenceStatus
+                        );
+                        const voiceInfo = findMemberVoiceInfo(livePeer.id);
+                        const dmCallActive =
+                          (voiceOccupancy[`dm-${conv.id}`]?.length ?? 0) > 0;
+                        const isSelected =
+                          homeView === "dm" && activeDmId === conv.id;
+                        const hasUnread = notifications.some(
+                          (n) => !n.read && n.dmConversationId === conv.id
+                        );
 
-                    {occupants.length > 0 && (
-                      <ul className="space-y-0.5 pl-5 pr-1 pt-0.5">
-                        {occupants.map((occ) => (
-                          <li key={occ.identity}>
+                        return (
+                          <li key={conv.id}>
                             <button
                               type="button"
-                              onClick={(e) =>
-                                openUserCard(e, {
-                                  id: occ.identity,
-                                  displayName: occ.name,
-                                  username: occ.username,
-                                  avatarColor: occ.avatarColor,
-                                  avatarUrl: occ.avatarUrl,
-                                  role: occ.role,
-                                  online: true,
-                                })
-                              }
+                              onClick={() => selectDmConversation(conv.id)}
                               onContextMenu={(e) =>
-                                handleUserContextMenu(
-                                  e,
+                                openMenu(e, [
                                   {
-                                    id: occ.identity,
-                                    displayName: occ.name,
-                                    username: occ.username,
-                                    avatarColor: occ.avatarColor,
-                                    avatarUrl: occ.avatarUrl,
-                                    role: occ.role,
+                                    type: "header",
+                                    id: "dm-h",
+                                    label: livePeer.displayName,
                                   },
-                                  { voiceRoomSlug: channel.slug, allowVolumeControl: true }
-                                )
+                                  {
+                                    type: "item",
+                                    id: "dm-call",
+                                    label: "Start Voice Call",
+                                    icon: <Phone className="h-3.5 w-3.5" />,
+                                    onSelect: () =>
+                                      void handleStartDmCall(livePeer.id, false),
+                                  },
+                                  {
+                                    type: "item",
+                                    id: "dm-video",
+                                    label: "Start Video Call",
+                                    icon: <Video className="h-3.5 w-3.5" />,
+                                    onSelect: () =>
+                                      void handleStartDmCall(livePeer.id, true),
+                                  },
+                                  {
+                                    type: "item",
+                                    id: "dm-prof",
+                                    label: "View Profile",
+                                    icon: <User className="h-3.5 w-3.5" />,
+                                    onSelect: () =>
+                                      openUserCard(e, {
+                                        id: livePeer.id,
+                                        displayName: livePeer.displayName,
+                                        username: livePeer.username,
+                                        avatarColor: livePeer.avatarColor,
+                                        avatarUrl: livePeer.avatarUrl,
+                                        role: livePeer.role,
+                                        online: isOnline,
+                                      }),
+                                  },
+                                ])
                               }
-                              className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                              className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                                isSelected
+                                  ? "bg-white/[0.09] text-zinc-100"
+                                  : hasUnread
+                                    ? "text-zinc-100 hover:bg-white/[0.05]"
+                                    : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                              }`}
                             >
                               <Avatar
-                                name={occ.name}
-                                color={occ.avatarColor}
-                                avatarUrl={occ.avatarUrl}
-                                size="xs"
-                                speaking={occ.isSpeaking}
-                                speakingOffsetClassName="ring-offset-[#0E0F12]"
+                                name={livePeer.displayName}
+                                color={livePeer.avatarColor}
+                                avatarUrl={livePeer.avatarUrl}
+                                size="sm"
+                                status={status}
+                                ringClassName="ring-[#0E0F12]"
                               />
-                              <span dir="auto" className="min-w-0 flex-1 truncate text-xs font-medium">
-                                {occ.name}
-                              </span>
-                              {occ.isScreenSharing && (
-                                <span
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openUserCard(e, {
-                                      id: occ.identity,
-                                      displayName: occ.name,
-                                      username: occ.username,
-                                      avatarColor: occ.avatarColor,
-                                      avatarUrl: occ.avatarUrl,
-                                      role: occ.role,
-                                      online: true,
-                                    });
-                                  }}
-                                  title="Live streaming — click to view & watch"
-                                  className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300 hover:bg-emerald-500 hover:text-zinc-950"
+                              <div className="min-w-0 flex-1">
+                                <p
+                                  dir="auto"
+                                  className={`truncate text-xs ${
+                                    isSelected || hasUnread
+                                      ? "font-semibold text-zinc-100"
+                                      : "font-medium"
+                                  }`}
                                 >
-                                  LIVE
-                                </span>
-                              )}
-                              {occ.isMuted && (
-                                <MicOff className="h-3 w-3 shrink-0 text-rose-400" />
+                                  {livePeer.displayName}
+                                </p>
+                                <p className="flex items-center gap-1 truncate text-[10px] text-zinc-500">
+                                  {dmCallActive ? (
+                                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                                      <Phone className="h-2.5 w-2.5" />
+                                      In call
+                                    </span>
+                                  ) : voiceInfo.isScreenSharing ? (
+                                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                                      <Monitor className="h-2.5 w-2.5" />
+                                      Sharing screen
+                                    </span>
+                                  ) : voiceInfo.channel ? (
+                                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                                      <Volume2 className="h-2.5 w-2.5" />
+                                      In voice
+                                    </span>
+                                  ) : livePeer.customActivity ? (
+                                    <span
+                                      dir="auto"
+                                      className="inline-flex items-center gap-1 truncate text-zinc-400"
+                                    >
+                                      <Gamepad2 className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
+                                      <span className="truncate">
+                                        {livePeer.customActivity}
+                                      </span>
+                                    </span>
+                                  ) : conv.lastMessagePreview ? (
+                                    <span dir="auto" className="truncate">
+                                      {conv.lastMessagePreview}
+                                    </span>
+                                  ) : (
+                                    <span>@{livePeer.username}</span>
+                                  )}
+                                </p>
+                              </div>
+                              {hasUnread && !isSelected && (
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-rose-500" />
                               )}
                             </button>
                           </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </nav>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </nav>
+            </>
+          ) : (
+            <>
+              {/* Server Header + Optional Banner + Dropdown Menu */}
+              <div ref={serverDropdownRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setServerDropdownOpen((v) => !v)}
+                  className={`relative flex w-full items-start justify-between overflow-hidden border-b border-white/[0.07] px-3.5 text-left transition-colors ${
+                    activeServer?.bannerUrl
+                      ? "h-28 pt-3"
+                      : "h-14 items-center hover:bg-white/[0.03]"
+                  }`}
+                >
+                  {activeServer?.bannerUrl && (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeServer.bannerUrl}
+                        alt={activeServer.name}
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/35 to-[#0E0F12]/90" />
+                    </>
+                  )}
 
-        {/* Active Voice Connection Dock */}
-        <AnimatePresence>
-          {isVoiceConnected && voice.activeChannel && (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 12 }}
-              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-              className="border-t border-white/[0.07] bg-[#111317] px-3 py-2.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                  <ConnectionStatusButton stats={voice.networkStats} />
+                  <div className="relative z-10 flex min-w-0 items-center gap-2">
+                    <span
+                      dir="auto"
+                      className="truncate text-sm font-bold tracking-tight text-zinc-100 drop-shadow-xs"
+                    >
+                      {activeServer?.name ?? "siq"}
+                    </span>
+                    {activeServer?.tag && (
+                      <span className="shrink-0 rounded border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs">
+                        {activeServer.tag}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="relative z-10 flex shrink-0 items-center gap-1">
+                    <ChevronDown
+                      className={`h-4 w-4 text-zinc-300 transition-transform ${
+                        serverDropdownOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMobileMenuOpen(false);
+                      }}
+                      className="rounded-lg p-1 text-zinc-300 hover:bg-white/[0.1] md:hidden"
+                    >
+                      <X className="h-4 w-4" />
+                    </span>
+                  </div>
+                </button>
+
+                {/* Server Dropdown Menu */}
+                <AnimatePresence>
+                  {serverDropdownOpen && activeServer && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                      transition={{ duration: 0.14 }}
+                      className="absolute left-2.5 right-2.5 top-[calc(100%+6px)] z-50 rounded-xl border border-white/[0.11] bg-[#14151A] p-1.5 shadow-2xl shadow-black/85"
+                    >
+                      {canCreateInvites && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setServerDropdownOpen(false);
+                            openServerInvites(activeServer);
+                          }}
+                          className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15"
+                        >
+                          <span>Invite People</span>
+                          <UserPlus className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setServerDropdownOpen(false);
+                          setServerSettingsTab("overview");
+                          setServerSettingsOpen(true);
+                        }}
+                        className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                      >
+                        <span>Server Settings</span>
+                        <Settings className="h-3.5 w-3.5 text-zinc-400" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setServerDropdownOpen(false);
+                          setServerSettingsTab("roles");
+                          setServerSettingsOpen(true);
+                        }}
+                        className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                      >
+                        <span>Roles &amp; Permissions</span>
+                        <Shield className="h-3.5 w-3.5 text-zinc-400" />
+                      </button>
+
+                      {canManageChannels && (
+                        <>
+                          <div className="my-1 h-px bg-white/[0.07]" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setServerDropdownOpen(false);
+                              openCreateChannel("text", null);
+                            }}
+                            className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                          >
+                            <span>Create Channel</span>
+                            <Plus className="h-3.5 w-3.5 text-zinc-400" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setServerDropdownOpen(false);
+                              setEditingCategory(null);
+                              setCategoryModalOpen(true);
+                            }}
+                            className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                          >
+                            <span>Create Category</span>
+                            <FolderPlus className="h-3.5 w-3.5 text-zinc-400" />
+                          </button>
+                        </>
+                      )}
+
+                      {activeServer.ownerId !== user.id && (
+                        <>
+                          <div className="my-1 h-px bg-white/[0.07]" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setServerDropdownOpen(false);
+                              void handleLeaveServer(activeServer);
+                            }}
+                            className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+                          >
+                            <span>Leave Server</span>
+                            <LogOut className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Collapsible Categorized Channel List */}
+              <nav
+                className="flex-1 space-y-5 overflow-y-auto px-2.5 py-3.5"
+                aria-label="Server channels"
+              >
+                {/* Uncategorized top-level channels */}
+                {uncategorizedChannels.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {uncategorizedChannels.map((ch) => renderChannelItem(ch))}
+                  </ul>
+                )}
+
+                {/* Categorized Channels */}
+                {sortedCategories.map((cat) => {
+                  const catChannels = accessibleServerChannels.filter(
+                    (ch) => ch.categoryId === cat.id
+                  );
+                  const isCollapsed = Boolean(collapsedCategories[cat.id]);
+                  const defaultCatType = /voice|صدا/i.test(cat.name) ? "voice" : "text";
+
+                  return (
+                    <div key={cat.id}>
+                      <div
+                        onContextMenu={(e) => handleCategoryContextMenu(e, cat)}
+                        className="mb-1.5 flex items-center gap-1.5 px-1.5"
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCollapsedCategories((prev) => ({
+                              ...prev,
+                              [cat.id]: !prev[cat.id],
+                            }))
+                          }
+                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-300"
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight className="h-3 w-3 shrink-0" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3 shrink-0" />
+                          )}
+                          <span dir="auto" className="truncate">
+                            {cat.name}
+                          </span>
+                          <span className="ml-1 h-px flex-1 bg-white/[0.06]" />
+                        </button>
+
+                        {canManageChannels && (
+                          <button
+                            type="button"
+                            onClick={() => openCreateChannel(defaultCatType, cat.id)}
+                            title={`Create channel in ${cat.name}`}
+                            className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {!isCollapsed && (
+                        <ul className="space-y-0.5">
+                          {catChannels.length === 0 ? (
+                            <li className="px-2.5 py-1 text-[11px] text-zinc-600">
+                              No channels yet
+                            </li>
+                          ) : (
+                            catChannels.map((ch) => renderChannelItem(ch))
+                          )}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </nav>
+            </>
+          )}
+
+          {/* Persistent Active Voice / DM Call Connection Dock */}
+          <AnimatePresence>
+            {isVoiceConnected && voice.activeChannel && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 12 }}
+                transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                className="border-t border-white/[0.07] bg-[#111317] px-3 py-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                    <ConnectionStatusButton stats={voice.networkStats} />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (voice.activeChannel!.slug.startsWith("dm-")) {
+                          selectDmConversation(voice.activeChannel!.id);
+                        } else {
+                          selectChannel(voice.activeChannel!.id);
+                        }
+                      }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
+                        {voice.connectionState === ConnectionState.Connecting
+                          ? "Connecting..."
+                          : "Voice Connected"}
+                      </p>
+                      <p dir="auto" className="truncate text-xs font-medium text-zinc-300">
+                        {voice.activeChannel.name}
+                      </p>
+                    </button>
+                  </div>
 
                   <button
                     type="button"
-                    onClick={() => selectChannel(voice.activeChannel!.id)}
-                    className="min-w-0 flex-1 text-left"
+                    onClick={handleLeaveVoiceChannel}
+                    title="Disconnect"
+                    className="rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
                   >
-                    <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
-                      {voice.connectionState === ConnectionState.Connecting
-                        ? "Connecting..."
-                        : "Voice Connected"}
-                    </p>
-                    <p dir="auto" className="truncate text-xs font-medium text-zinc-300">
-                      {voice.activeChannel.name}
-                    </p>
+                    <PhoneOff className="h-4 w-4" />
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleLeaveVoiceChannel}
-                  title="Disconnect"
-                  className="rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
-                >
-                  <PhoneOff className="h-4 w-4" />
-                </button>
-              </div>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void voice.toggleMute()}
+                    title={voice.isMuted ? "Unmute" : "Mute"}
+                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
+                      voice.isMuted
+                        ? "bg-rose-500/15 text-rose-300"
+                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
+                    }`}
+                  >
+                    {voice.isMuted ? (
+                      <MicOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Mic className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void voice.toggleDeafen()}
+                    title={voice.isDeafened ? "Undeafen" : "Deafen"}
+                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
+                      voice.isDeafened
+                        ? "bg-rose-500/15 text-rose-300"
+                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
+                    }`}
+                  >
+                    {voice.isDeafened ? (
+                      <VolumeX className="h-3.5 w-3.5" />
+                    ) : (
+                      <Volume2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScreenShareModalOpen(true)}
+                    title={voice.isScreenSharing ? "Stream options & stop" : "Share screen"}
+                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
+                      voice.isScreenSharing
+                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
+                    }`}
+                  >
+                    <Monitor className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-              <div className="mt-2 grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => void voice.toggleMute()}
-                  title={voice.isMuted ? "Unmute" : "Mute"}
-                  className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                    voice.isMuted
-                      ? "bg-rose-500/15 text-rose-300"
-                      : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                  }`}
-                >
-                  {voice.isMuted ? (
-                    <MicOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Mic className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void voice.toggleDeafen()}
-                  title={voice.isDeafened ? "Undeafen" : "Deafen"}
-                  className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                    voice.isDeafened
-                      ? "bg-rose-500/15 text-rose-300"
-                      : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                  }`}
-                >
-                  {voice.isDeafened ? (
-                    <VolumeX className="h-3.5 w-3.5" />
-                  ) : (
-                    <Volume2 className="h-3.5 w-3.5" />
-                  )}
-                </button>
-                {/* Opens Screen Share Setup / Live Stream Controls modal (never accidentally kills stream) */}
-                <button
-                  type="button"
-                  onClick={() => setScreenShareModalOpen(true)}
-                  title={voice.isScreenSharing ? "Stream options & stop" : "Share screen"}
-                  className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                    voice.isScreenSharing
-                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
-                      : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                  }`}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+          {/* Persistent Bottom Profile Dock */}
+          <div className="border-t border-white/[0.07] bg-[#0B0C0E] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setStatusPickerOpen((v) => !v)}
+                title="Set status & custom activity"
+                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-white/[0.05]"
+              >
+                <Avatar
+                  name={user.displayName}
+                  color={user.avatarColor}
+                  avatarUrl={user.avatarUrl}
+                  size="md"
+                  status={
+                    user.presenceStatus === "invisible" ? "offline" : user.presenceStatus
+                  }
+                  ringClassName="ring-[#0B0C0E]"
+                />
+                <div className="min-w-0">
+                  <p dir="auto" className="truncate text-xs font-medium text-zinc-100">
+                    {user.displayName}
+                  </p>
+                  <p dir="auto" className="truncate text-[11px] font-medium text-zinc-500">
+                    {user.customActivity ||
+                      (user.presenceStatus === "idle"
+                        ? "Idle"
+                        : user.presenceStatus === "dnd"
+                          ? "Do Not Disturb"
+                          : user.presenceStatus === "invisible"
+                            ? "Invisible"
+                            : `@${user.username}`)}
+                  </p>
+                </div>
+              </button>
 
-        {/* Bottom Profile Dock (opens full Discord-style SettingsModal) */}
-        <div className="border-t border-white/[0.07] bg-[#0B0C0E] p-3">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => openSettings("account")}
-              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-white/[0.05]"
-            >
-              <Avatar
-                name={user.displayName}
-                color={user.avatarColor}
-                avatarUrl={user.avatarUrl}
-                size="md"
-                online
-              />
-              <div className="min-w-0">
-                <p dir="auto" className="truncate text-xs font-medium text-zinc-100">
-                  {user.displayName}
-                </p>
-                <p className="truncate text-[11px] font-medium text-zinc-500">
-                  @{user.username}
-                </p>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => openSettings("account")}
-              title="User & App Settings"
-              className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
+              <button
+                type="button"
+                onClick={() => openSettings("account")}
+                title="User & App Settings"
+                className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
+      </div>
 
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col bg-[#121316]">
-        {/* Top Channel Header */}
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] px-4 md:px-6">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              aria-label="Open channels menu"
-              className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
-            >
-              <Menu className="h-4 w-4" />
-            </button>
-
-            {activeChannel && (
-              <>
-                {activeChannel.type === "text" ? (
-                  <Hash className="h-4 w-4 shrink-0 text-zinc-500" />
-                ) : (
-                  <Volume2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                )}
-                <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
-                  {activeChannel.name}
-                </h1>
-                {activeChannel.description && (
-                  <span
-                    dir="auto"
-                    className="hidden truncate border-l border-white/[0.08] pl-3 text-xs text-zinc-500 sm:inline"
-                  >
-                    {activeChannel.description}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {user.role === "admin" && (
+        {/* TOP BAR — Dynamic based on Home/Friends, Home/DM, or Server Channel */}
+        {viewMode === "home" && homeView === "friends" ? (
+          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-4 md:px-6">
+            <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
               <button
                 type="button"
-                onClick={() => setInviteOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open navigation menu"
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
               >
-                <KeyRound className="h-3.5 w-3.5" />
-                <span>Invites</span>
+                <Menu className="h-4 w-4" />
               </button>
-            )}
+
+              <div className="flex shrink-0 items-center gap-2 pr-2">
+                <Users className="h-4 w-4 text-emerald-400" />
+                <h1 className="text-sm font-semibold text-zinc-100">Friends</h1>
+              </div>
+
+              <span className="h-4 w-px shrink-0 bg-white/[0.1]" />
+
+              <div className="flex shrink-0 items-center gap-1">
+                {(
+                  [
+                    { id: "online", label: "Online" },
+                    { id: "all", label: "All" },
+                    { id: "pending", label: "Pending" },
+                  ] as const
+                ).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setFriendsTab(t.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      friendsTab === t.id
+                        ? "bg-white/[0.1] text-zinc-100"
+                        : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
+                    }`}
+                  >
+                    <span>{t.label}</span>
+                    {t.id === "pending" && incomingRequestsCount > 0 && (
+                      <span className="rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-bold tabular-nums text-white">
+                        {incomingRequestsCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => setFriendsTab("add")}
+                  className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    friendsTab === "add"
+                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+                      : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                  }`}
+                >
+                  Add Friend
+                </button>
+              </div>
+            </div>
 
             <NotificationBell
               notifications={notifications}
               onSelectChannel={(id) => selectChannel(id)}
+              onSelectNotification={handleOpenNotification}
               onMarkItemRead={(id) =>
                 setNotifications((prev) =>
                   prev.map((n) => (n.id === id ? { ...n, read: true } : n))
@@ -1421,20 +2811,267 @@ function WorkspaceInner({
                 setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
               }
             />
-          </div>
-        </header>
+          </header>
+        ) : viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer ? (
+          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-4 md:px-6">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open navigation menu"
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
 
-        {/* Active Channel View + Right Members Rail */}
+              <Avatar
+                name={activeDmPeer.displayName}
+                color={activeDmPeer.avatarColor}
+                avatarUrl={activeDmPeer.avatarUrl}
+                size="sm"
+                status={resolveDisplayStatus(
+                  onlineMemberIds.has(activeDmPeer.id),
+                  activeDmPeer.presenceStatus
+                )}
+                ringClassName="ring-[#121316]"
+              />
+              <div className="min-w-0">
+                <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
+                  {activeDmPeer.displayName}
+                </h1>
+              </div>
+              <span className="hidden truncate text-xs text-zinc-500 sm:inline">
+                @{activeDmPeer.username}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => void handleStartDmCall(activeDmPeer.id, false)}
+                title="Start Voice Call"
+                aria-label="Start Voice Call"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+              >
+                <Phone className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleStartDmCall(activeDmPeer.id, true)}
+                title="Start Video Call"
+                aria-label="Start Video Call"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+              >
+                <Video className="h-4 w-4" />
+              </button>
+
+              <ChannelHeaderTools
+                channelId={activeDm.id}
+                channelName={activeDmPeer.displayName}
+                apiBasePath={`/api/dms/${activeDm.id}/messages`}
+                searchPlaceholder={`Search @${activeDmPeer.username}`}
+                currentUser={user}
+                members={members}
+                onJumpToMessage={(messageId) =>
+                  setJumpTarget({ messageId, nonce: Date.now() })
+                }
+                onMessageUnpinned={(messageId) =>
+                  setUnpinnedEvent({ messageId, nonce: Date.now() })
+                }
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowDmProfileSidebar((v) => !v)}
+                title={showDmProfileSidebar ? "Hide User Profile" : "Show User Profile"}
+                aria-label="Toggle user profile sidebar"
+                className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors lg:flex ${
+                  showDmProfileSidebar
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
+                }`}
+              >
+                <PanelRight className="h-4 w-4" />
+              </button>
+
+              <NotificationBell
+                notifications={notifications}
+                onSelectChannel={(id) => selectChannel(id)}
+                onSelectNotification={handleOpenNotification}
+                onMarkItemRead={(id) =>
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+                  )
+                }
+                onMarkAllRead={() =>
+                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+                }
+              />
+            </div>
+          </header>
+        ) : (
+          <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] px-4 md:px-6">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Open channels menu"
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+
+              {activeChannel && (
+                <>
+                  {activeChannel.type === "text" ? (
+                    <Hash className="h-4 w-4 shrink-0 text-zinc-500" />
+                  ) : (
+                    <Volume2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  )}
+                  <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
+                    {activeChannel.name}
+                  </h1>
+                  {activeChannel.isPrivate && (
+                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                      <Lock className="h-2.5 w-2.5" />
+                      Private
+                    </span>
+                  )}
+                  {activeChannel.description && (
+                    <span
+                      dir="auto"
+                      className="hidden truncate border-l border-white/[0.08] pl-3 text-xs text-zinc-500 sm:inline"
+                    >
+                      {activeChannel.description}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {activeChannel && activeChannel.type === "text" && (
+                <ChannelHeaderTools
+                  channelId={activeChannel.id}
+                  channelName={activeChannel.name}
+                  currentUser={user}
+                  members={members}
+                  onJumpToMessage={(messageId) =>
+                    setJumpTarget({ messageId, nonce: Date.now() })
+                  }
+                  onMessageUnpinned={(messageId) =>
+                    setUnpinnedEvent({ messageId, nonce: Date.now() })
+                  }
+                />
+              )}
+
+              {canCreateInvites && activeServer && (
+                <button
+                  type="button"
+                  onClick={() => openServerInvites(activeServer)}
+                  className="hidden items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 sm:inline-flex"
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                  <span>Invite</span>
+                </button>
+              )}
+
+              <NotificationBell
+                notifications={notifications}
+                onSelectChannel={(id) => selectChannel(id)}
+                onSelectNotification={handleOpenNotification}
+                onMarkItemRead={(id) =>
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+                  )
+                }
+                onMarkAllRead={() =>
+                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+                }
+              />
+            </div>
+          </header>
+        )}
+
+        {/* MAIN VIEWPORT */}
         <div className="flex min-h-0 flex-1 select-text">
-          {activeChannel ? (
+          {viewMode === "home" && homeView === "friends" ? (
+            <>
+              <FriendsHubView
+                currentUser={user}
+                friends={friends}
+                allMembers={members}
+                onlineMemberIds={onlineMemberIds}
+                activeTab={friendsTab}
+                getUserVoiceActivity={(uid) => {
+                  const vi = findMemberVoiceInfo(uid);
+                  return {
+                    inVoice: Boolean(vi.channel),
+                    channelName: vi.channel?.name,
+                    isScreenSharing: vi.isScreenSharing,
+                  };
+                }}
+                onFriendsChanged={() => void syncPresence()}
+                onStartDm={(uid) => void handleStartDm(uid)}
+                onStartDmCall={(uid, withVideo) => void handleStartDmCall(uid, withVideo)}
+                onOpenUserProfile={openEnrichedProfilePopover}
+              />
+              <ActiveNowRail
+                friends={friends}
+                servers={servers}
+                members={members}
+                onlineMemberIds={onlineMemberIds}
+                voiceOccupancy={voiceOccupancy}
+                onJoinVoice={(serverId, ch) => {
+                  selectChannel(ch.id, serverId);
+                  handleJoinVoiceChannel(ch);
+                }}
+                onWatchStream={(serverId, ch, streamerId) =>
+                  handleWatchUserStream(streamerId, ch.id, serverId)
+                }
+                onStartDm={(uid) => void handleStartDm(uid)}
+              />
+            </>
+          ) : viewMode === "home" && homeView === "dm" && activeDm ? (
+            <DmConversationView
+              conversation={activeDm}
+              currentUser={user}
+              members={members}
+              servers={servers}
+              onlineMemberIds={onlineMemberIds}
+              voiceOccupancy={voiceOccupancy}
+              blobReady={capabilities.blobReady}
+              showProfileSidebar={showDmProfileSidebar}
+              density={appPrefs.messageDensity}
+              textScale={appPrefs.textScale}
+              jumpTarget={jumpTarget}
+              unpinnedEvent={unpinnedEvent}
+              onStartCall={(withVideo) =>
+                void handleStartDmCall(activeDm.peer.id, withVideo)
+              }
+              onLeaveCall={handleLeaveVoiceChannel}
+              onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
+              onOpenUserProfile={openEnrichedProfilePopover}
+              onSelectServer={(sid) => selectServer(sid)}
+              onMessagesSeen={handleMessagesSeen}
+            />
+          ) : activeChannel ? (
             activeChannel.type === "text" ? (
               <TextChannelView
                 channel={activeChannel}
                 currentUser={user}
                 members={members}
                 blobReady={capabilities.blobReady}
+                canSendMessages={
+                  myServerPermissions.administrator || myServerPermissions.sendMessages
+                }
+                canManageMessages={
+                  myServerPermissions.administrator || myServerPermissions.manageMessages
+                }
                 density={appPrefs.messageDensity}
                 textScale={appPrefs.textScale}
+                jumpTarget={jumpTarget}
+                unpinnedEvent={unpinnedEvent}
                 onOpenUserProfile={openEnrichedProfilePopover}
                 onMessagesSeen={handleMessagesSeen}
               />
@@ -1456,18 +3093,32 @@ function WorkspaceInner({
             )
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-              <p className="text-sm text-zinc-400">No channels yet.</p>
-              <button
-                type="button"
-                onClick={() => openCreateChannel("text")}
-                className="mt-3 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950"
-              >
-                Create your first channel
-              </button>
+              <p className="text-sm text-zinc-400">
+                {activeServer
+                  ? "No accessible channels in this server yet."
+                  : "Create or join a server to get started."}
+              </p>
+              {activeServer && canManageChannels ? (
+                <button
+                  type="button"
+                  onClick={() => openCreateChannel("text")}
+                  className="mt-3 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950"
+                >
+                  Create your first channel
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setServerCreateJoinOpen(true)}
+                  className="mt-3 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950"
+                >
+                  Create or Join Server
+                </button>
+              )}
             </div>
           )}
 
-          {/* Right Members Rail */}
+          {/* Right Server Members Rail */}
           {showMembersRail && (
             <aside className="hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
               <div className="mb-4 flex items-center justify-between">
@@ -1476,18 +3127,21 @@ function WorkspaceInner({
                   <span>Members</span>
                 </div>
                 <span className="text-[11px] font-medium tabular-nums text-zinc-500">
-                  {onlineMembers.length}/{members.length}
+                  {onlineServerMembers.length}/{activeServerMembers.length}
                 </span>
               </div>
 
               <div className="flex-1 space-y-5 overflow-y-auto">
                 <div>
                   <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                    Online · {onlineMembers.length}
+                    Online · {onlineServerMembers.length}
                   </p>
                   <ul className="space-y-0.5">
-                    {onlineMembers.map((member) => {
+                    {onlineServerMembers.map((member) => {
                       const voiceInfo = findMemberVoiceInfo(member.id);
+                      const topRole = activeServer
+                        ? getMemberRolesInServer(activeServer, member.id)[0]
+                        : undefined;
                       return (
                         <li key={member.id}>
                           <button
@@ -1520,18 +3174,28 @@ function WorkspaceInner({
                               color={member.avatarColor}
                               avatarUrl={member.avatarUrl}
                               size="sm"
-                              online
+                              status={resolveDisplayStatus(true, member.presenceStatus)}
                             />
                             <div className="min-w-0 flex-1">
-                              <p dir="auto" className="truncate font-medium text-zinc-200">
+                              <p
+                                dir="auto"
+                                style={topRole ? { color: topRole.color } : undefined}
+                                className="truncate font-medium text-zinc-200"
+                              >
                                 {member.displayName}
                               </p>
-                              <p className="truncate text-[11px] text-zinc-500">
-                                {member.role === "admin" ? "Admin" : `@${member.username}`}
+                              <p dir="auto" className="truncate text-[11px] text-zinc-500">
+                                {member.customActivity
+                                  ? member.customActivity
+                                  : topRole
+                                    ? topRole.name
+                                    : member.role === "admin"
+                                      ? "Admin"
+                                      : `@${member.username}`}
                               </p>
                             </div>
                             {voiceInfo.isScreenSharing && (
-                              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300">
+                              <span className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white">
                                 LIVE
                               </span>
                             )}
@@ -1542,57 +3206,62 @@ function WorkspaceInner({
                   </ul>
                 </div>
 
-                {offlineMembers.length > 0 && (
+                {offlineServerMembers.length > 0 && (
                   <div>
                     <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                      Offline · {offlineMembers.length}
+                      Offline · {offlineServerMembers.length}
                     </p>
                     <ul className="space-y-0.5">
-                      {offlineMembers.map((member) => (
-                        <li key={member.id}>
-                          <button
-                            type="button"
-                            onClick={(e) =>
-                              openUserCard(e, {
-                                id: member.id,
-                                displayName: member.displayName,
-                                username: member.username,
-                                avatarColor: member.avatarColor,
-                                avatarUrl: member.avatarUrl,
-                                role: member.role,
-                                online: false,
-                              })
-                            }
-                            onContextMenu={(e) =>
-                              handleUserContextMenu(e, {
-                                id: member.id,
-                                displayName: member.displayName,
-                                username: member.username,
-                                avatarColor: member.avatarColor,
-                                avatarUrl: member.avatarUrl,
-                                role: member.role,
-                              })
-                            }
-                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs opacity-55 transition-all hover:bg-white/[0.04] hover:opacity-90"
-                          >
-                            <Avatar
-                              name={member.displayName}
-                              color={member.avatarColor}
-                              avatarUrl={member.avatarUrl}
-                              size="sm"
-                              online={false}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p dir="auto" className="truncate font-medium text-zinc-300">
-                                {member.displayName}
-                              </p>
-                              <p className="truncate text-[11px] text-zinc-500">
-                                @{member.username}
-                              </p>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
+                      {offlineServerMembers.map((member) => {
+                        const topRole = activeServer
+                          ? getMemberRolesInServer(activeServer, member.id)[0]
+                          : undefined;
+                        return (
+                          <li key={member.id}>
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                openUserCard(e, {
+                                  id: member.id,
+                                  displayName: member.displayName,
+                                  username: member.username,
+                                  avatarColor: member.avatarColor,
+                                  avatarUrl: member.avatarUrl,
+                                  role: member.role,
+                                  online: false,
+                                })
+                              }
+                              onContextMenu={(e) =>
+                                handleUserContextMenu(e, {
+                                  id: member.id,
+                                  displayName: member.displayName,
+                                  username: member.username,
+                                  avatarColor: member.avatarColor,
+                                  avatarUrl: member.avatarUrl,
+                                  role: member.role,
+                                })
+                              }
+                              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs opacity-55 transition-all hover:bg-white/[0.04] hover:opacity-90"
+                            >
+                              <Avatar
+                                name={member.displayName}
+                                color={member.avatarColor}
+                                avatarUrl={member.avatarUrl}
+                                size="sm"
+                                online={false}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p dir="auto" className="truncate font-medium text-zinc-300">
+                                  {member.displayName}
+                                </p>
+                                <p className="truncate text-[11px] text-zinc-500">
+                                  {topRole ? topRole.name : `@${member.username}`}
+                                </p>
+                              </div>
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 )}
@@ -1603,7 +3272,13 @@ function WorkspaceInner({
       </div>
 
       {/* Modals, Popovers & Toast Stack */}
-      <InviteModal open={inviteOpen} onClose={() => setInviteOpen(false)} />
+      <InviteModal
+        open={inviteOpen}
+        serverId={inviteServer?.id ?? activeServer?.id ?? null}
+        serverName={inviteServer?.name ?? activeServer?.name ?? null}
+        onClose={() => setInviteOpen(false)}
+      />
+
       <SettingsModal
         open={settingsOpen}
         initialTab={settingsTab}
@@ -1616,24 +3291,117 @@ function WorkspaceInner({
         onUserUpdated={handleUserUpdated}
         onSignOut={() => void handleSignOut()}
       />
-      <ScreenShareModal
-        open={screenShareModalOpen}
-        onClose={() => setScreenShareModalOpen(false)}
+
+      <ServerCreateJoinModal
+        open={serverCreateJoinOpen}
+        onClose={() => setServerCreateJoinOpen(false)}
+        onServersUpdated={(updatedList, focusId) => {
+          setServers(updatedList);
+          if (focusId) {
+            const targetSrv = updatedList.find((s) => s.id === focusId);
+            setViewMode("server");
+            setActiveServerId(focusId);
+            setSelectedChannelId(pickInitialChannelId(targetSrv, user.id));
+          }
+        }}
       />
+
+      <ServerSettingsModal
+        open={serverSettingsOpen}
+        initialTab={serverSettingsTab}
+        server={activeServer}
+        currentUser={user}
+        members={members}
+        permissions={myServerPermissions}
+        blobReady={capabilities.blobReady}
+        onClose={() => setServerSettingsOpen(false)}
+        onRefreshServers={refreshServersNow}
+        onServerDeleted={handleServerDeleted}
+      />
+
+      <CategoryModal
+        open={categoryModalOpen}
+        serverId={activeServer?.id ?? null}
+        editingCategory={editingCategory}
+        onClose={() => setCategoryModalOpen(false)}
+        onSaved={handleCategorySaved}
+      />
+
       <ChannelModal
         open={channelModalOpen}
+        serverId={activeServer?.id ?? null}
         defaultType={channelModalType}
+        defaultCategoryId={channelModalCategoryId}
+        categories={sortedCategories}
+        roles={activeServer?.roles ?? []}
         editingChannel={editingChannel}
         onClose={() => setChannelModalOpen(false)}
         onSaved={handleChannelSaved}
       />
+
+      <FindConversationModal
+        open={findConvOpen}
+        currentUserId={user.id}
+        members={members}
+        onlineMemberIds={onlineMemberIds}
+        servers={servers}
+        onClose={() => setFindConvOpen(false)}
+        onStartDm={(uid) => void handleStartDm(uid)}
+        onSelectChannel={(sid, cid) => selectChannel(cid, sid)}
+      />
+
+      <ScreenShareModal
+        open={screenShareModalOpen}
+        onClose={() => setScreenShareModalOpen(false)}
+      />
+
       <UserProfilePopover
         target={profilePopover}
+        currentUserId={user.id}
+        currentVoiceChannelId={voice.activeChannel?.id ?? null}
         onClose={() => setProfilePopover(null)}
         onWatchStream={(target) =>
           handleWatchUserStream(target.id, target.voiceChannelId)
         }
+        onJoinVoice={(voiceChannelId) => {
+          const found = allVoiceChannels.find((x) => x.channel.id === voiceChannelId);
+          if (found) {
+            selectChannel(found.channel.id, found.server.id);
+            handleJoinVoiceChannel(found.channel);
+          }
+        }}
+        onToggleRole={(uid, rid) => void handleToggleUserRoleFromPopover(uid, rid)}
+        onAddFriend={(uname) => void handleQuickAddFriend(uname)}
+        onAcceptFriend={(fid) => void handleQuickAcceptFriend(fid)}
+        onQuickMessage={handleQuickMessage}
+        onOpenDm={(uid) => void handleStartDm(uid)}
       />
+
+      <AnimatePresence>
+        {streamPreview && (
+          <StreamPreviewPopover
+            target={streamPreview}
+            onMouseEnter={cancelHideStreamPreview}
+            onMouseLeave={scheduleHideStreamPreview}
+            onWatchStream={(target) => {
+              setStreamPreview(null);
+              handleWatchUserStream(target.identity, target.channelId);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {statusPickerOpen && (
+          <StatusPickerPopover
+            user={user}
+            onClose={() => setStatusPickerOpen(false)}
+            onUserUpdated={handleUserUpdated}
+            onOpenSettings={() => openSettings("account")}
+          />
+        )}
+      </AnimatePresence>
+
       <NotificationToasts
         toasts={toasts}
         onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
@@ -1641,6 +3409,7 @@ function WorkspaceInner({
           selectChannel(channelId);
           setToasts((prev) => prev.filter((t) => t.id !== toastId));
         }}
+        onOpenNotification={handleOpenNotification}
       />
     </div>
   );

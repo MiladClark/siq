@@ -3,6 +3,7 @@
 import {
   AlertCircle,
   AlertTriangle,
+  AtSign,
   Bell,
   CheckCheck,
   CheckCircle2,
@@ -123,11 +124,13 @@ function getUnreadTintClass(kind?: NotificationKind): string {
 export function NotificationBell({
   notifications,
   onSelectChannel,
+  onSelectNotification,
   onMarkItemRead,
   onMarkAllRead,
 }: {
   notifications: NotificationItem[];
   onSelectChannel: (channelId: string) => void;
+  onSelectNotification?: (item: NotificationItem) => void;
   onMarkItemRead?: (id: string) => void;
   onMarkAllRead: () => void;
 }) {
@@ -223,6 +226,8 @@ export function NotificationBell({
                       onClick={() => {
                         if (sysKind) {
                           onMarkItemRead?.(item.id);
+                        } else if (onSelectNotification) {
+                          onSelectNotification(item);
                         } else if (item.channelId) {
                           onSelectChannel(item.channelId);
                         }
@@ -270,7 +275,12 @@ export function NotificationBell({
                         </p>
                         {item.channelName && (
                           <span className="mt-1 inline-flex items-center gap-0.5 text-[10px] font-medium text-zinc-500">
-                            {!sysKind && <Hash className="h-2.5 w-2.5" />}
+                            {!sysKind &&
+                              (item.dmConversationId ? (
+                                <AtSign className="h-2.5 w-2.5" />
+                              ) : (
+                                <Hash className="h-2.5 w-2.5" />
+                              ))}
                             <span dir="auto">{item.channelName}</span>
                           </span>
                         )}
@@ -302,10 +312,12 @@ export function NotificationToasts({
   toasts,
   onDismiss,
   onOpenChannel,
+  onOpenNotification,
 }: {
   toasts: NotificationItem[];
   onDismiss: (id: string) => void;
   onOpenChannel: (channelId: string, toastId: string) => void;
+  onOpenNotification?: (item: NotificationItem) => void;
 }) {
   return (
     <div
@@ -319,7 +331,10 @@ export function NotificationToasts({
             toast={toast}
             onDismiss={() => onDismiss(toast.id)}
             onOpen={() => {
-              if (isSystemKind(toast.kind) || !toast.channelId) {
+              if (isSystemKind(toast.kind) || (!toast.channelId && !toast.dmConversationId)) {
+                onDismiss(toast.id);
+              } else if (onOpenNotification) {
+                onOpenNotification(toast);
                 onDismiss(toast.id);
               } else {
                 onOpenChannel(toast.channelId, toast.id);
@@ -383,7 +398,12 @@ function ToastCard({
             </span>
             {toast.channelName && (
               <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                {!sysKind && <Hash className="h-2.5 w-2.5" />}
+                {!sysKind &&
+                  (toast.dmConversationId ? (
+                    <AtSign className="h-2.5 w-2.5" />
+                  ) : (
+                    <Hash className="h-2.5 w-2.5" />
+                  ))}
                 <span dir="auto" className="max-w-[90px] truncate">
                   {toast.channelName}
                 </span>

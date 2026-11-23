@@ -2,6 +2,7 @@
 
 import {
   ArrowDown,
+  Check,
   Copy,
   Download,
   ExternalLink,
@@ -16,9 +17,13 @@ import {
   Loader2,
   Maximize2,
   Paperclip,
+  Pencil,
+  Pin,
   Reply,
   Send,
   Share2,
+  Smile,
+  SmilePlus,
   Trash2,
   X,
 } from "lucide-react";
@@ -37,6 +42,10 @@ import {
 } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
+import {
+  EmojiPickerPopover,
+  QUICK_REACTION_EMOJIS,
+} from "@/components/ui/EmojiPickerPopover";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
 import { convertImageFileToWebP } from "@/lib/image-webp";
@@ -46,6 +55,7 @@ import type {
   ChannelItem,
   MessageAttachment,
   MessageItem,
+  MessageReactionSummary,
   PublicUser,
 } from "@/lib/types";
 
@@ -54,8 +64,13 @@ interface TextChannelViewProps {
   currentUser: PublicUser;
   members: PublicUser[];
   blobReady: boolean;
+  isDm?: boolean;
+  canSendMessages?: boolean;
+  canManageMessages?: boolean;
   density?: MessageDensity;
   textScale?: TextScale;
+  jumpTarget?: { messageId: string; nonce: number } | null;
+  unpinnedEvent?: { messageId: string; nonce: number } | null;
   onOpenUserProfile: (target: ProfilePopoverTarget) => void;
   onMessagesSeen?: (
     channelId: string,
@@ -275,13 +290,24 @@ export function TextChannelView({
   currentUser,
   members,
   blobReady,
+  isDm = false,
+  canSendMessages = true,
+  canManageMessages = false,
   density = "comfortable",
   textScale = "md",
+  jumpTarget = null,
+  unpinnedEvent = null,
   onOpenUserProfile,
   onMessagesSeen,
 }: TextChannelViewProps) {
   const { openMenu } = useContextMenu();
   const notify = useSystemNotify();
+  const getMessagesBaseUrl = useCallback(
+    (id: string) =>
+      isDm ? `/api/dms/${id}/messages` : `/api/channels/${id}/messages`,
+    [isDm]
+  );
+  const channelLabel = isDm ? `@${channel.name}` : `#${channel.name}`;
   const textSizeClass =
     textScale === "sm"
       ? "text-[13px]"
@@ -302,6 +328,22 @@ export function TextChannelView({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [sending, setSending] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageItem | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [emojiPicker, setEmojiPicker] = useState<{
+    mode: "reaction" | "composer";
+    messageId?: string;
+    anchorRect: {
+      top: number;
+      left: number;
+      right: number;
+      bottom: number;
+      width: number;
+      height: number;
+    };
+  } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<MessageAttachment | null>(null);
 
@@ -386,7 +428,7 @@ export function TextChannelView({
 
     async function syncChannel() {
       try {
-        const res = await fetch(`/api/channels/${targetChannelId}/messages`, {
+        const res = await fetch(getMessagesBaseUrl(targetChannelId), {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -459,10 +501,11 @@ export function TextChannelView({
     };
   }, [channel.id, reportSeenIfVisible, scrollToBottom]);
 
-  // Incremental background poll every 2.2s (strictly channel-scoped + AbortController — NEVER corrupts cache)
+  // Incremental background poll every 2.2s + periodic full-tail reconciliation for reactions/edits/pins
   useEffect(() => {
     const targetChannelId = channel.id;
     let active = true;
+    let tickCount = 0;
     let inFlightController: AbortController | null = null;
 
     const interval = setInterval(async () => {
@@ -471,10 +514,14 @@ export function TextChannelView({
       // Never poll incrementally before initial full history has hydrated!
       if (!entry?.hydrated) return;
 
+      tickCount += 1;
+      const shouldReconcileTail = tickCount % 4 === 0;
       const lastMsg = entry.messages[entry.messages.length - 1];
-      const url = lastMsg
-        ? `/api/channels/${targetChannelId}/messages?after=${encodeURIComponent(lastMsg.createdAt)}`
-        : `/api/channels/${targetChannelId}/messages`;
+      const baseUrl = getMessagesBaseUrl(targetChannelId);
+      const url =
+        !shouldReconcileTail && lastMsg
+          ? `${baseUrl}?after=${encodeURIComponent(lastMsg.createdAt)}`
+          : baseUrl;
 
       inFlightController?.abort();
       const controller = new AbortController();
@@ -489,12 +536,45 @@ export function TextChannelView({
 
         const data = await res.json();
         const incoming: MessageItem[] = data.messages ?? [];
-        if (incoming.length === 0) return;
         if (!active || targetChannelId !== activeChannelIdRef.current) return;
 
         // Always merge against the target channel's own cache entry (NEVER React prev state!)
         const latestEntry = channelMessageCache.get(targetChannelId);
         if (!latestEntry?.hydrated) return;
+
+        if (shouldReconcileTail || !lastMsg) {
+          const prevLastId = latestEntry.messages[latestEntry.messages.length - 1]?.id ?? null;
+          const reconciled = reconcileWithFreshTail(
+            latestEntry.messages,
+            incoming,
+            Boolean(data.hasMore)
+          );
+          const newLastId = reconciled.messages[reconciled.messages.length - 1]?.id ?? null;
+          const hasNewAtBottom = Boolean(newLastId && newLastId !== prevLastId);
+          const nearBottom = isNearBottom();
+
+          channelMessageCache.set(targetChannelId, {
+            messages: reconciled.messages,
+            hasMore:
+              latestEntry.messages.length > incoming.length
+                ? latestEntry.hasMore
+                : reconciled.hasMore,
+            hydrated: true,
+          });
+          setMessages(reconciled.messages);
+          reportSeenIfVisible(targetChannelId, reconciled.messages);
+
+          if (hasNewAtBottom) {
+            if (nearBottom) {
+              requestAnimationFrame(() => scrollToBottom(true));
+            } else {
+              setUnseenBelowCount((c) => c + 1);
+            }
+          }
+          return;
+        }
+
+        if (incoming.length === 0) return;
 
         const existingIds = new Set(latestEntry.messages.map((m) => m.id));
         const fresh = incoming.filter((m) => !existingIds.has(m.id));
@@ -528,6 +608,42 @@ export function TextChannelView({
     };
   }, [channel.id, isNearBottom, reportSeenIfVisible, scrollToBottom]);
 
+  // Smooth jump-to-message from Pinned drawer or In-Channel Search
+  useEffect(() => {
+    if (!jumpTarget?.messageId) return;
+    const el = document.getElementById(`msg-${jumpTarget.messageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMessageId(jumpTarget.messageId);
+      const t = setTimeout(() => {
+        setHighlightedMessageId((curr) =>
+          curr === jumpTarget.messageId ? null : curr
+        );
+      }, 2200);
+      return () => clearTimeout(t);
+    } else {
+      notify({
+        kind: "info",
+        title: "Older Message",
+        message: "Scroll up to load older messages to view that item.",
+        source: `#${channel.name}`,
+      });
+    }
+  }, [channel.name, jumpTarget, notify]);
+
+  // Sync unpin events coming from the header Pinned Messages popover
+  useEffect(() => {
+    if (!unpinnedEvent?.messageId) return;
+    const targetId = activeChannelIdRef.current;
+    const entry = channelMessageCache.get(targetId);
+    if (!entry) return;
+    const updated = entry.messages.map((m) =>
+      m.id === unpinnedEvent.messageId ? { ...m, pinned: false, pinnedAt: null } : m
+    );
+    channelMessageCache.set(targetId, { ...entry, messages: updated });
+    setMessages(updated);
+  }, [unpinnedEvent]);
+
   // Mark messages as seen when user returns to browser tab while on this channel
   useEffect(() => {
     function handleVisibility() {
@@ -557,7 +673,7 @@ export function TextChannelView({
 
     try {
       const res = await fetch(
-        `/api/channels/${targetChannelId}/messages?before=${encodeURIComponent(oldest.createdAt)}`,
+        `${getMessagesBaseUrl(targetChannelId)}?before=${encodeURIComponent(oldest.createdAt)}`,
         { cache: "no-store" }
       );
       if (!res.ok || targetChannelId !== activeChannelIdRef.current) return;
@@ -666,7 +782,7 @@ export function TextChannelView({
     };
 
     try {
-      const res = await fetch(`/api/channels/${targetChannelId}/messages`, {
+      const res = await fetch(getMessagesBaseUrl(targetChannelId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -711,7 +827,7 @@ export function TextChannelView({
   async function handleDeleteMessage(messageId: string) {
     const targetChannelId = channel.id;
     try {
-      const res = await fetch(`/api/channels/${targetChannelId}/messages/${messageId}`, {
+      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -767,12 +883,234 @@ export function TextChannelView({
     }
   }
 
+  async function handleToggleReaction(messageId: string, emoji: string) {
+    const targetChannelId = activeChannelIdRef.current;
+    const entry = channelMessageCache.get(targetChannelId);
+    if (!entry) return;
+
+    const applyLocalReactions = (
+      list: MessageItem[],
+      updater: (reactions: MessageReactionSummary[]) => MessageReactionSummary[]
+    ) =>
+      list.map((m) =>
+        m.id === messageId ? { ...m, reactions: updater(m.reactions ?? []) } : m
+      );
+
+    // Instant optimistic update
+    const optimistic = applyLocalReactions(entry.messages, (prev) => {
+      const existing = prev.find((r) => r.emoji === emoji);
+      if (existing) {
+        if (existing.reactedByMe) {
+          const nextCount = existing.count - 1;
+          if (nextCount <= 0) return prev.filter((r) => r.emoji !== emoji);
+          return prev.map((r) =>
+            r.emoji === emoji
+              ? {
+                  ...r,
+                  count: nextCount,
+                  userIds: r.userIds.filter((id) => id !== currentUser.id),
+                  reactedByMe: false,
+                }
+              : r
+          );
+        }
+        return prev.map((r) =>
+          r.emoji === emoji
+            ? {
+                ...r,
+                count: r.count + 1,
+                userIds: [...r.userIds, currentUser.id],
+                reactedByMe: true,
+              }
+            : r
+        );
+      }
+      return [
+        ...prev,
+        { emoji, count: 1, userIds: [currentUser.id], reactedByMe: true },
+      ];
+    });
+
+    channelMessageCache.set(targetChannelId, { ...entry, messages: optimistic });
+    setMessages(optimistic);
+
+    try {
+      const res = await fetch(`/api/messages/${messageId}/reactions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emoji }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to update reaction.");
+        return;
+      }
+      const latest = channelMessageCache.get(targetChannelId);
+      if (latest && Array.isArray(data.reactions)) {
+        const synced = latest.messages.map((m) =>
+          m.id === messageId ? { ...m, reactions: data.reactions } : m
+        );
+        channelMessageCache.set(targetChannelId, { ...latest, messages: synced });
+        if (targetChannelId === activeChannelIdRef.current) {
+          setMessages(synced);
+        }
+      }
+    } catch {
+      setError("Network error while updating reaction.");
+    }
+  }
+
+  function startEditingMessage(msg: MessageItem) {
+    setEditingMessageId(msg.id);
+    setEditDraft(msg.content);
+  }
+
+  async function handleSaveEdit(messageId: string) {
+    const trimmed = editDraft.trim();
+    if (!trimmed || savingEdit) return;
+    const targetChannelId = activeChannelIdRef.current;
+    setSavingEdit(true);
+
+    try {
+      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to edit message.");
+        return;
+      }
+
+      const entry = channelMessageCache.get(targetChannelId);
+      if (entry) {
+        const updated = entry.messages.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                content: data.message?.content ?? trimmed,
+                editedAt: data.message?.editedAt ?? new Date().toISOString(),
+              }
+            : m
+        );
+        channelMessageCache.set(targetChannelId, { ...entry, messages: updated });
+        if (targetChannelId === activeChannelIdRef.current) {
+          setMessages(updated);
+        }
+      }
+      setEditingMessageId(null);
+      setEditDraft("");
+    } catch {
+      setError("Network error while editing message.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function handleTogglePin(msg: MessageItem) {
+    const targetChannelId = activeChannelIdRef.current;
+    const nextPinned = !msg.pinned;
+    try {
+      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${msg.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: nextPinned }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Could not update pin status.");
+        return;
+      }
+
+      const entry = channelMessageCache.get(targetChannelId);
+      if (entry) {
+        const updated = entry.messages.map((m) =>
+          m.id === msg.id
+            ? {
+                ...m,
+                pinned: Boolean(data.message?.pinned),
+                pinnedAt: data.message?.pinnedAt ?? null,
+              }
+            : m
+        );
+        channelMessageCache.set(targetChannelId, { ...entry, messages: updated });
+        if (targetChannelId === activeChannelIdRef.current) {
+          setMessages(updated);
+        }
+      }
+      notify({
+        kind: "success",
+        title: nextPinned ? "Message Pinned" : "Message Unpinned",
+        message: nextPinned
+          ? `Pinned to #${channel.name}.`
+          : `Removed from #${channel.name} pins.`,
+        source: `#${channel.name}`,
+      });
+    } catch {
+      setError("Network error updating pin.");
+    }
+  }
+
+  function openReactionPicker(e: React.MouseEvent<HTMLElement>, messageId: string) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setEmojiPicker({
+      mode: "reaction",
+      messageId,
+      anchorRect: {
+        top: rect.top,
+        left: rect.left,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  }
+
+  function openComposerEmojiPicker(e: React.MouseEvent<HTMLElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setEmojiPicker({
+      mode: "composer",
+      anchorRect: {
+        top: rect.top,
+        left: rect.left,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  }
+
   function handleMessageContextMenu(
     e: React.MouseEvent<HTMLElement>,
     msg: MessageItem,
     canDelete: boolean
   ) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const isAuthor = msg.author.id === currentUser.id;
     const entries: ContextMenuEntry[] = [
+      {
+        type: "item",
+        id: "react",
+        label: "Add Reaction",
+        icon: <SmilePlus className="h-3.5 w-3.5 text-emerald-400" />,
+        onSelect: () => {
+          setEmojiPicker({
+            mode: "reaction",
+            messageId: msg.id,
+            anchorRect: {
+              top: e.clientY,
+              left: e.clientX,
+              right: e.clientX,
+              bottom: e.clientY,
+              width: rect.width,
+              height: 24,
+            },
+          });
+        },
+      },
       {
         type: "item",
         id: "reply",
@@ -781,6 +1119,26 @@ export function TextChannelView({
         onSelect: () => setReplyingTo(msg),
       },
     ];
+
+    if (isAuthor && msg.content) {
+      entries.push({
+        type: "item",
+        id: "edit",
+        label: "Edit Message",
+        icon: <Pencil className="h-3.5 w-3.5" />,
+        onSelect: () => startEditingMessage(msg),
+      });
+    }
+
+    if (canDelete) {
+      entries.push({
+        type: "item",
+        id: "pin",
+        label: msg.pinned ? "Unpin Message" : "Pin Message",
+        icon: <Pin className="h-3.5 w-3.5" />,
+        onSelect: () => void handleTogglePin(msg),
+      });
+    }
 
     if (msg.content) {
       entries.push({
@@ -939,10 +1297,12 @@ export function TextChannelView({
               <Hash className="h-6 w-6" />
             </div>
             <h2 dir="auto" className="mt-4 text-xl font-semibold text-zinc-100">
-              Welcome to #{channel.name}
+              {isDm ? channel.name : `Welcome to #${channel.name}`}
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
-              {channel.description || "This is the beginning of the conversation."}
+              {isDm
+                ? `This is the beginning of your direct message history with ${channel.name}.`
+                : channel.description || "This is the beginning of the conversation."}
             </p>
           </motion.div>
         ) : (
@@ -966,10 +1326,12 @@ export function TextChannelView({
                   <Hash className="h-5 w-5" />
                 </div>
                 <h2 dir="auto" className="mt-2.5 text-base font-semibold text-zinc-100">
-                  Welcome to #{channel.name}
+                  {isDm ? channel.name : `Welcome to #${channel.name}`}
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-500">
-                  {channel.description || "This is the start of the channel history."}
+                  {isDm
+                    ? `Start of your direct messages with ${channel.name}.`
+                    : channel.description || "This is the start of the channel history."}
                 </p>
               </div>
             )}
@@ -1001,7 +1363,9 @@ export function TextChannelView({
                 5 * 60 * 1000;
 
             const canDelete =
-              msg.author.id === currentUser.id || currentUser.role === "admin";
+              msg.author.id === currentUser.id ||
+              (!isDm && (currentUser.role === "admin" || canManageMessages));
+            const canPin = isDm || canDelete;
 
             return (
               <Fragment key={msg.id}>
@@ -1020,8 +1384,13 @@ export function TextChannelView({
                 )}
 
                 <article
+                  id={`msg-${msg.id}`}
                   onContextMenu={(e) => handleMessageContextMenu(e, msg, canDelete)}
-                  className={`group relative flex gap-3 rounded-lg px-2 transition-colors hover:bg-white/[0.025] ${
+                  className={`group relative flex gap-3 rounded-lg px-2 transition-all hover:bg-white/[0.025] ${
+                    highlightedMessageId === msg.id
+                      ? "bg-emerald-500/10 ring-1 ring-emerald-500/45"
+                      : ""
+                  } ${
                     density === "compact"
                       ? isGrouped
                         ? "mt-0 py-0.5"
@@ -1031,8 +1400,28 @@ export function TextChannelView({
                         : "mt-2.5 py-1 pt-1.5"
                   }`}
                 >
-                  {/* Hover Actions */}
-                  <div className="absolute -top-3 right-2 hidden items-center gap-0.5 rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-lg group-hover:flex">
+                  {/* Hover Action Bar (Quick Reactions + Picker + Reply + Edit + Pin + Copy + Delete) */}
+                  <div className="absolute -top-3.5 right-2 z-10 hidden items-center gap-0.5 rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 group-hover:flex">
+                    {QUICK_REACTION_EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => void handleToggleReaction(msg.id, emoji)}
+                        title={`React ${emoji}`}
+                        className="flex h-7 w-7 items-center justify-center rounded-md text-sm transition-transform hover:scale-110 hover:bg-white/[0.07]"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                    <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+                    <button
+                      type="button"
+                      onClick={(e) => openReactionPicker(e, msg.id)}
+                      title="Add reaction"
+                      className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+                    >
+                      <SmilePlus className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => setReplyingTo(msg)}
@@ -1041,6 +1430,30 @@ export function TextChannelView({
                     >
                       <Reply className="h-3.5 w-3.5" />
                     </button>
+                    {msg.author.id === currentUser.id && msg.content && (
+                      <button
+                        type="button"
+                        onClick={() => startEditingMessage(msg)}
+                        title="Edit message"
+                        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {canPin && (
+                      <button
+                        type="button"
+                        onClick={() => void handleTogglePin(msg)}
+                        title={msg.pinned ? "Unpin message" : "Pin message"}
+                        className={`rounded-md p-1.5 transition-colors hover:bg-white/[0.06] ${
+                          msg.pinned
+                            ? "text-emerald-400 hover:text-emerald-300"
+                            : "text-zinc-400 hover:text-zinc-100"
+                        }`}
+                      >
+                        <Pin className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {msg.content && (
                       <button
                         type="button"
@@ -1112,16 +1525,74 @@ export function TextChannelView({
                         <span className="text-[11px] font-medium tabular-nums text-zinc-500">
                           {formatTime(msg.createdAt)}
                         </span>
+                        {msg.pinned && (
+                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                            <Pin className="h-2.5 w-2.5" />
+                            Pinned
+                          </span>
+                        )}
                       </div>
                     )}
 
-                    {msg.content && (
-                      <p
-                        dir="auto"
-                        className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
-                      >
-                        {renderLinkifiedText(msg.content)}
-                      </p>
+                    {editingMessageId === msg.id ? (
+                      <div className="mt-1 space-y-1.5">
+                        <textarea
+                          rows={2}
+                          dir="auto"
+                          autoFocus
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              void handleSaveEdit(msg.id);
+                            } else if (e.key === "Escape") {
+                              setEditingMessageId(null);
+                              setEditDraft("");
+                            }
+                          }}
+                          className="w-full resize-none rounded-lg border border-emerald-500/50 bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:outline-none"
+                        />
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                          <span>Press Enter to save · Esc to cancel</span>
+                          <button
+                            type="button"
+                            disabled={savingEdit}
+                            onClick={() => void handleSaveEdit(msg.id)}
+                            className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                          >
+                            <Check className="h-3 w-3" />
+                            <span>Save</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMessageId(null);
+                              setEditDraft("");
+                            }}
+                            className="rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      msg.content && (
+                        <p
+                          dir="auto"
+                          className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
+                        >
+                          {renderLinkifiedText(msg.content)}
+                          {msg.editedAt && (
+                            <span
+                              title={`Edited ${formatTime(msg.editedAt)}`}
+                              className="ml-1.5 text-[10px] text-zinc-500 select-none"
+                            >
+                              (edited)
+                            </span>
+                          )}
+                        </p>
+                      )
                     )}
 
                     {msg.attachments.length > 0 && (
@@ -1198,6 +1669,46 @@ export function TextChannelView({
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+
+                    {/* Emoji Reactions Bar beneath message (clickable for others' & own messages) */}
+                    {msg.reactions && msg.reactions.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {msg.reactions.map((reaction) => {
+                          const reactorNames = reaction.userIds
+                            .map((uid) => {
+                              if (uid === currentUser.id) return "You";
+                              return (
+                                members.find((m) => m.id === uid)?.displayName ?? "Member"
+                              );
+                            })
+                            .join(", ");
+                          return (
+                            <button
+                              key={reaction.emoji}
+                              type="button"
+                              onClick={() => void handleToggleReaction(msg.id, reaction.emoji)}
+                              title={`${reaction.emoji} reacted by ${reactorNames}`}
+                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-medium tabular-nums transition-all active:scale-95 ${
+                                reaction.reactedByMe
+                                  ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20"
+                                  : "border-white/[0.08] bg-[#18191E] text-zinc-300 hover:border-white/[0.16] hover:text-white"
+                              }`}
+                            >
+                              <span className="text-sm leading-none">{reaction.emoji}</span>
+                              <span>{reaction.count}</span>
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={(e) => openReactionPicker(e, msg.id)}
+                          title="Add reaction"
+                          className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg border border-white/[0.07] bg-[#18191E] text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-100"
+                        >
+                          <SmilePlus className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1349,12 +1860,25 @@ export function TextChannelView({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={
-              uploadingCount > 0
-                ? "Uploading attachment..."
-                : `Message #${channel.name} (Enter to send, paste screenshot)`
+              !canSendMessages
+                ? `You do not have permission to send messages in ${channelLabel}`
+                : uploadingCount > 0
+                  ? "Uploading attachment..."
+                  : `Message ${channelLabel} (Enter to send, paste screenshot)`
             }
+            disabled={!canSendMessages}
             className="max-h-36 flex-1 resize-none bg-transparent py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
           />
+
+          <button
+            type="button"
+            onClick={openComposerEmojiPicker}
+            title="Insert emoji"
+            aria-label="Insert emoji"
+            className="mb-0.5 rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+          >
+            <Smile className="h-4 w-4" />
+          </button>
 
           <button
             type="submit"
@@ -1370,6 +1894,24 @@ export function TextChannelView({
           </button>
         </form>
       </div>
+
+      {/* Emoji Picker Popover (Reactions & Composer) */}
+      <AnimatePresence>
+        {emojiPicker && (
+          <EmojiPickerPopover
+            anchorRect={emojiPicker.anchorRect}
+            onClose={() => setEmojiPicker(null)}
+            onSelect={(emoji) => {
+              if (emojiPicker.mode === "reaction" && emojiPicker.messageId) {
+                void handleToggleReaction(emojiPicker.messageId, emoji);
+              } else {
+                setComposerText((prev) => `${prev}${emoji}`);
+                textareaRef.current?.focus();
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Animated Image Lightbox with Direct Download */}
       <AnimatePresence>

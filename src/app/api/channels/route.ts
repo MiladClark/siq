@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
-import { channels, users } from "@/db/schema";
+import { channels, servers, users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getServerMemberPermissions } from "@/lib/server-auth";
 import { createChannelSchema } from "@/lib/validators";
 
 function makeSlug(name: string): string {
@@ -12,11 +13,11 @@ function makeSlug(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 42);
-  const suffix = crypto.randomBytes(2).toString("hex");
+  const suffix = crypto.randomBytes(3).toString("hex");
   return ascii ? `${ascii}-${suffix}` : `ch-${suffix}`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   if (!isDatabaseConfigured()) {
     return NextResponse.json({ error: "Database not configured." }, { status: 503 });
   }
@@ -26,19 +27,32 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const serverId = searchParams.get("serverId");
+
   const db = getDb();
-  const rows = await db
-    .select()
-    .from(channels)
-    .orderBy(asc(channels.type), asc(channels.position), asc(channels.createdAt));
+  const rows = serverId
+    ? await db
+        .select()
+        .from(channels)
+        .where(eq(channels.serverId, serverId))
+        .orderBy(asc(channels.type), asc(channels.position), asc(channels.createdAt))
+    : await db
+        .select()
+        .from(channels)
+        .orderBy(asc(channels.type), asc(channels.position), asc(channels.createdAt));
 
   return NextResponse.json({
     channels: rows.map((ch) => ({
       id: ch.id,
+      serverId: ch.serverId,
+      categoryId: ch.categoryId,
       name: ch.name,
       slug: ch.slug,
       type: ch.type,
       description: ch.description,
+      isPrivate: Boolean(ch.isPrivate),
+      allowedRoleIds: ch.allowedRoleIds ?? [],
       position: ch.position,
       createdById: ch.createdById,
     })),
@@ -65,21 +79,48 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, type, description } = parsed.data;
+    const { name, type, description, categoryId, isPrivate, allowedRoleIds } = parsed.data;
     const db = getDb();
+
+    let serverId = parsed.data.serverId ?? null;
+    if (!serverId) {
+      const [defaultSrv] = await db.select({ id: servers.id }).from(servers).limit(1);
+      serverId = defaultSrv?.id ?? null;
+    }
+
+    if (serverId) {
+      const { isMember, permissions } = await getServerMemberPermissions(
+        serverId,
+        user.id
+      );
+      if (!isMember || (!permissions.administrator && !permissions.manageChannels)) {
+        return NextResponse.json(
+          { error: "You do not have permission to create channels in this server." },
+          { status: 403 }
+        );
+      }
+    }
 
     const [{ maxPos }] = await db
       .select({ maxPos: sql<number>`coalesce(max(${channels.position}), -1)` })
       .from(channels)
-      .where(eq(channels.type, type));
+      .where(
+        serverId
+          ? and(eq(channels.serverId, serverId), eq(channels.type, type))
+          : eq(channels.type, type)
+      );
 
     const [created] = await db
       .insert(channels)
       .values({
+        serverId,
+        categoryId: categoryId ?? null,
         name,
         slug: makeSlug(name),
         type,
         description: description || null,
+        isPrivate: Boolean(isPrivate),
+        allowedRoleIds: allowedRoleIds ?? [],
         position: Number(maxPos) + 1,
         createdById: user.id,
       })
@@ -94,10 +135,14 @@ export async function POST(request: Request) {
       {
         channel: {
           id: created.id,
+          serverId: created.serverId,
+          categoryId: created.categoryId,
           name: created.name,
           slug: created.slug,
           type: created.type,
           description: created.description,
+          isPrivate: Boolean(created.isPrivate),
+          allowedRoleIds: created.allowedRoleIds ?? [],
           position: created.position,
           createdById: created.createdById,
         },

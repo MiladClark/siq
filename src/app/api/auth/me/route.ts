@@ -50,6 +50,15 @@ export async function PATCH(request: Request) {
     if (parsed.data.bannerUrl !== undefined) {
       updates.bannerUrl = parsed.data.bannerUrl;
     }
+    if (parsed.data.bio !== undefined) {
+      updates.bio = parsed.data.bio ? parsed.data.bio : null;
+    }
+    if (parsed.data.presenceStatus !== undefined) {
+      updates.presenceStatus = parsed.data.presenceStatus;
+    }
+    if (parsed.data.customActivity !== undefined) {
+      updates.customActivity = parsed.data.customActivity ? parsed.data.customActivity : null;
+    }
     if (parsed.data.email !== undefined) {
       const [conflict] = await db
         .select({ id: users.id })

@@ -371,60 +371,96 @@ export function VoiceStage({
     openMenu(e, entries);
   }
 
-  // Not yet joined to this voice channel
+  // Spacious Discord-inspired Voice Lobby (Pre-Join Stage)
   if (!isInThisChannel) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center p-6">
-        <div className="w-full max-w-md rounded-xl border border-white/[0.08] bg-[#0E0F12] p-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
-              <Volume2 className="h-5 w-5" />
-            </div>
-            <div className="min-w-0">
-              <h2 dir="auto" className="truncate text-lg font-semibold text-zinc-100">
-                {channel.name}
-              </h2>
-              <p className="text-xs text-zinc-400">
-                {previewOccupants.length === 0
-                  ? "No one in voice yet · Double-click channel to join"
-                  : `${previewOccupants.length} ${previewOccupants.length === 1 ? "person" : "people"} connected`}
-              </p>
-            </div>
-          </div>
+    const occupantSummary = (() => {
+      if (previewOccupants.length === 0) {
+        return "No one is currently in voice · Double-click channel or press Join";
+      }
+      const names = previewOccupants.map((occ) => resolveMemberVisuals(occ.identity, occ).name);
+      if (names.length === 1) return `${names[0]} is currently in voice`;
+      if (names.length === 2) return `${names[0]} and ${names[1]} are currently in voice`;
+      return `${names[0]}, ${names[1]}, and ${names.length - 2} ${names.length - 2 === 1 ? "other" : "others"} are currently in voice`;
+    })();
 
-          {previewOccupants.length > 0 && (
-            <div className="mt-5 flex flex-wrap gap-2 border-t border-white/[0.07] pt-4">
-              {previewOccupants.map((occ) => {
+    return (
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#0B0C0F] p-6">
+        {/* Subtle ambient matte obsidian depth (zero blurple slop) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(60% 50% at 50% 42%, rgba(16, 185, 129, 0.07) 0%, rgba(9, 9, 11, 0) 72%)",
+          }}
+        />
+
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center"
+        >
+          {/* Occupant Preview Tile Row (matches Discord lobby cards in Obsidian + user accent tint) */}
+          {previewOccupants.length > 0 ? (
+            <div className="mb-7 flex flex-wrap items-center justify-center gap-3">
+              {previewOccupants.slice(0, 6).map((occ) => {
                 const fresh = resolveMemberVisuals(occ.identity, occ);
                 return (
                   <button
                     key={occ.identity}
                     type="button"
                     onClick={(e) => openParticipantProfile(e, occ)}
-                    className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-[#14151A] px-2.5 py-1.5 transition-colors hover:border-white/[0.16]"
+                    style={{
+                      backgroundColor: `${fresh.avatarColor}18`,
+                      borderColor: `${fresh.avatarColor}30`,
+                    }}
+                    className="group relative flex h-28 w-44 flex-col items-center justify-center rounded-xl border transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110 active:scale-[0.98]"
                   >
+                    {occ.isScreenSharing && (
+                      <span className="absolute right-2 top-2 rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-sm">
+                        LIVE
+                      </span>
+                    )}
                     <Avatar
                       name={fresh.name}
                       color={fresh.avatarColor}
                       avatarUrl={fresh.avatarUrl}
-                      size="sm"
+                      size="lg"
                     />
-                    <span dir="auto" className="text-xs text-zinc-200">
+                    <span
+                      dir="auto"
+                      className="mt-2 max-w-[140px] truncate text-[11px] font-medium text-zinc-200"
+                    >
                       {fresh.name}
                     </span>
-                    {occ.isScreenSharing && (
-                      <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300">
-                        LIVE
-                      </span>
-                    )}
                   </button>
                 );
               })}
+              {previewOccupants.length > 6 && (
+                <div className="flex h-28 w-24 items-center justify-center rounded-xl border border-white/[0.08] bg-[#14151A] text-sm font-semibold tabular-nums text-zinc-300">
+                  +{previewOccupants.length - 6}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
+              <Volume2 className="h-7 w-7" />
             </div>
           )}
 
+          <h2
+            dir="auto"
+            className="text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl"
+          >
+            {channel.name}
+          </h2>
+          <p className="mt-1.5 max-w-md text-xs text-zinc-400 sm:text-sm">
+            {occupantSummary}
+          </p>
+
           {!livekitReady && (
-            <div className="mt-5 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-3.5 text-xs leading-relaxed text-amber-200">
+            <div className="mt-5 max-w-md rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3.5 text-left text-xs leading-relaxed text-amber-200">
               <p className="font-medium text-amber-300">LiveKit keys required</p>
               <p className="mt-1 text-amber-200/80">
                 Add <code className="font-mono">NEXT_PUBLIC_LIVEKIT_URL</code>,{" "}
@@ -439,12 +475,12 @@ export function VoiceStage({
             type="button"
             disabled={!livekitReady || isConnecting}
             onClick={() => onJoinVoiceChannel(channel)}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-7 py-2.5 text-sm font-semibold text-zinc-950 shadow-lg shadow-emerald-500/15 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Headphones className="h-4 w-4" />
             <span>{isConnecting ? "Connecting..." : "Join Voice"}</span>
           </button>
-        </div>
+        </motion.div>
       </div>
     );
   }

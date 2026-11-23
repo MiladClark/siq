@@ -117,6 +117,8 @@ export function SettingsModal({
   // Account state
   const [displayName, setDisplayName] = useState(user.displayName);
   const [email, setEmail] = useState(user.email ?? "");
+  const [bio, setBio] = useState(user.bio ?? "");
+  const [customActivity, setCustomActivity] = useState(user.customActivity ?? "");
   const [avatarColor, setAvatarColor] = useState(user.avatarColor);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(user.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(user.bannerUrl);
@@ -181,6 +183,8 @@ export function SettingsModal({
     setTab(initialTab);
     setDisplayName(user.displayName);
     setEmail(user.email ?? "");
+    setBio(user.bio ?? "");
+    setCustomActivity(user.customActivity ?? "");
     setAvatarColor(user.avatarColor);
     setAvatarUrl(user.avatarUrl);
     setBannerUrl(user.bannerUrl);
@@ -361,6 +365,8 @@ export function SettingsModal({
       const body: Record<string, unknown> = {
         displayName,
         avatarColor,
+        bio: bio.trim() || null,
+        customActivity: customActivity.trim() || null,
       };
       if (avatarUrl === null || !avatarUrl.startsWith("blob:")) {
         body.avatarUrl = avatarUrl;
@@ -736,6 +742,47 @@ export function SettingsModal({
                                 />
                               </div>
                             </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="settings-activity"
+                              className="block text-xs font-medium text-zinc-300"
+                            >
+                              Custom activity
+                            </label>
+                            <input
+                              id="settings-activity"
+                              type="text"
+                              dir="auto"
+                              maxLength={120}
+                              value={customActivity}
+                              onChange={(e) => setCustomActivity(e.target.value)}
+                              placeholder="Playing Valorant, Listening to Lo-fi..."
+                              className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="settings-bio"
+                              className="flex items-center justify-between text-xs font-medium text-zinc-300"
+                            >
+                              <span>About me (Bio)</span>
+                              <span className="text-[10px] font-normal tabular-nums text-zinc-500">
+                                {bio.length}/220
+                              </span>
+                            </label>
+                            <textarea
+                              id="settings-bio"
+                              rows={2}
+                              dir="auto"
+                              maxLength={220}
+                              value={bio}
+                              onChange={(e) => setBio(e.target.value)}
+                              placeholder="Tell your friends a bit about yourself..."
+                              className="w-full resize-none rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                            />
                           </div>
 
                           <div className="space-y-2">

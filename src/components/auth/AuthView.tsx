@@ -244,7 +244,7 @@ export function AuthView({
                     : "text-zinc-400 hover:text-zinc-200"
                 }`}
               >
-                Join with invite
+                Create account
               </button>
             </div>
           )}
@@ -259,21 +259,21 @@ export function AuthView({
             </h2>
             <p className="mt-1 text-sm text-zinc-400">
               {isBootstrap
-                ? "Set up your credentials to claim this private server."
+                ? "Set up your credentials to claim this server."
                 : mode === "login"
                   ? "Sign in with your username or email address."
-                  : "Enter your invite code, email, and username."}
+                  : "Sign up with your email and username to get started."}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "register" && !isBootstrap && (
+            {mode === "register" && !isBootstrap && initialInviteCode && (
               <div className="space-y-1.5">
                 <label
                   htmlFor="inviteCode"
                   className="block text-xs font-medium text-zinc-300"
                 >
-                  Invite code
+                  Invite code (optional)
                 </label>
                 <div className="relative">
                   <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
@@ -281,7 +281,6 @@ export function AuthView({
                     id="inviteCode"
                     name="inviteCode"
                     type="text"
-                    required
                     autoComplete="off"
                     value={inviteCode}
                     onChange={(e) => setInviteCode(e.target.value.toUpperCase())}

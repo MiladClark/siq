@@ -1,7 +1,21 @@
 import { count, eq, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
-import { channels, inviteCodes, users } from "@/db/schema";
+import {
+  ADMIN_ROLE_PERMISSIONS,
+  DEFAULT_EVERYONE_PERMISSIONS,
+  ensureAppSchema,
+} from "@/db/ensure-schema";
+import {
+  channelCategories,
+  channels,
+  inviteCodes,
+  memberRoles,
+  roles,
+  serverMembers,
+  servers,
+  users,
+} from "@/db/schema";
 import {
   createSessionToken,
   hashPassword,
@@ -59,6 +73,7 @@ export async function POST(request: Request) {
     }
 
     const { username, email, displayName, password, inviteCode } = parsed.data;
+    await ensureAppSchema();
     const db = getDb();
 
     const [existing] = await db
@@ -84,16 +99,10 @@ export async function POST(request: Request) {
     const isFirstUser = userCount === 0;
 
     let validInviteId: string | null = null;
+    let inviteServerId: string | null = null;
+    const normalizedCode = inviteCode.trim().toUpperCase();
 
-    if (!isFirstUser) {
-      const normalizedCode = inviteCode.trim().toUpperCase();
-      if (!normalizedCode) {
-        return NextResponse.json(
-          { error: "An invite code is required to join this workspace." },
-          { status: 403 }
-        );
-      }
-
+    if (!isFirstUser && normalizedCode) {
       const [invite] = await db
         .select()
         .from(inviteCodes)
@@ -106,14 +115,12 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
-
       if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) {
         return NextResponse.json(
           { error: "This invite code has expired." },
           { status: 403 }
         );
       }
-
       if (invite.usesCount >= invite.maxUses) {
         return NextResponse.json(
           { error: "This invite code has reached its usage limit." },
@@ -122,6 +129,7 @@ export async function POST(request: Request) {
       }
 
       validInviteId = invite.id;
+      inviteServerId = invite.serverId ?? null;
     }
 
     const passwordHash = await hashPassword(password);
@@ -148,14 +156,87 @@ export async function POST(request: Request) {
     }
 
     if (isFirstUser) {
+      const [defaultServer] = await db
+        .insert(servers)
+        .values({
+          name: "siq",
+          tag: "SIQ",
+          accentColor: "#10B981",
+          ownerId: createdUser.id,
+          isDefault: true,
+        })
+        .returning();
+
+      const [, adminRole] = await db
+        .insert(roles)
+        .values([
+          {
+            serverId: defaultServer.id,
+            name: "@everyone",
+            color: "#94A3B8",
+            position: 0,
+            permissions: DEFAULT_EVERYONE_PERMISSIONS,
+            isDefault: true,
+          },
+          {
+            serverId: defaultServer.id,
+            name: "Admin",
+            color: "#10B981",
+            position: 10,
+            permissions: ADMIN_ROLE_PERMISSIONS,
+            isDefault: false,
+          },
+        ])
+        .returning();
+
+      await db.insert(serverMembers).values({
+        serverId: defaultServer.id,
+        userId: createdUser.id,
+      });
+
+      if (adminRole) {
+        await db.insert(memberRoles).values({
+          serverId: defaultServer.id,
+          userId: createdUser.id,
+          roleId: adminRole.id,
+        });
+      }
+
+      const [textCat, voiceCat] = await db
+        .insert(channelCategories)
+        .values([
+          { serverId: defaultServer.id, name: "TEXT", position: 0 },
+          { serverId: defaultServer.id, name: "VOICES", position: 1 },
+        ])
+        .returning();
+
       const [{ total: channelCount }] = await db.select({ total: count() }).from(channels);
       if (channelCount === 0) {
         await db.insert(channels).values(
           DEFAULT_CHANNELS.map((ch) => ({
             ...ch,
+            serverId: defaultServer.id,
+            categoryId: ch.type === "voice" ? voiceCat.id : textCat.id,
             createdById: createdUser.id,
           }))
         );
+      }
+    } else {
+      // Join the invited server (or default server if none specified)
+      let targetServerId = inviteServerId;
+      if (!targetServerId) {
+        const [defaultSrv] = await db
+          .select({ id: servers.id })
+          .from(servers)
+          .where(eq(servers.isDefault, true))
+          .limit(1);
+        targetServerId = defaultSrv?.id ?? null;
+      }
+      if (targetServerId) {
+        await db
+          .insert(serverMembers)
+          .values({ serverId: targetServerId, userId: createdUser.id })
+          .onConflictDoNothing();
       }
     }
 
@@ -170,7 +251,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[auth/register]", error);
     return NextResponse.json(
-      { error: "Unable to create account right now. Please check your database connection." },
+      { error: "Unable to create account right now." },
       { status: 500 }
     );
   }

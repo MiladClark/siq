@@ -1,17 +1,15 @@
+import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { getDb } from "@/db";
+import { channels } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { getRoomServiceClient, isLiveKitConfigured } from "@/lib/livekit";
+import { getServerMemberPermissions } from "@/lib/server-auth";
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (user.role !== "admin") {
-    return NextResponse.json(
-      { error: "Only admins can moderate voice participants." },
-      { status: 403 }
-    );
   }
   if (!isLiveKitConfigured()) {
     return NextResponse.json({ error: "LiveKit is not configured." }, { status: 503 });
@@ -28,6 +26,34 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "action, roomName, and targetIdentity are required." },
         { status: 400 }
+      );
+    }
+
+    // Check server-level permissions if this room belongs to a server voice channel
+    const db = getDb();
+    const [ch] = await db
+      .select({ serverId: channels.serverId })
+      .from(channels)
+      .where(eq(channels.slug, body.roomName))
+      .limit(1);
+
+    let allowed = user.role === "admin";
+    if (ch?.serverId) {
+      const { isMember, permissions } = await getServerMemberPermissions(
+        ch.serverId,
+        user.id
+      );
+      if (isMember) {
+        allowed =
+          permissions.administrator ||
+          (body.action === "kick" ? permissions.kickMembers : permissions.muteMembers);
+      }
+    }
+
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "You do not have permission to moderate voice participants." },
+        { status: 403 }
       );
     }
 

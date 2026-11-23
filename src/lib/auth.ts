@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { getDb, isDatabaseConfigured } from "@/db";
+import { ensureAppSchema } from "@/db/ensure-schema";
 import { users } from "@/db/schema";
 import {
   AVATAR_PALETTE,
@@ -101,6 +102,9 @@ export function serializeUser(row: typeof users.$inferSelect): PublicUser {
     avatarColor: row.avatarColor,
     avatarUrl: row.avatarUrl,
     bannerUrl: row.bannerUrl,
+    bio: row.bio ?? null,
+    presenceStatus: row.presenceStatus ?? "online",
+    customActivity: row.customActivity ?? null,
     role: row.role,
     lastSeenAt: row.lastSeenAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -132,6 +136,7 @@ export async function getCurrentUser(): Promise<PrivateUser | null> {
   }
 
   try {
+    await ensureAppSchema();
     const db = getDb();
     const [user] = await db.select().from(users).where(eq(users.id, session.sub)).limit(1);
     if (!user) {
