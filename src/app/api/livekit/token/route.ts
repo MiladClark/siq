@@ -48,6 +48,7 @@ export async function POST(request: Request) {
       displayName: user.displayName,
       username: user.username,
       avatarColor: user.avatarColor,
+      avatarUrl: user.avatarUrl,
       role: user.role,
     });
 

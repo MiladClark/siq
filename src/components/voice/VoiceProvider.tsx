@@ -22,7 +22,13 @@ import {
   useState,
 } from "react";
 import { RemoteAudioPlayer } from "@/components/voice/AudioRenderer";
-import { pickAvatarColor, type ChannelItem } from "@/lib/types";
+import { playSound } from "@/lib/sounds";
+import {
+  pickAvatarColor,
+  type ChannelItem,
+  type VoiceNetworkSample,
+  type VoiceNetworkStats,
+} from "@/lib/types";
 
 export type ScreenSharePreset = "1080p60" | "1080p30" | "720p30";
 
@@ -31,6 +37,8 @@ export interface VoiceParticipantView {
   name: string;
   username?: string;
   avatarColor: string;
+  avatarUrl: string | null;
+  role?: "admin" | "member";
   isLocal: boolean;
   isSpeaking: boolean;
   isMuted: boolean;
@@ -53,6 +61,7 @@ interface VoiceContextValue {
   connectionState: ConnectionState;
   error: string | null;
   participants: VoiceParticipantView[];
+  networkStats: VoiceNetworkStats;
   isMuted: boolean;
   isDeafened: boolean;
   isCameraOn: boolean;
@@ -71,6 +80,9 @@ interface VoiceContextValue {
   refreshDevices: () => Promise<void>;
   userVolumes: Record<string, number>;
   setUserVolume: (identity: string, volume: number) => void;
+  toggleLocalMuteUser: (identity: string) => void;
+  kickParticipant: (targetIdentity: string, roomName?: string) => Promise<void>;
+  serverMuteParticipant: (targetIdentity: string, roomName?: string) => Promise<void>;
   joinVoiceChannel: (channel: ChannelItem) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => Promise<void>;
@@ -82,27 +94,42 @@ interface VoiceContextValue {
 
 const VOLUME_STORAGE_KEY = "siq_user_volumes_v1";
 
+const EMPTY_NETWORK_STATS: VoiceNetworkStats = {
+  lastPingMs: null,
+  avgPingMs: null,
+  packetLossPct: 0,
+  history: [],
+  serverHost: "",
+  encrypted: true,
+};
+
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 
 function parseParticipantMeta(p: Participant): {
   username?: string;
   avatarColor: string;
+  avatarUrl: string | null;
+  role?: "admin" | "member";
 } {
   if (p.metadata) {
     try {
       const parsed = JSON.parse(p.metadata) as {
         username?: string;
         avatarColor?: string;
+        avatarUrl?: string | null;
+        role?: "admin" | "member";
       };
       return {
         username: parsed.username,
         avatarColor: parsed.avatarColor || pickAvatarColor(p.identity),
+        avatarUrl: parsed.avatarUrl ?? null,
+        role: parsed.role,
       };
     } catch {
       // ignore
     }
   }
-  return { avatarColor: pickAvatarColor(p.identity) };
+  return { avatarColor: pickAvatarColor(p.identity), avatarUrl: null };
 }
 
 function buildParticipantView(
@@ -125,6 +152,8 @@ function buildParticipantView(
     name: p.name || meta.username || "Member",
     username: meta.username,
     avatarColor: meta.avatarColor,
+    avatarUrl: meta.avatarUrl,
+    role: meta.role,
     isLocal,
     isSpeaking: activeSpeakerIds.has(p.identity) && !isMuted,
     isMuted,
@@ -143,6 +172,71 @@ function buildParticipantView(
   };
 }
 
+/** Extract real WebRTC RTT (ms) and outbound packet loss (%) from LiveKit's internal engine */
+async function readLiveKitStats(
+  room: Room
+): Promise<{ pingMs: number | null; packetLossPct: number } | null> {
+  try {
+    // Access LiveKit's internal pcManager (publisher & subscriber RTCPeerConnections)
+    const engine = (
+      room as unknown as {
+        engine?: {
+          pcManager?: {
+            publisher?: { getStats?: () => Promise<RTCStatsReport> };
+            subscriber?: { getStats?: () => Promise<RTCStatsReport> };
+          };
+        };
+      }
+    ).engine;
+
+    const pubPc = engine?.pcManager?.publisher;
+    const subPc = engine?.pcManager?.subscriber;
+
+    let rttSeconds: number | null = null;
+    let packetsSent = 0;
+    let packetsLost = 0;
+
+    const reports: RTCStatsReport[] = [];
+    if (pubPc?.getStats) reports.push(await pubPc.getStats());
+    if (subPc?.getStats) reports.push(await subPc.getStats());
+
+    for (const report of reports) {
+      report.forEach((stat) => {
+        if (
+          stat.type === "candidate-pair" &&
+          (stat.state === "succeeded" || stat.nominated) &&
+          typeof stat.currentRoundTripTime === "number" &&
+          stat.currentRoundTripTime > 0
+        ) {
+          rttSeconds = stat.currentRoundTripTime;
+        }
+        if (stat.type === "remote-inbound-rtp" && stat.kind === "audio") {
+          if (typeof stat.roundTripTime === "number" && stat.roundTripTime > 0 && rttSeconds === null) {
+            rttSeconds = stat.roundTripTime;
+          }
+          if (typeof stat.packetsLost === "number") {
+            packetsLost += Math.max(0, stat.packetsLost);
+          }
+        }
+        if (stat.type === "outbound-rtp" && stat.kind === "audio") {
+          if (typeof stat.packetsSent === "number") {
+            packetsSent += Math.max(0, stat.packetsSent);
+          }
+        }
+      });
+    }
+
+    const total = packetsSent + packetsLost;
+    const packetLossPct = total > 0 ? Math.min(100, (packetsLost / total) * 100) : 0;
+    return {
+      pingMs: rttSeconds !== null ? Math.round(rttSeconds * 1000) : null,
+      packetLossPct,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function VoiceProvider({
   children,
   onOccupancyChanged,
@@ -152,6 +246,8 @@ export function VoiceProvider({
 }) {
   const roomRef = useRef<Room | null>(null);
   const preDeafenMutedRef = useRef<boolean>(false);
+  const preLocalMuteVolumeRef = useRef<Record<string, number>>({});
+  const serverHostRef = useRef<string>("");
 
   const [activeChannel, setActiveChannel] = useState<ChannelItem | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>(
@@ -160,6 +256,8 @@ export function VoiceProvider({
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<VoiceParticipantView[]>([]);
   const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
+  const [networkStats, setNetworkStats] = useState<VoiceNetworkStats>(EMPTY_NETWORK_STATS);
+
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -240,16 +338,146 @@ export function VoiceProvider({
     });
   }, []);
 
+  const toggleLocalMuteUser = useCallback(
+    (identity: string) => {
+      const current = userVolumes[identity] ?? 1;
+      if (current > 0) {
+        preLocalMuteVolumeRef.current[identity] = current;
+        setUserVolume(identity, 0);
+        playSound("mute");
+      } else {
+        const restored = preLocalMuteVolumeRef.current[identity] ?? 1;
+        setUserVolume(identity, restored > 0 ? restored : 1);
+        playSound("unmute");
+      }
+    },
+    [setUserVolume, userVolumes]
+  );
+
+  const kickParticipant = useCallback(
+    async (targetIdentity: string, roomName?: string) => {
+      const targetRoom = roomName || activeChannel?.slug;
+      if (!targetRoom) return;
+      try {
+        const res = await fetch("/api/livekit/moderate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "kick",
+            roomName: targetRoom,
+            targetIdentity,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error ?? "Failed to kick user.");
+        } else {
+          playSound("peer-leave");
+          onOccupancyChanged?.();
+        }
+      } catch {
+        setError("Network error while kicking user.");
+      }
+    },
+    [activeChannel?.slug, onOccupancyChanged]
+  );
+
+  const serverMuteParticipant = useCallback(
+    async (targetIdentity: string, roomName?: string) => {
+      const targetRoom = roomName || activeChannel?.slug;
+      if (!targetRoom) return;
+      try {
+        const res = await fetch("/api/livekit/moderate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "mute",
+            roomName: targetRoom,
+            targetIdentity,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error ?? "Failed to mute user.");
+        } else {
+          playSound("mute");
+        }
+      } catch {
+        setError("Network error while muting user.");
+      }
+    },
+    [activeChannel?.slug]
+  );
+
+  // Sample live WebRTC ping & packet loss every 2 seconds while connected
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected) {
+      setNetworkStats(EMPTY_NETWORK_STATS);
+      return;
+    }
+
+    let cancelled = false;
+    const sample = async () => {
+      const room = roomRef.current;
+      if (!room || cancelled) return;
+
+      const measured = await readLiveKitStats(room);
+      if (cancelled) return;
+
+      let pingMs = measured?.pingMs ?? null;
+      const packetLossPct = measured?.packetLossPct ?? 0;
+
+      // Fallback lightweight HTTP ping measurement if WebRTC stats haven't warmed up yet
+      if (pingMs === null) {
+        try {
+          const t0 = performance.now();
+          await fetch("/api/auth/status", { method: "HEAD", cache: "no-store" });
+          pingMs = Math.max(1, Math.round(performance.now() - t0));
+        } catch {
+          // ignore
+        }
+      }
+
+      if (pingMs === null || cancelled) return;
+
+      setNetworkStats((prev) => {
+        const nextHistory: VoiceNetworkSample[] = [
+          ...prev.history.slice(-39),
+          { timestamp: Date.now(), pingMs: pingMs! },
+        ];
+        const sum = nextHistory.reduce((acc, s) => acc + s.pingMs, 0);
+        const avgPingMs = Math.round(sum / nextHistory.length);
+        return {
+          lastPingMs: pingMs,
+          avgPingMs,
+          packetLossPct,
+          history: nextHistory,
+          serverHost: serverHostRef.current,
+          encrypted: true,
+        };
+      });
+    };
+
+    void sample();
+    const timer = setInterval(() => void sample(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [connectionState]);
+
   const leaveVoiceChannel = useCallback(async () => {
     const room = roomRef.current;
     roomRef.current = null;
     if (room) {
       await room.disconnect();
+      playSound("leave");
     }
     setActiveChannel(null);
     setConnectionState(ConnectionState.Disconnected);
     setParticipants([]);
     setActiveSpeakerIds(new Set());
+    setNetworkStats(EMPTY_NETWORK_STATS);
     setIsMuted(false);
     setIsDeafened(false);
     setIsCameraOn(false);
@@ -259,7 +487,10 @@ export function VoiceProvider({
 
   const joinVoiceChannel = useCallback(
     async (channel: ChannelItem) => {
-      if (activeChannel?.id === channel.id && roomRef.current?.state === ConnectionState.Connected) {
+      if (
+        activeChannel?.id === channel.id &&
+        roomRef.current?.state === ConnectionState.Connected
+      ) {
         return;
       }
 
@@ -271,6 +502,7 @@ export function VoiceProvider({
 
       setActiveChannel(channel);
       setConnectionState(ConnectionState.Connecting);
+      setNetworkStats(EMPTY_NETWORK_STATS);
 
       try {
         const res = await fetch("/api/livekit/token", {
@@ -284,6 +516,12 @@ export function VoiceProvider({
           setActiveChannel(null);
           setConnectionState(ConnectionState.Disconnected);
           return;
+        }
+
+        try {
+          serverHostRef.current = new URL(data.url).host;
+        } catch {
+          serverHostRef.current = "livekit-edge";
         }
 
         const room = new Room({
@@ -311,10 +549,12 @@ export function VoiceProvider({
             syncParticipants();
           })
           .on(RoomEvent.ParticipantConnected, () => {
+            playSound("peer-join");
             syncParticipants();
             onOccupancyChanged?.();
           })
           .on(RoomEvent.ParticipantDisconnected, () => {
+            playSound("peer-leave");
             syncParticipants();
             onOccupancyChanged?.();
           })
@@ -333,9 +573,11 @@ export function VoiceProvider({
           .on(RoomEvent.Disconnected, () => {
             if (roomRef.current === room) {
               roomRef.current = null;
+              playSound("leave");
               setActiveChannel(null);
               setConnectionState(ConnectionState.Disconnected);
               setParticipants([]);
+              setNetworkStats(EMPTY_NETWORK_STATS);
               setIsCameraOn(false);
               setIsScreenSharing(false);
               onOccupancyChanged?.();
@@ -343,6 +585,7 @@ export function VoiceProvider({
           });
 
         await room.connect(data.url, data.token);
+        playSound("join");
 
         try {
           await room.localParticipant.setMicrophoneEnabled(true, {
@@ -352,7 +595,6 @@ export function VoiceProvider({
             deviceId: selectedAudioInput || undefined,
           });
         } catch {
-          // User may have denied mic permission — stay connected in listen-only mode
           setError("Microphone permission denied. Connected in listen-only mode.");
         }
 
@@ -395,6 +637,7 @@ export function VoiceProvider({
         noiseSuppression,
         deviceId: selectedAudioInput || undefined,
       });
+      playSound(nextEnabled ? "unmute" : "mute");
       syncParticipants();
     } catch {
       setError("Could not access microphone.");
@@ -407,11 +650,13 @@ export function VoiceProvider({
     if (!isDeafened) {
       preDeafenMutedRef.current = !room.localParticipant.isMicrophoneEnabled;
       setIsDeafened(true);
+      playSound("deafen");
       if (room.localParticipant.isMicrophoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(false);
       }
     } else {
       setIsDeafened(false);
+      playSound("undeafen");
       if (!preDeafenMutedRef.current) {
         await room.localParticipant.setMicrophoneEnabled(true).catch(() => {});
       }
@@ -428,6 +673,7 @@ export function VoiceProvider({
         resolution: VideoPresets.h720.resolution,
         deviceId: selectedVideoInput || undefined,
       });
+      playSound(nextEnabled ? "unmute" : "mute");
       syncParticipants();
     } catch {
       setError("Could not access webcam.");
@@ -461,13 +707,14 @@ export function VoiceProvider({
             },
           }
         );
+        playSound("stream-start");
       } else {
         await room.localParticipant.setScreenShareEnabled(false);
+        playSound("stream-stop");
       }
       syncParticipants();
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
-        // User canceled the browser screen picker — not an error
         return;
       }
       setError("Could not start screen sharing.");
@@ -510,7 +757,6 @@ export function VoiceProvider({
     }
   }, []);
 
-  // Clean up on unmount
   useEffect(() => {
     return () => {
       if (roomRef.current) {
@@ -525,6 +771,7 @@ export function VoiceProvider({
       connectionState,
       error,
       participants,
+      networkStats,
       isMuted,
       isDeafened,
       isCameraOn,
@@ -543,6 +790,9 @@ export function VoiceProvider({
       refreshDevices,
       userVolumes,
       setUserVolume,
+      toggleLocalMuteUser,
+      kickParticipant,
+      serverMuteParticipant,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
@@ -556,6 +806,7 @@ export function VoiceProvider({
       connectionState,
       error,
       participants,
+      networkStats,
       isMuted,
       isDeafened,
       isCameraOn,
@@ -573,6 +824,9 @@ export function VoiceProvider({
       refreshDevices,
       userVolumes,
       setUserVolume,
+      toggleLocalMuteUser,
+      kickParticipant,
+      serverMuteParticipant,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
@@ -585,7 +839,6 @@ export function VoiceProvider({
   return (
     <VoiceContext.Provider value={value}>
       {children}
-      {/* Persistent audio engine: keeps playing voice even while browsing text channels */}
       <div className="hidden" aria-hidden="true">
         {participants.map((p) => (
           <div key={p.identity}>

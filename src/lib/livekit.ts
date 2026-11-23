@@ -5,12 +5,7 @@ export function isLiveKitConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_LIVEKIT_URL?.trim();
   const key = process.env.LIVEKIT_API_KEY?.trim();
   const secret = process.env.LIVEKIT_API_SECRET?.trim();
-  return Boolean(
-    url &&
-      key &&
-      secret &&
-      !url.includes("your-project.livekit.cloud")
-  );
+  return Boolean(url && key && secret && !url.includes("your-project.livekit.cloud"));
 }
 
 export function getLiveKitHttpUrl(): string {
@@ -20,12 +15,21 @@ export function getLiveKitHttpUrl(): string {
   return wsUrl;
 }
 
+export function getRoomServiceClient(): RoomServiceClient {
+  return new RoomServiceClient(
+    getLiveKitHttpUrl(),
+    process.env.LIVEKIT_API_KEY!.trim(),
+    process.env.LIVEKIT_API_SECRET!.trim()
+  );
+}
+
 export async function createLiveKitRoomToken(params: {
   roomName: string;
   userId: string;
   displayName: string;
   username: string;
   avatarColor: string;
+  avatarUrl: string | null;
   role: "admin" | "member";
 }): Promise<string> {
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
@@ -40,6 +44,7 @@ export async function createLiveKitRoomToken(params: {
     metadata: JSON.stringify({
       username: params.username,
       avatarColor: params.avatarColor,
+      avatarUrl: params.avatarUrl,
       role: params.role,
     }),
     ttl: "6h",
@@ -62,12 +67,7 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
   }
 
   try {
-    const client = new RoomServiceClient(
-      getLiveKitHttpUrl(),
-      process.env.LIVEKIT_API_KEY!.trim(),
-      process.env.LIVEKIT_API_SECRET!.trim()
-    );
-
+    const client = getRoomServiceClient();
     const rooms = await client.listRooms();
     const occupancy: VoiceOccupancyMap = {};
 
@@ -78,14 +78,17 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
         occupancy[room.name] = participants.map((p) => {
           let avatarColor = pickAvatarColor(p.identity);
           let username: string | undefined;
+          let avatarUrl: string | null = null;
           if (p.metadata) {
             try {
               const parsed = JSON.parse(p.metadata) as {
                 avatarColor?: string;
+                avatarUrl?: string | null;
                 username?: string;
               };
               if (parsed.avatarColor) avatarColor = parsed.avatarColor;
               if (parsed.username) username = parsed.username;
+              if (parsed.avatarUrl) avatarUrl = parsed.avatarUrl;
             } catch {
               // ignore malformed metadata
             }
@@ -95,6 +98,7 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
             name: p.name || username || "Member",
             username,
             avatarColor,
+            avatarUrl,
           };
         });
       })
@@ -102,7 +106,10 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
 
     return occupancy;
   } catch (error) {
-    console.warn("[livekit] occupancy fetch skipped:", error instanceof Error ? error.message : error);
+    console.warn(
+      "[livekit] occupancy fetch skipped:",
+      error instanceof Error ? error.message : error
+    );
     return {};
   }
 }
