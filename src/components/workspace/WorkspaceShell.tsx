@@ -5,13 +5,13 @@ import {
   Hash,
   Headphones,
   KeyRound,
-  LogOut,
   Menu,
   Mic,
   MicOff,
   Monitor,
   Pencil,
   PhoneOff,
+  Play,
   Plus,
   RefreshCw,
   Settings,
@@ -43,11 +43,21 @@ import {
   UserProfilePopover,
 } from "@/components/ui/UserProfilePopover";
 import { ConnectionStatusButton } from "@/components/voice/ConnectionStatusPopover";
+import { ScreenShareModal } from "@/components/voice/ScreenShareModal";
 import { useVoice, VoiceProvider } from "@/components/voice/VoiceProvider";
 import { VoiceStage } from "@/components/voice/VoiceStage";
 import { ChannelModal } from "@/components/workspace/ChannelModal";
 import { InviteModal } from "@/components/workspace/InviteModal";
-import { ProfileModal } from "@/components/workspace/ProfileModal";
+import {
+  SettingsModal,
+  type SettingsTab,
+} from "@/components/workspace/SettingsModal";
+import {
+  type AppPreferences,
+  DEFAULT_APP_PREFERENCES,
+  loadAppPreferences,
+  saveAppPreferences,
+} from "@/lib/preferences";
 import { playSound } from "@/lib/sounds";
 import type {
   ChannelItem,
@@ -68,7 +78,6 @@ interface WorkspaceShellProps {
   };
 }
 
-/** Generous 2-minute online window paired with background Web Worker heartbeat */
 const ONLINE_WINDOW_MS = 120 * 1000;
 
 function isMemberOnline(
@@ -101,6 +110,22 @@ function WorkspaceInner({
     useState<VoiceOccupancyMap>(initialVoiceOccupancy);
   const [capabilities, setCapabilities] = useState(initialCapabilities);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [appPrefs, setAppPrefs] = useState<AppPreferences>(DEFAULT_APP_PREFERENCES);
+
+  const appPrefsRef = useRef(appPrefs);
+  appPrefsRef.current = appPrefs;
+
+  useEffect(() => {
+    setAppPrefs(loadAppPreferences());
+  }, []);
+
+  const updateAppPrefs = useCallback((patch: Partial<AppPreferences>) => {
+    setAppPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      saveAppPreferences(next);
+      return next;
+    });
+  }, []);
 
   const [selectedChannelId, setSelectedChannelId] = useState<string>(
     initialChannels.find((c) => c.type === "text")?.id ?? initialChannels[0]?.id ?? ""
@@ -115,11 +140,19 @@ function WorkspaceInner({
 
   const [profilePopover, setProfilePopover] = useState<ProfilePopoverTarget | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("account");
+  const [screenShareModalOpen, setScreenShareModalOpen] = useState(false);
+  const [isStageMaximized, setIsStageMaximized] = useState(false);
   const [channelModalOpen, setChannelModalOpen] = useState(false);
   const [channelModalType, setChannelModalType] = useState<"text" | "voice">("text");
   const [editingChannel, setEditingChannel] = useState<ChannelItem | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  function openSettings(tab: SettingsTab = "account") {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }
 
   const syncPresence = useCallback(async () => {
     try {
@@ -141,7 +174,6 @@ function WorkspaceInner({
         const fresh = incoming.filter((n) => {
           if (seenNotificationIdsRef.current.has(n.id)) return false;
           seenNotificationIdsRef.current.add(n.id);
-          // Skip notifications for messages in the channel the user is actively viewing right now
           const viewingSameChannel =
             document.visibilityState === "visible" &&
             n.channelId === selectedChannelIdRef.current;
@@ -151,11 +183,13 @@ function WorkspaceInner({
         if (fresh.length > 0) {
           playSound("notification");
           setNotifications((prev) => [...fresh.reverse(), ...prev].slice(0, 30));
-          setToasts((prev) => [...prev, ...fresh].slice(-3));
+          if (appPrefsRef.current.toastsEnabled) {
+            setToasts((prev) => [...prev, ...fresh].slice(-3));
+          }
         }
       }
     } catch {
-      // ignore transient network error
+      // ignore transient heartbeat failure
     }
   }, []);
 
@@ -163,7 +197,7 @@ function WorkspaceInner({
     void syncPresence();
   };
 
-  // Always-online heartbeat: uses an inline Web Worker so browsers never throttle it on Alt+Tab / background tabs
+  // Always-online Web Worker heartbeat (never throttled on Alt+Tab / background tabs)
   useEffect(() => {
     let worker: Worker | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
@@ -185,7 +219,6 @@ function WorkspaceInner({
       }, 7000);
     }
 
-    // Only mark offline when the user actually closes the tab/browser
     function handlePageHide() {
       try {
         navigator.sendBeacon("/api/presence/offline");
@@ -217,7 +250,6 @@ function WorkspaceInner({
   function selectChannel(channelId: string) {
     setSelectedChannelId(channelId);
     setMobileMenuOpen(false);
-    // Mark notifications from that channel as read
     setNotifications((prev) =>
       prev.map((n) => (n.channelId === channelId ? { ...n, read: true } : n))
     );
@@ -247,6 +279,7 @@ function WorkspaceInner({
               displayName: updated.displayName,
               avatarColor: updated.avatarColor,
               avatarUrl: updated.avatarUrl,
+              bannerUrl: updated.bannerUrl,
             }
           : m
       )
@@ -293,36 +326,72 @@ function WorkspaceInner({
     }
   }
 
-  function findMemberVoiceChannelName(memberId: string): string | null {
-    if (
-      voice.activeChannel &&
-      voice.participants.some((p) => p.identity === memberId)
-    ) {
-      return voice.activeChannel.name;
-    }
-    for (const ch of voiceChannels) {
-      const occ = voiceOccupancy[ch.slug] ?? [];
-      if (occ.some((o) => o.identity === memberId)) {
-        return ch.name;
+  /** Locate which voice channel (if any) a member is currently in + whether they're live streaming */
+  function findMemberVoiceInfo(memberId: string): {
+    channel: ChannelItem | null;
+    isScreenSharing: boolean;
+  } {
+    if (voice.activeChannel) {
+      const liveP = voice.participants.find((p) => p.identity === memberId);
+      if (liveP) {
+        return {
+          channel: voice.activeChannel,
+          isScreenSharing: liveP.isScreenSharing,
+        };
       }
     }
-    return null;
+    for (const ch of voiceChannels) {
+      const occ = (voiceOccupancy[ch.slug] ?? []).find((o) => o.identity === memberId);
+      if (occ) {
+        return {
+          channel: ch,
+          isScreenSharing: Boolean(occ.isScreenSharing),
+        };
+      }
+    }
+    return { channel: null, isScreenSharing: false };
   }
 
-  function findMemberVoiceChannelSlug(memberId: string): string | null {
-    if (
-      voice.activeChannel &&
-      voice.participants.some((p) => p.identity === memberId)
-    ) {
-      return voice.activeChannel.slug;
+  /** Jump directly into a friend's live stream (joining their voice channel if needed) */
+  function handleWatchUserStream(targetUserId: string, explicitChannelId?: string | null) {
+    const info = findMemberVoiceInfo(targetUserId);
+    const targetChannel =
+      (explicitChannelId
+        ? voiceChannels.find((c) => c.id === explicitChannelId)
+        : null) ?? info.channel;
+
+    if (!targetChannel) return;
+
+    selectChannel(targetChannel.id);
+    if (voice.activeChannel?.id === targetChannel.id && isVoiceConnected) {
+      voice.setWatchTargetIdentity(targetUserId);
+    } else {
+      void voice.joinVoiceChannel(targetChannel, {
+        watchIdentity: targetUserId,
+        seedOccupants: voiceOccupancy[targetChannel.slug] ?? [],
+        currentUser: user,
+      });
     }
-    for (const ch of voiceChannels) {
-      const occ = voiceOccupancy[ch.slug] ?? [];
-      if (occ.some((o) => o.identity === memberId)) {
-        return ch.slug;
-      }
-    }
-    return null;
+  }
+
+  function openEnrichedProfilePopover(rawTarget: ProfilePopoverTarget) {
+    const matchedMember = members.find((m) => m.id === rawTarget.id);
+    const voiceInfo = findMemberVoiceInfo(rawTarget.id);
+    setProfilePopover({
+      ...rawTarget,
+      displayName: matchedMember?.displayName ?? rawTarget.displayName,
+      username: matchedMember?.username ?? rawTarget.username,
+      avatarColor: matchedMember?.avatarColor ?? rawTarget.avatarColor,
+      avatarUrl: matchedMember ? matchedMember.avatarUrl : rawTarget.avatarUrl,
+      bannerUrl: matchedMember ? matchedMember.bannerUrl : rawTarget.bannerUrl,
+      role: matchedMember?.role ?? rawTarget.role,
+      online:
+        rawTarget.online ??
+        (matchedMember ? isMemberOnline(matchedMember, user.id, nowMs) : true),
+      inVoiceChannelName: voiceInfo.channel?.name ?? rawTarget.inVoiceChannelName ?? null,
+      voiceChannelId: voiceInfo.channel?.id ?? rawTarget.voiceChannelId ?? null,
+      isScreenSharing: voiceInfo.isScreenSharing || Boolean(rawTarget.isScreenSharing),
+    });
   }
 
   function openUserCard(
@@ -333,25 +402,21 @@ function WorkspaceInner({
       username?: string;
       avatarColor: string;
       avatarUrl?: string | null;
+      bannerUrl?: string | null;
       role?: "admin" | "member";
       online?: boolean;
     }
   ) {
     const rect = e.currentTarget.getBoundingClientRect();
-    const matchedMember = members.find((m) => m.id === person.id);
-    const isOnline =
-      person.online ??
-      (matchedMember ? isMemberOnline(matchedMember, user.id, nowMs) : true);
-
-    setProfilePopover({
+    openEnrichedProfilePopover({
       id: person.id,
       displayName: person.displayName,
-      username: person.username ?? matchedMember?.username,
+      username: person.username,
       avatarColor: person.avatarColor,
-      avatarUrl: person.avatarUrl ?? matchedMember?.avatarUrl ?? null,
-      role: person.role ?? matchedMember?.role,
-      online: isOnline,
-      inVoiceChannelName: findMemberVoiceChannelName(person.id),
+      avatarUrl: person.avatarUrl,
+      bannerUrl: person.bannerUrl,
+      role: person.role,
+      online: person.online,
       anchorRect: {
         top: rect.top,
         left: rect.left,
@@ -376,7 +441,8 @@ function WorkspaceInner({
     voiceRoomSlug?: string | null
   ) {
     const isSelf = person.id === user.id;
-    const roomSlug = voiceRoomSlug ?? findMemberVoiceChannelSlug(person.id);
+    const voiceInfo = findMemberVoiceInfo(person.id);
+    const roomSlug = voiceRoomSlug ?? voiceInfo.channel?.slug ?? null;
     const currentVol = voice.userVolumes[person.id] ?? 1;
     const isLocallyMuted = currentVol === 0;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -384,33 +450,42 @@ function WorkspaceInner({
 
     const entries: ContextMenuEntry[] = [
       { type: "header", id: "u-hdr", label: person.displayName },
-      {
-        type: "item",
-        id: "u-profile",
-        label: "View Profile",
-        icon: <User className="h-3.5 w-3.5" />,
-        onSelect: () => {
-          setProfilePopover({
-            id: person.id,
-            displayName: person.displayName,
-            username: person.username ?? matchedMember?.username,
-            avatarColor: person.avatarColor,
-            avatarUrl: person.avatarUrl ?? matchedMember?.avatarUrl ?? null,
-            role: person.role ?? matchedMember?.role,
-            online: matchedMember ? isMemberOnline(matchedMember, user.id, nowMs) : true,
-            inVoiceChannelName: findMemberVoiceChannelName(person.id),
-            anchorRect: {
-              top: rect.top,
-              left: rect.left,
-              right: rect.right,
-              bottom: rect.bottom,
-              width: rect.width,
-              height: rect.height,
-            },
-          });
-        },
-      },
     ];
+
+    if (voiceInfo.isScreenSharing) {
+      entries.push({
+        type: "item",
+        id: "u-watch-live",
+        label: "Watch Stream",
+        icon: <Play className="h-3.5 w-3.5 text-emerald-400" />,
+        onSelect: () => handleWatchUserStream(person.id, voiceInfo.channel?.id),
+      });
+    }
+
+    entries.push({
+      type: "item",
+      id: "u-profile",
+      label: "View Profile",
+      icon: <User className="h-3.5 w-3.5" />,
+      onSelect: () => {
+        openEnrichedProfilePopover({
+          id: person.id,
+          displayName: person.displayName,
+          username: person.username,
+          avatarColor: person.avatarColor,
+          avatarUrl: person.avatarUrl,
+          role: person.role,
+          anchorRect: {
+            top: rect.top,
+            left: rect.left,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+          },
+        });
+      },
+    });
 
     const uname = person.username ?? matchedMember?.username;
     if (uname) {
@@ -493,7 +568,10 @@ function WorkspaceInner({
             icon: <Headphones className="h-3.5 w-3.5" />,
             onSelect: () => {
               selectChannel(channel.id);
-              void voice.joinVoiceChannel(channel);
+              void voice.joinVoiceChannel(channel, {
+                seedOccupants: voiceOccupancy[channel.slug] ?? [],
+                currentUser: user,
+              });
             },
           }
         : {
@@ -538,6 +616,8 @@ function WorkspaceInner({
 
     openMenu(e, entries);
   }
+
+  const showMembersRail = appPrefs.showMembersSidebar && !isStageMaximized;
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#09090B] text-zinc-100 select-none">
@@ -695,7 +775,7 @@ function WorkspaceInner({
                 const canManage =
                   user.role === "admin" || channel.createdById === user.id;
 
-                const occupants = isLiveHere
+                const rawOccupants = isLiveHere
                   ? voice.participants.map((p) => ({
                       identity: p.identity,
                       name: p.name,
@@ -716,8 +796,21 @@ function WorkspaceInner({
                       role: undefined,
                       isSpeaking: false,
                       isMuted: false,
-                      isScreenSharing: false,
+                      isScreenSharing: Boolean(o.isScreenSharing),
                     }));
+
+                // Always merge latest avatarUrl / bannerUrl / displayName from live members state
+                const occupants = rawOccupants.map((occ) => {
+                  const m = members.find((item) => item.id === occ.identity);
+                  return {
+                    ...occ,
+                    name: m?.displayName ?? occ.name,
+                    username: m?.username ?? occ.username,
+                    avatarColor: m?.avatarColor ?? occ.avatarColor,
+                    avatarUrl: m ? m.avatarUrl : occ.avatarUrl,
+                    role: m?.role ?? occ.role,
+                  };
+                });
 
                 return (
                   <li key={channel.id} className="space-y-0.5">
@@ -730,7 +823,10 @@ function WorkspaceInner({
                         onClick={() => selectChannel(channel.id)}
                         onDoubleClick={() => {
                           selectChannel(channel.id);
-                          void voice.joinVoiceChannel(channel);
+                          void voice.joinVoiceChannel(channel, {
+                            seedOccupants: voiceOccupancy[channel.slug] ?? [],
+                            currentUser: user,
+                          });
                         }}
                         title="Double-click to join voice"
                         className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
@@ -829,7 +925,14 @@ function WorkspaceInner({
                                 {occ.name}
                               </span>
                               {occ.isScreenSharing && (
-                                <span className="rounded bg-emerald-500/15 px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleWatchUserStream(occ.identity, channel.id);
+                                  }}
+                                  title="Watch live stream"
+                                  className="rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-emerald-300 hover:bg-emerald-500 hover:text-zinc-950"
+                                >
                                   LIVE
                                 </span>
                               )}
@@ -848,7 +951,7 @@ function WorkspaceInner({
           </div>
         </nav>
 
-        {/* Active Voice Connection Dock with Live Ping Signal Button */}
+        {/* Active Voice Connection Dock */}
         <AnimatePresence>
           {isVoiceConnected && voice.activeChannel && (
             <motion.div
@@ -921,13 +1024,14 @@ function WorkspaceInner({
                     <Volume2 className="h-3.5 w-3.5" />
                   )}
                 </button>
+                {/* Opens Screen Share Setup / Live Stream Controls modal (never accidentally kills stream) */}
                 <button
                   type="button"
-                  onClick={() => void voice.toggleScreenShare()}
-                  title={voice.isScreenSharing ? "Stop share" : "Share screen"}
+                  onClick={() => setScreenShareModalOpen(true)}
+                  title={voice.isScreenSharing ? "Stream options & stop" : "Share screen"}
                   className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
                     voice.isScreenSharing
-                      ? "bg-emerald-500/20 text-emerald-300"
+                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
                       : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
                   }`}
                 >
@@ -938,12 +1042,12 @@ function WorkspaceInner({
           )}
         </AnimatePresence>
 
-        {/* Bottom Profile Dock */}
+        {/* Bottom Profile Dock (opens full Discord-style SettingsModal) */}
         <div className="border-t border-white/[0.07] bg-[#0B0C0E] p-3">
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={() => setProfileOpen(true)}
+              onClick={() => openSettings("account")}
               className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-white/[0.05]"
             >
               <Avatar
@@ -963,24 +1067,14 @@ function WorkspaceInner({
               </div>
             </button>
 
-            <div className="flex shrink-0 items-center gap-0.5">
-              <button
-                type="button"
-                onClick={() => setProfileOpen(true)}
-                title="Profile & audio settings"
-                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleSignOut()}
-                title="Sign out"
-                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => openSettings("account")}
+              title="User & App Settings"
+              className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -1051,15 +1145,22 @@ function WorkspaceInner({
                 channel={activeChannel}
                 currentUser={user}
                 blobReady={capabilities.blobReady}
-                onOpenUserProfile={setProfilePopover}
+                density={appPrefs.messageDensity}
+                textScale={appPrefs.textScale}
+                onOpenUserProfile={openEnrichedProfilePopover}
               />
             ) : (
               <VoiceStage
                 channel={activeChannel}
                 currentUser={user}
+                members={members}
                 livekitReady={capabilities.livekitReady}
                 previewOccupants={voiceOccupancy[activeChannel.slug] ?? []}
-                onOpenUserProfile={setProfilePopover}
+                isStageMaximized={isStageMaximized}
+                onToggleMaximize={() => setIsStageMaximized((v) => !v)}
+                onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
+                onOpenVoiceSettings={() => openSettings("voice")}
+                onOpenUserProfile={openEnrichedProfilePopover}
               />
             )
           ) : (
@@ -1076,138 +1177,157 @@ function WorkspaceInner({
           )}
 
           {/* Right Members Rail */}
-          <aside className="hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
-                <Users className="h-3.5 w-3.5" />
-                <span>Members</span>
-              </div>
-              <span className="font-mono text-[11px] text-zinc-500">
-                {onlineMembers.length}/{members.length}
-              </span>
-            </div>
-
-            <div className="flex-1 space-y-5 overflow-y-auto">
-              <div>
-                <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                  Online · {onlineMembers.length}
-                </p>
-                <ul className="space-y-0.5">
-                  {onlineMembers.map((member) => (
-                    <li key={member.id}>
-                      <button
-                        type="button"
-                        onClick={(e) =>
-                          openUserCard(e, {
-                            id: member.id,
-                            displayName: member.displayName,
-                            username: member.username,
-                            avatarColor: member.avatarColor,
-                            avatarUrl: member.avatarUrl,
-                            role: member.role,
-                            online: true,
-                          })
-                        }
-                        onContextMenu={(e) =>
-                          handleUserContextMenu(e, {
-                            id: member.id,
-                            displayName: member.displayName,
-                            username: member.username,
-                            avatarColor: member.avatarColor,
-                            avatarUrl: member.avatarUrl,
-                            role: member.role,
-                          })
-                        }
-                        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.05]"
-                      >
-                        <Avatar
-                          name={member.displayName}
-                          color={member.avatarColor}
-                          avatarUrl={member.avatarUrl}
-                          size="sm"
-                          online
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p dir="auto" className="truncate font-medium text-zinc-200">
-                            {member.displayName}
-                          </p>
-                          <p className="truncate font-mono text-[10px] text-zinc-500">
-                            {member.role === "admin" ? "admin" : `@${member.username}`}
-                          </p>
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+          {showMembersRail && (
+            <aside className="hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
+                  <Users className="h-3.5 w-3.5" />
+                  <span>Members</span>
+                </div>
+                <span className="font-mono text-[11px] text-zinc-500">
+                  {onlineMembers.length}/{members.length}
+                </span>
               </div>
 
-              {offlineMembers.length > 0 && (
+              <div className="flex-1 space-y-5 overflow-y-auto">
                 <div>
                   <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                    Offline · {offlineMembers.length}
+                    Online · {onlineMembers.length}
                   </p>
                   <ul className="space-y-0.5">
-                    {offlineMembers.map((member) => (
-                      <li key={member.id}>
-                        <button
-                          type="button"
-                          onClick={(e) =>
-                            openUserCard(e, {
-                              id: member.id,
-                              displayName: member.displayName,
-                              username: member.username,
-                              avatarColor: member.avatarColor,
-                              avatarUrl: member.avatarUrl,
-                              role: member.role,
-                              online: false,
-                            })
-                          }
-                          onContextMenu={(e) =>
-                            handleUserContextMenu(e, {
-                              id: member.id,
-                              displayName: member.displayName,
-                              username: member.username,
-                              avatarColor: member.avatarColor,
-                              avatarUrl: member.avatarUrl,
-                              role: member.role,
-                            })
-                          }
-                          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs opacity-55 transition-all hover:bg-white/[0.04] hover:opacity-90"
-                        >
-                          <Avatar
-                            name={member.displayName}
-                            color={member.avatarColor}
-                            avatarUrl={member.avatarUrl}
-                            size="sm"
-                            online={false}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p dir="auto" className="truncate font-medium text-zinc-300">
-                              {member.displayName}
-                            </p>
-                            <p className="truncate font-mono text-[10px] text-zinc-500">
-                              @{member.username}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    ))}
+                    {onlineMembers.map((member) => {
+                      const voiceInfo = findMemberVoiceInfo(member.id);
+                      return (
+                        <li key={member.id}>
+                          <button
+                            type="button"
+                            onClick={(e) =>
+                              openUserCard(e, {
+                                id: member.id,
+                                displayName: member.displayName,
+                                username: member.username,
+                                avatarColor: member.avatarColor,
+                                avatarUrl: member.avatarUrl,
+                                role: member.role,
+                                online: true,
+                              })
+                            }
+                            onContextMenu={(e) =>
+                              handleUserContextMenu(e, {
+                                id: member.id,
+                                displayName: member.displayName,
+                                username: member.username,
+                                avatarColor: member.avatarColor,
+                                avatarUrl: member.avatarUrl,
+                                role: member.role,
+                              })
+                            }
+                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.05]"
+                          >
+                            <Avatar
+                              name={member.displayName}
+                              color={member.avatarColor}
+                              avatarUrl={member.avatarUrl}
+                              size="sm"
+                              online
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p dir="auto" className="truncate font-medium text-zinc-200">
+                                {member.displayName}
+                              </p>
+                              <p className="truncate font-mono text-[10px] text-zinc-500">
+                                {member.role === "admin" ? "admin" : `@${member.username}`}
+                              </p>
+                            </div>
+                            {voiceInfo.isScreenSharing && (
+                              <span className="rounded bg-emerald-500/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                                LIVE
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
-              )}
-            </div>
-          </aside>
+
+                {offlineMembers.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+                      Offline · {offlineMembers.length}
+                    </p>
+                    <ul className="space-y-0.5">
+                      {offlineMembers.map((member) => (
+                        <li key={member.id}>
+                          <button
+                            type="button"
+                            onClick={(e) =>
+                              openUserCard(e, {
+                                id: member.id,
+                                displayName: member.displayName,
+                                username: member.username,
+                                avatarColor: member.avatarColor,
+                                avatarUrl: member.avatarUrl,
+                                role: member.role,
+                                online: false,
+                              })
+                            }
+                            onContextMenu={(e) =>
+                              handleUserContextMenu(e, {
+                                id: member.id,
+                                displayName: member.displayName,
+                                username: member.username,
+                                avatarColor: member.avatarColor,
+                                avatarUrl: member.avatarUrl,
+                                role: member.role,
+                              })
+                            }
+                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs opacity-55 transition-all hover:bg-white/[0.04] hover:opacity-90"
+                          >
+                            <Avatar
+                              name={member.displayName}
+                              color={member.avatarColor}
+                              avatarUrl={member.avatarUrl}
+                              size="sm"
+                              online={false}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p dir="auto" className="truncate font-medium text-zinc-300">
+                                {member.displayName}
+                              </p>
+                              <p className="truncate font-mono text-[10px] text-zinc-500">
+                                @{member.username}
+                              </p>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </aside>
+          )}
         </div>
       </div>
 
       {/* Modals, Popovers & Toast Stack */}
       <InviteModal open={inviteOpen} onClose={() => setInviteOpen(false)} />
-      <ProfileModal
-        open={profileOpen}
+      <SettingsModal
+        open={settingsOpen}
+        initialTab={settingsTab}
         user={user}
         blobReady={capabilities.blobReady}
-        onClose={() => setProfileOpen(false)}
-        onUpdated={handleUserUpdated}
+        appPrefs={appPrefs}
+        onUpdatePrefs={updateAppPrefs}
+        onResetPrefs={() => setAppPrefs(DEFAULT_APP_PREFERENCES)}
+        onClose={() => setSettingsOpen(false)}
+        onUserUpdated={handleUserUpdated}
+        onSignOut={() => void handleSignOut()}
+      />
+      <ScreenShareModal
+        open={screenShareModalOpen}
+        onClose={() => setScreenShareModalOpen(false)}
       />
       <ChannelModal
         open={channelModalOpen}
@@ -1219,6 +1339,9 @@ function WorkspaceInner({
       <UserProfilePopover
         target={profilePopover}
         onClose={() => setProfilePopover(null)}
+        onWatchStream={(target) =>
+          handleWatchUserStream(target.id, target.voiceChannelId)
+        }
       />
       <NotificationToasts
         toasts={toasts}
