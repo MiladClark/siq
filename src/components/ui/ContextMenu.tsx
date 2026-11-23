@@ -329,7 +329,7 @@ export function ContextMenuProvider({
                     <span className="truncate">{entry.label}</span>
                   </span>
                   {entry.shortcut && (
-                    <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    <span className="shrink-0 text-[10px] font-medium text-zinc-500">
                       {entry.shortcut}
                     </span>
                   )}
@@ -356,7 +356,7 @@ function ContextMenuSliderRow({
           <Volume2 className="h-3.5 w-3.5 text-zinc-400" />
           {entry.label}
         </span>
-        <span className="font-mono text-[10px] text-zinc-400">
+        <span className="text-[11px] font-semibold tabular-nums text-zinc-400">
           {Math.round(val * 100)}%
         </span>
       </div>

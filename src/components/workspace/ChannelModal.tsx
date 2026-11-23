@@ -3,6 +3,7 @@
 import { Hash, Volume2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
+import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { ChannelItem } from "@/lib/types";
 
 interface ChannelModalProps {
@@ -20,11 +21,11 @@ export function ChannelModal({
   onClose,
   onSaved,
 }: ChannelModalProps) {
+  const notify = useSystemNotify();
   const [name, setName] = useState("");
   const [type, setType] = useState<"text" | "voice">(defaultType);
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -37,13 +38,11 @@ export function ChannelModal({
       setType(defaultType);
       setDescription("");
     }
-    setError(null);
   }, [open, defaultType, editingChannel]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
-    setError(null);
 
     try {
       const isEdit = Boolean(editingChannel);
@@ -58,7 +57,12 @@ export function ChannelModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Failed to save channel.");
+        notify({
+          kind: "error",
+          title: "Channel Error",
+          message: data.error ?? "Failed to save channel.",
+          source: "Channels",
+        });
         setSaving(false);
         return;
       }
@@ -66,7 +70,12 @@ export function ChannelModal({
       onSaved(data.channel, isEdit);
       onClose();
     } catch {
-      setError("Network error while saving channel.");
+      notify({
+        kind: "error",
+        title: "Channel Error",
+        message: "Network error while saving channel.",
+        source: "Channels",
+      });
     } finally {
       setSaving(false);
     }
@@ -183,12 +192,6 @@ export function ChannelModal({
                   className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
                 />
               </div>
-
-              {error && (
-                <p className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-                  {error}
-                </p>
-              )}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button

@@ -95,7 +95,7 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 2, scale: 0.94 }}
             transition={{ duration: 0.12 }}
-            className="pointer-events-none absolute -top-9 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/[0.12] bg-[#18191E] px-2.5 py-1 font-mono text-[11px] font-semibold text-zinc-100 shadow-xl"
+            className="pointer-events-none absolute -top-9 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/[0.12] bg-[#18191E] px-2.5 py-1 text-[11px] font-semibold tabular-nums text-zinc-100 shadow-xl"
           >
             {stats.lastPingMs !== null ? `${stats.lastPingMs} ms` : "Measuring…"}
           </motion.div>
@@ -164,7 +164,7 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
                 <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-[#0B0C0F] p-2.5">
                   <div className="relative h-[84px] w-full">
                     {/* Horizontal Grid Lines + Y-Axis labels */}
-                    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[9px] font-mono text-zinc-500">
+                    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[10px] font-medium tabular-nums text-zinc-500">
                       <div className="flex items-center justify-end border-b border-white/[0.05] pb-0.5">
                         {Math.round(maxY)}
                       </div>
@@ -203,7 +203,7 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
                   </div>
 
                   {/* X-Axis Timestamps */}
-                  <div className="mt-1.5 flex items-center justify-between font-mono text-[9px] text-zinc-500">
+                  <div className="mt-1.5 flex items-center justify-between text-[10px] font-medium tabular-nums text-zinc-500">
                     <span>{firstTs ? formatTickTime(firstTs) : "—"}</span>
                     <span>{midTs ? formatTickTime(midTs) : ""}</span>
                     <span>{lastTs ? formatTickTime(lastTs) : "Now"}</span>
@@ -212,25 +212,25 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
 
                 {/* Server & Live Metrics */}
                 <div className="space-y-1.5">
-                  <p className="truncate font-mono text-xs font-semibold text-zinc-100">
+                  <p className="truncate text-xs font-semibold text-zinc-100">
                     {stats.serverHost || "livekit-edge"}
                   </p>
                   <div className="space-y-0.5 text-xs text-zinc-400">
                     <p>
                       Average ping:{" "}
-                      <span className="font-mono font-semibold text-zinc-100">
+                      <span className="font-semibold tabular-nums text-zinc-100">
                         {stats.avgPingMs !== null ? `${stats.avgPingMs} ms` : "—"}
                       </span>
                     </p>
                     <p>
                       Last ping:{" "}
-                      <span className="font-mono font-semibold text-zinc-100">
+                      <span className="font-semibold tabular-nums text-zinc-100">
                         {stats.lastPingMs !== null ? `${stats.lastPingMs} ms` : "—"}
                       </span>
                     </p>
                     <p>
                       Outbound packet loss rate:{" "}
-                      <span className="font-mono font-semibold text-zinc-100">
+                      <span className="font-semibold tabular-nums text-zinc-100">
                         {stats.packetLossPct.toFixed(1)}%
                       </span>
                     </p>

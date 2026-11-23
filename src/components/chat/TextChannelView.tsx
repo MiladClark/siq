@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  AlertCircle,
+  ArrowDown,
   Copy,
   Download,
   ExternalLink,
@@ -13,6 +13,7 @@ import {
   FileText,
   FileVideo,
   Hash,
+  Loader2,
   Maximize2,
   Paperclip,
   Reply,
@@ -36,6 +37,7 @@ import {
 } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
+import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
 import { convertImageFileToWebP } from "@/lib/image-webp";
 import type { MessageDensity, TextScale } from "@/lib/preferences";
@@ -50,14 +52,61 @@ import type {
 interface TextChannelViewProps {
   channel: ChannelItem;
   currentUser: PublicUser;
+  members: PublicUser[];
   blobReady: boolean;
   density?: MessageDensity;
   textScale?: TextScale;
   onOpenUserProfile: (target: ProfilePopoverTarget) => void;
+  onMessagesSeen?: (
+    channelId: string,
+    messageIds: string[],
+    latestCreatedAt?: string
+  ) => void;
 }
 
-/** Persistent in-memory cache across channel switches — zero skeleton flash when switching back */
-const channelMessageCache = new Map<string, MessageItem[]>();
+interface ChannelCacheEntry {
+  messages: MessageItem[];
+  hasMore: boolean;
+  hydrated: boolean;
+}
+
+/** Persistent in-memory cache across channel switches — zero skeleton flash, race-safe */
+const channelMessageCache = new Map<string, ChannelCacheEntry>();
+
+function sortMessagesChronologically(items: MessageItem[]): MessageItem[] {
+  const byId = new Map<string, MessageItem>();
+  for (const m of items) {
+    byId.set(m.id, m);
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const dt = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    if (dt !== 0) return dt;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** Reconcile a fresh tail (latest 80 from server) with any older paginated messages in cache.
+ *  Automatically picks up new messages AND removes messages deleted while away. */
+function reconcileWithFreshTail(
+  existing: MessageItem[],
+  freshTail: MessageItem[],
+  freshHasMore: boolean
+): { messages: MessageItem[]; hasMore: boolean } {
+  if (freshTail.length === 0) {
+    return { messages: [], hasMore: false };
+  }
+  const tailStartMs = new Date(freshTail[0].createdAt).getTime();
+  const tailIds = new Set(freshTail.map((m) => m.id));
+  const preservedOlder = existing.filter(
+    (m) => !tailIds.has(m.id) && new Date(m.createdAt).getTime() < tailStartMs
+  );
+  const merged = sortMessagesChronologically([...preservedOlder, ...freshTail]);
+  // If we already preserved older pages beyond the tail, keep previous hasMore knowledge
+  return {
+    messages: merged,
+    hasMore: preservedOlder.length > 0 ? true : freshHasMore,
+  };
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -202,10 +251,9 @@ function triggerDirectDownload(att: MessageAttachment) {
 }
 
 function renderLinkifiedText(text: string): ReactNode[] {
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const parts = text.split(urlRegex);
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
   return parts.map((part, i) => {
-    if (urlRegex.test(part)) {
+    if (part.startsWith("http://") || part.startsWith("https://")) {
       return (
         <a
           key={i}
@@ -225,12 +273,15 @@ function renderLinkifiedText(text: string): ReactNode[] {
 export function TextChannelView({
   channel,
   currentUser,
+  members,
   blobReady,
   density = "comfortable",
   textScale = "md",
   onOpenUserProfile,
+  onMessagesSeen,
 }: TextChannelViewProps) {
   const { openMenu } = useContextMenu();
+  const notify = useSystemNotify();
   const textSizeClass =
     textScale === "sm"
       ? "text-[13px]"
@@ -239,24 +290,64 @@ export function TextChannelView({
         : "text-sm";
 
   const cachedInitial = channelMessageCache.get(channel.id);
-  const [messages, setMessages] = useState<MessageItem[]>(cachedInitial ?? []);
-  const [loading, setLoading] = useState<boolean>(cachedInitial === undefined);
+  const [messages, setMessages] = useState<MessageItem[]>(
+    cachedInitial?.hydrated ? cachedInitial.messages : []
+  );
+  const [hasMore, setHasMore] = useState<boolean>(cachedInitial?.hasMore ?? false);
+  const [loading, setLoading] = useState<boolean>(!cachedInitial?.hydrated);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [unseenBelowCount, setUnseenBelowCount] = useState(0);
   const [composerText, setComposerText] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [sending, setSending] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageItem | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<MessageAttachment | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const lastTimestampRef = useRef<string | null>(
-    cachedInitial && cachedInitial.length > 0
-      ? cachedInitial[cachedInitial.length - 1].createdAt
-      : null
+  const setError = useCallback(
+    (msg: string | null) => {
+      if (msg) {
+        notify({
+          kind: "error",
+          title: "Chat Error",
+          message: msg,
+          source: `#${channel.name}`,
+        });
+      }
+    },
+    [channel.name, notify]
   );
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const activeChannelIdRef = useRef<string>(channel.id);
+  activeChannelIdRef.current = channel.id;
+
+  const onMessagesSeenRef = useRef(onMessagesSeen);
+  onMessagesSeenRef.current = onMessagesSeen;
+
+  const reportSeenIfVisible = useCallback((channelId: string, list: MessageItem[]) => {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      channelId === activeChannelIdRef.current &&
+      list.length > 0
+    ) {
+      onMessagesSeenRef.current?.(
+        channelId,
+        list.map((m) => m.id),
+        list[list.length - 1].createdAt
+      );
+    }
+  }, []);
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+  }, []);
 
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollContainerRef.current;
@@ -265,124 +356,255 @@ export function TextChannelView({
       top: el.scrollHeight,
       behavior: smooth ? "smooth" : "auto",
     });
+    setUnseenBelowCount(0);
   }, []);
 
-  // Load or silently refresh channel messages when switching channels
+  // Load & reconcile channel messages when switching channels (race-free with AbortController)
   useEffect(() => {
+    const targetChannelId = channel.id;
+    const controller = new AbortController();
     let active = true;
-    const cached = channelMessageCache.get(channel.id);
+    const cached = channelMessageCache.get(targetChannelId);
 
     setReplyingTo(null);
     setError(null);
+    setUnseenBelowCount(0);
+    setLoadingOlder(false);
 
-    if (cached !== undefined) {
-      // Instant render from memory cache — zero skeleton flicker!
-      setMessages(cached);
+    if (cached?.hydrated) {
+      // Instant render from verified memory cache — zero skeleton flash
+      setMessages(cached.messages);
+      setHasMore(cached.hasMore);
       setLoading(false);
-      lastTimestampRef.current =
-        cached.length > 0 ? cached[cached.length - 1].createdAt : null;
+      reportSeenIfVisible(targetChannelId, cached.messages);
       requestAnimationFrame(() => scrollToBottom(false));
     } else {
       setMessages([]);
+      setHasMore(false);
       setLoading(true);
-      lastTimestampRef.current = null;
     }
 
     async function syncChannel() {
       try {
-        const after = cached && cached.length > 0 ? cached[cached.length - 1].createdAt : null;
-        const url = after
-          ? `/api/channels/${channel.id}/messages?after=${encodeURIComponent(after)}`
-          : `/api/channels/${channel.id}/messages`;
-
-        const res = await fetch(url);
+        const res = await fetch(`/api/channels/${targetChannelId}/messages`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
         const data = await res.json();
-        if (!active) return;
+        if (!active || targetChannelId !== activeChannelIdRef.current) return;
 
         if (!res.ok) {
-          if (cached === undefined) {
+          if (!cached?.hydrated) {
             setError(data.error ?? "Failed to load messages.");
           }
           return;
         }
 
-        const incoming: MessageItem[] = data.messages ?? [];
-        if (after) {
-          if (incoming.length > 0) {
-            setMessages((prev) => {
-              const ids = new Set(prev.map((m) => m.id));
-              const fresh = incoming.filter((m) => !ids.has(m.id));
-              const merged = fresh.length > 0 ? [...prev, ...fresh] : prev;
-              channelMessageCache.set(channel.id, merged);
-              if (merged.length > 0) {
-                lastTimestampRef.current = merged[merged.length - 1].createdAt;
-              }
-              return merged;
-            });
-            requestAnimationFrame(() => scrollToBottom(true));
-          }
+        const freshTail: MessageItem[] = data.messages ?? [];
+        const freshHasMore = Boolean(data.hasMore);
+        const currentEntry = channelMessageCache.get(targetChannelId);
+
+        let nextMessages: MessageItem[];
+        let nextHasMore: boolean;
+
+        if (currentEntry?.hydrated && currentEntry.messages.length > 0) {
+          const reconciled = reconcileWithFreshTail(
+            currentEntry.messages,
+            freshTail,
+            freshHasMore
+          );
+          nextMessages = reconciled.messages;
+          nextHasMore =
+            currentEntry.messages.length > freshTail.length
+              ? currentEntry.hasMore
+              : reconciled.hasMore;
         } else {
-          channelMessageCache.set(channel.id, incoming);
-          setMessages(incoming);
-          lastTimestampRef.current =
-            incoming.length > 0 ? incoming[incoming.length - 1].createdAt : null;
+          nextMessages = sortMessagesChronologically(freshTail);
+          nextHasMore = freshHasMore;
+        }
+
+        const hadPreviousTailId =
+          currentEntry?.messages[currentEntry.messages.length - 1]?.id ?? null;
+        const newTailId = nextMessages[nextMessages.length - 1]?.id ?? null;
+        const shouldScroll = !cached?.hydrated || hadPreviousTailId !== newTailId;
+
+        channelMessageCache.set(targetChannelId, {
+          messages: nextMessages,
+          hasMore: nextHasMore,
+          hydrated: true,
+        });
+        setMessages(nextMessages);
+        setHasMore(nextHasMore);
+        reportSeenIfVisible(targetChannelId, nextMessages);
+
+        if (shouldScroll) {
           requestAnimationFrame(() => scrollToBottom(false));
         }
-      } catch {
-        if (active && cached === undefined) {
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return;
+        if (active && !cached?.hydrated) {
           setError("Network error while loading messages.");
         }
       } finally {
-        if (active) setLoading(false);
+        if (active && targetChannelId === activeChannelIdRef.current) {
+          setLoading(false);
+        }
       }
     }
 
     void syncChannel();
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [channel.id, scrollToBottom]);
+  }, [channel.id, reportSeenIfVisible, scrollToBottom]);
 
-  // Incremental background sync every 2.2s
+  // Incremental background poll every 2.2s (strictly channel-scoped + AbortController — NEVER corrupts cache)
   useEffect(() => {
+    const targetChannelId = channel.id;
+    let active = true;
+    let inFlightController: AbortController | null = null;
+
     const interval = setInterval(async () => {
-      const after = lastTimestampRef.current;
-      const url = after
-        ? `/api/channels/${channel.id}/messages?after=${encodeURIComponent(after)}`
-        : `/api/channels/${channel.id}/messages`;
+      if (!active || targetChannelId !== activeChannelIdRef.current) return;
+      const entry = channelMessageCache.get(targetChannelId);
+      // Never poll incrementally before initial full history has hydrated!
+      if (!entry?.hydrated) return;
+
+      const lastMsg = entry.messages[entry.messages.length - 1];
+      const url = lastMsg
+        ? `/api/channels/${targetChannelId}/messages?after=${encodeURIComponent(lastMsg.createdAt)}`
+        : `/api/channels/${targetChannelId}/messages`;
+
+      inFlightController?.abort();
+      const controller = new AbortController();
+      inFlightController = controller;
 
       try {
-        const res = await fetch(url);
-        if (!res.ok) return;
+        const res = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok || !active || targetChannelId !== activeChannelIdRef.current) return;
+
         const data = await res.json();
         const incoming: MessageItem[] = data.messages ?? [];
         if (incoming.length === 0) return;
+        if (!active || targetChannelId !== activeChannelIdRef.current) return;
 
-        const el = scrollContainerRef.current;
-        const nearBottom = el
-          ? el.scrollHeight - el.scrollTop - el.clientHeight < 140
-          : true;
+        // Always merge against the target channel's own cache entry (NEVER React prev state!)
+        const latestEntry = channelMessageCache.get(targetChannelId);
+        if (!latestEntry?.hydrated) return;
 
-        setMessages((prev) => {
-          const existingIds = new Set(prev.map((m) => m.id));
-          const fresh = incoming.filter((m) => !existingIds.has(m.id));
-          if (fresh.length === 0) return prev;
-          const merged = [...prev, ...fresh];
-          channelMessageCache.set(channel.id, merged);
-          lastTimestampRef.current = merged[merged.length - 1].createdAt;
-          return merged;
+        const existingIds = new Set(latestEntry.messages.map((m) => m.id));
+        const fresh = incoming.filter((m) => !existingIds.has(m.id));
+        if (fresh.length === 0) return;
+
+        const merged = sortMessagesChronologically([...latestEntry.messages, ...fresh]);
+        channelMessageCache.set(targetChannelId, {
+          messages: merged,
+          hasMore: latestEntry.hasMore,
+          hydrated: true,
         });
+
+        const nearBottom = isNearBottom();
+        setMessages(merged);
+        reportSeenIfVisible(targetChannelId, merged);
 
         if (nearBottom) {
           requestAnimationFrame(() => scrollToBottom(true));
+        } else {
+          setUnseenBelowCount((c) => c + fresh.length);
         }
-      } catch {
-        // silent retry
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") return;
       }
     }, 2200);
 
-    return () => clearInterval(interval);
-  }, [channel.id, scrollToBottom]);
+    return () => {
+      active = false;
+      inFlightController?.abort();
+      clearInterval(interval);
+    };
+  }, [channel.id, isNearBottom, reportSeenIfVisible, scrollToBottom]);
+
+  // Mark messages as seen when user returns to browser tab while on this channel
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        const entry = channelMessageCache.get(activeChannelIdRef.current);
+        if (entry?.messages.length) {
+          reportSeenIfVisible(activeChannelIdRef.current, entry.messages);
+        }
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [reportSeenIfVisible]);
+
+  // Load older messages pagination (preserves exact scroll position)
+  const loadOlderMessages = useCallback(async () => {
+    const targetChannelId = activeChannelIdRef.current;
+    const entry = channelMessageCache.get(targetChannelId);
+    if (!entry?.hydrated || !entry.hasMore || loadingOlder || entry.messages.length === 0) {
+      return;
+    }
+
+    const oldest = entry.messages[0];
+    setLoadingOlder(true);
+    const el = scrollContainerRef.current;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+
+    try {
+      const res = await fetch(
+        `/api/channels/${targetChannelId}/messages?before=${encodeURIComponent(oldest.createdAt)}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok || targetChannelId !== activeChannelIdRef.current) return;
+      const data = await res.json();
+      const older: MessageItem[] = data.messages ?? [];
+      const nextHasMore = Boolean(data.hasMore);
+
+      const latestEntry = channelMessageCache.get(targetChannelId);
+      if (!latestEntry) return;
+
+      const merged = sortMessagesChronologically([...older, ...latestEntry.messages]);
+      channelMessageCache.set(targetChannelId, {
+        messages: merged,
+        hasMore: nextHasMore,
+        hydrated: true,
+      });
+
+      setMessages(merged);
+      setHasMore(nextHasMore);
+
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef.current;
+        if (container && prevScrollHeight > 0) {
+          const delta = container.scrollHeight - prevScrollHeight;
+          container.scrollTop += delta;
+        }
+      });
+    } catch {
+      // ignore transient pagination failure
+    } finally {
+      if (targetChannelId === activeChannelIdRef.current) {
+        setLoadingOlder(false);
+      }
+    }
+  }, [loadingOlder]);
+
+  // Handle scroll events (auto-load older near top + clear unseen badge at bottom)
+  function handleFeedScroll() {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    if (el.scrollTop < 80 && hasMore && !loadingOlder) {
+      void loadOlderMessages();
+    }
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 80 && unseenBelowCount > 0) {
+      setUnseenBelowCount(0);
+    }
+  }
 
   // Close lightbox on Escape
   useEffect(() => {
@@ -433,6 +655,7 @@ export function TextChannelView({
       return;
     }
 
+    const targetChannelId = channel.id;
     setSending(true);
     setError(null);
 
@@ -443,48 +666,73 @@ export function TextChannelView({
     };
 
     try {
-      const res = await fetch(`/api/channels/${channel.id}/messages`, {
+      const res = await fetch(`/api/channels/${targetChannelId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Failed to send message.");
+        if (targetChannelId === activeChannelIdRef.current) {
+          setError(data.error ?? "Failed to send message.");
+        }
       } else if (data.message) {
-        setComposerText("");
-        setPendingAttachments([]);
-        setReplyingTo(null);
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === data.message.id)) return prev;
-          const next = [...prev, data.message];
-          channelMessageCache.set(channel.id, next);
-          lastTimestampRef.current = data.message.createdAt;
-          return next;
+        const sentMsg: MessageItem = data.message;
+        const entry = channelMessageCache.get(targetChannelId);
+        const existing = entry?.messages ?? [];
+        const merged = sortMessagesChronologically([...existing, sentMsg]);
+        channelMessageCache.set(targetChannelId, {
+          messages: merged,
+          hasMore: entry?.hasMore ?? false,
+          hydrated: entry?.hydrated ?? false,
         });
-        requestAnimationFrame(() => scrollToBottom(true));
+
+        if (targetChannelId === activeChannelIdRef.current) {
+          setComposerText("");
+          if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+          }
+          setPendingAttachments([]);
+          setReplyingTo(null);
+          setMessages(merged);
+          reportSeenIfVisible(targetChannelId, merged);
+          requestAnimationFrame(() => scrollToBottom(true));
+        }
       }
     } catch {
-      setError("Network error while sending message.");
+      if (targetChannelId === activeChannelIdRef.current) {
+        setError("Network error while sending message.");
+      }
     } finally {
       setSending(false);
     }
   }
 
   async function handleDeleteMessage(messageId: string) {
+    const targetChannelId = channel.id;
     try {
-      const res = await fetch(`/api/channels/${channel.id}/messages/${messageId}`, {
+      const res = await fetch(`/api/channels/${targetChannelId}/messages/${messageId}`, {
         method: "DELETE",
       });
       if (res.ok) {
-        setMessages((prev) => {
-          const next = prev.filter((m) => m.id !== messageId);
-          channelMessageCache.set(channel.id, next);
-          return next;
-        });
+        const entry = channelMessageCache.get(targetChannelId);
+        if (entry) {
+          const next = entry.messages.filter((m) => m.id !== messageId);
+          channelMessageCache.set(targetChannelId, {
+            ...entry,
+            messages: next,
+          });
+          if (targetChannelId === activeChannelIdRef.current) {
+            setMessages(next);
+          }
+        } else if (targetChannelId === activeChannelIdRef.current) {
+          setMessages((prev) => prev.filter((m) => m.id !== messageId));
+        }
       }
     } catch {
-      setError("Could not delete message.");
+      if (targetChannelId === activeChannelIdRef.current) {
+        setError("Could not delete message.");
+      }
     }
   }
 
@@ -655,7 +903,7 @@ export function TextChannelView({
             transition={{ duration: 0.14 }}
             className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-emerald-500/70 bg-emerald-500/10 backdrop-blur-[2px]"
           >
-            <p className="font-mono text-sm font-medium text-emerald-300">
+            <p className="text-sm font-medium text-emerald-300">
               Drop files or screenshots to attach
             </p>
           </motion.div>
@@ -665,6 +913,7 @@ export function TextChannelView({
       {/* Messages Feed */}
       <div
         ref={scrollContainerRef}
+        onScroll={handleFeedScroll}
         className="flex-1 space-y-0.5 overflow-y-auto px-4 py-5 md:px-6"
       >
         {loading ? (
@@ -697,11 +946,51 @@ export function TextChannelView({
             </p>
           </motion.div>
         ) : (
-          messages.map((msg, idx) => {
+          <>
+            {/* Top History Header / Load Older Messages */}
+            {hasMore ? (
+              <div className="mb-3 flex justify-center">
+                <button
+                  type="button"
+                  disabled={loadingOlder}
+                  onClick={() => void loadOlderMessages()}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-[#18191E] px-3.5 py-1 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-60"
+                >
+                  {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
+                  <span>{loadingOlder ? "Loading older messages..." : "Load older messages"}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="mb-4 border-b border-white/[0.06] pb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-[#18191E] text-emerald-400">
+                  <Hash className="h-5 w-5" />
+                </div>
+                <h2 dir="auto" className="mt-2.5 text-base font-semibold text-zinc-100">
+                  Welcome to #{channel.name}
+                </h2>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  {channel.description || "This is the start of the channel history."}
+                </p>
+              </div>
+            )}
+
+            {messages.map((msg, idx) => {
             const prev = messages[idx - 1];
             const currentDayKey = getCalendarDayKey(msg.createdAt);
             const prevDayKey = prev ? getCalendarDayKey(prev.createdAt) : null;
             const showDateDivider = currentDayKey !== prevDayKey;
+
+            const liveMember = members.find((m) => m.id === msg.author.id);
+            const author = liveMember
+              ? {
+                  ...msg.author,
+                  displayName: liveMember.displayName,
+                  avatarColor: liveMember.avatarColor,
+                  avatarUrl: liveMember.avatarUrl,
+                  bannerUrl: liveMember.bannerUrl,
+                  role: liveMember.role,
+                }
+              : msg.author;
 
             const isGrouped =
               Boolean(prev) &&
@@ -723,7 +1012,7 @@ export function TextChannelView({
                     className="my-4 flex items-center gap-3 select-none"
                   >
                     <div className="h-px flex-1 bg-white/[0.07]" />
-                    <span className="rounded-full border border-white/[0.07] bg-[#16171C] px-2.5 py-0.5 font-mono text-[11px] font-medium text-zinc-400">
+                    <span className="rounded-full border border-white/[0.07] bg-[#16171C] px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
                       {formatDateDivider(msg.createdAt)}
                     </span>
                     <div className="h-px flex-1 bg-white/[0.07]" />
@@ -782,13 +1071,13 @@ export function TextChannelView({
                     {!isGrouped && (
                       <button
                         type="button"
-                        onClick={(e) => openAuthorProfile(e, msg.author)}
-                        className="rounded-full transition-transform hover:scale-105 focus:outline-none"
+                        onClick={(e) => openAuthorProfile(e, author)}
+                        className="inline-flex rounded-full transition-transform hover:scale-105 focus:outline-none"
                       >
                         <Avatar
-                          name={msg.author.displayName}
-                          color={msg.author.avatarColor}
-                          avatarUrl={msg.author.avatarUrl}
+                          name={author.displayName}
+                          color={author.avatarColor}
+                          avatarUrl={author.avatarUrl}
                           size="md"
                         />
                       </button>
@@ -814,13 +1103,13 @@ export function TextChannelView({
                       <div className="flex items-baseline gap-2">
                         <button
                           type="button"
-                          onClick={(e) => openAuthorProfile(e, msg.author)}
+                          onClick={(e) => openAuthorProfile(e, author)}
                           dir="auto"
                           className="text-sm font-semibold text-zinc-100 hover:underline"
                         >
-                          {msg.author.displayName}
+                          {author.displayName}
                         </button>
-                        <span className="font-mono text-[11px] text-zinc-500">
+                        <span className="text-[11px] font-medium tabular-nums text-zinc-500">
                           {formatTime(msg.createdAt)}
                         </span>
                       </div>
@@ -891,7 +1180,7 @@ export function TextChannelView({
                                 <p className="truncate text-xs font-medium text-zinc-100">
                                   {att.name}
                                 </p>
-                                <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-zinc-500">
+                                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium tabular-nums text-zinc-500">
                                   <span className="rounded bg-white/[0.06] px-1.5 py-0.25 text-zinc-400">
                                     {cat.badge}
                                   </span>
@@ -915,31 +1204,33 @@ export function TextChannelView({
                 </article>
               </Fragment>
             );
-          })
+          })}
+          </>
         )}
       </div>
 
+      {/* Floating Jump-to-Latest Pill when scrolled up and new messages arrive */}
+      <AnimatePresence>
+        {unseenBelowCount > 0 && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.16 }}
+            onClick={() => scrollToBottom(true)}
+            className="absolute bottom-[86px] left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-emerald-500/40 bg-[#14151A]/95 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 shadow-xl backdrop-blur-md transition-colors hover:bg-emerald-500 hover:text-zinc-950"
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+            <span>
+              {unseenBelowCount} new {unseenBelowCount === 1 ? "message" : "messages"}
+            </span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
       {/* Composer Area */}
       <div className="shrink-0 border-t border-white/[0.07] bg-[#121316] px-4 py-3 md:px-6">
-        <AnimatePresence>
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
-            >
-              <div className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-              <button type="button" onClick={() => setError(null)}>
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <AnimatePresence>
           {replyingTo && (
             <motion.div
@@ -1045,10 +1336,16 @@ export function TextChannelView({
           </button>
 
           <textarea
+            ref={textareaRef}
             rows={1}
             dir="auto"
             value={composerText}
-            onChange={(e) => setComposerText(e.target.value)}
+            onChange={(e) => {
+              setComposerText(e.target.value);
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={

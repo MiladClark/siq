@@ -63,7 +63,7 @@ export async function createLiveKitRoomToken(params: {
   return at.toJwt();
 }
 
-export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
+export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap | null> {
   if (!isLiveKitConfigured()) {
     return {};
   }
@@ -116,6 +116,6 @@ export async function fetchVoiceOccupancy(): Promise<VoiceOccupancyMap> {
       "[livekit] occupancy fetch skipped:",
       error instanceof Error ? error.message : error
     );
-    return {};
+    return null;
   }
 }

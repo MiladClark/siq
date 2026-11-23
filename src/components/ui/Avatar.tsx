@@ -6,14 +6,16 @@ interface AvatarProps {
   avatarUrl?: string | null;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   online?: boolean;
+  speaking?: boolean;
+  speakingOffsetClassName?: string;
   ringClassName?: string;
 }
 
 const SIZE_CLASSES = {
-  xs: "h-5 w-5 text-[9px]",
+  xs: "h-6 w-6 text-[10px]",
   sm: "h-7 w-7 text-[11px]",
   md: "h-8 w-8 text-xs",
-  lg: "h-12 w-12 text-base",
+  lg: "h-14 w-14 text-lg",
   xl: "h-16 w-16 text-xl",
 } as const;
 
@@ -41,26 +43,36 @@ export function Avatar({
   avatarUrl,
   size = "md",
   online,
+  speaking = false,
+  speakingOffsetClassName = "ring-offset-[#0E0F12]",
   ringClassName = "ring-[#0E0F12]",
 }: AvatarProps) {
   return (
-    <div className="relative inline-flex shrink-0">
+    <span
+      className={`relative inline-flex aspect-square shrink-0 items-center justify-center rounded-full leading-none transition-shadow duration-100 ${
+        SIZE_CLASSES[size]
+      } ${
+        speaking
+          ? `ring-2 ring-emerald-400 ring-offset-2 ${speakingOffsetClassName}`
+          : ""
+      }`}
+    >
       {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={avatarUrl}
           alt={name}
-          className={`${SIZE_CLASSES[size]} rounded-full object-cover select-none`}
+          className="block h-full w-full rounded-full object-cover select-none"
           style={{ backgroundColor: color }}
         />
       ) : (
-        <div
-          className={`${SIZE_CLASSES[size]} flex items-center justify-center rounded-full font-semibold tracking-tight text-zinc-950 select-none`}
+        <span
+          className="flex h-full w-full items-center justify-center rounded-full font-semibold tracking-tight text-zinc-950 select-none"
           style={{ backgroundColor: color }}
           aria-hidden="true"
         >
           {getInitials(name)}
-        </div>
+        </span>
       )}
       {online !== undefined && (
         <span
@@ -70,6 +82,6 @@ export function Avatar({
           title={online ? "Online" : "Offline"}
         />
       )}
-    </div>
+    </span>
   );
 }

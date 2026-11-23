@@ -1,11 +1,9 @@
 "use client";
 
 import {
-  AlertCircle,
   Copy,
   Expand,
   Headphones,
-  Info,
   Maximize2,
   Mic,
   MicOff,
@@ -84,6 +82,8 @@ interface VoiceStageProps {
   onOpenScreenShareModal: () => void;
   onOpenVoiceSettings: () => void;
   onOpenUserProfile: (target: ProfilePopoverTarget) => void;
+  onJoinVoiceChannel: (channel: ChannelItem) => void;
+  onLeaveVoiceChannel: () => void;
 }
 
 export function VoiceStage({
@@ -97,13 +97,13 @@ export function VoiceStage({
   onOpenScreenShareModal,
   onOpenVoiceSettings,
   onOpenUserProfile,
+  onJoinVoiceChannel,
+  onLeaveVoiceChannel,
 }: VoiceStageProps) {
   const { openMenu } = useContextMenu();
   const {
     activeChannel,
     connectionState,
-    error,
-    notice,
     participants,
     isMuted,
     isDeafened,
@@ -112,18 +112,13 @@ export function VoiceStage({
     activeNoiseEngine,
     userVolumes,
     setUserVolume,
-    toggleLocalMuteUser,
     kickParticipant,
     serverMuteParticipant,
     watchTargetIdentity,
     setWatchTargetIdentity,
-    joinVoiceChannel,
-    leaveVoiceChannel,
     toggleMute,
     toggleDeafen,
     toggleCamera,
-    clearError,
-    clearNotice,
   } = useVoice();
 
   const [streamFit, setStreamFit] = useState<"contain" | "cover">("contain");
@@ -133,7 +128,6 @@ export function VoiceStage({
     height: number;
     fps: number;
   } | null>(null);
-  const [dismissedStreams, setDismissedStreams] = useState(false);
 
   const stageVideoContainerRef = useRef<HTMLDivElement | null>(null);
   const focusedVideoElRef = useRef<HTMLVideoElement | null>(null);
@@ -148,29 +142,14 @@ export function VoiceStage({
 
   const screenSharers = participants.filter((p) => p.isScreenSharing && p.screenTrack);
 
-  // Sync watch target automatically when a stream begins (unless user explicitly closed theater)
+  // Never auto-jump into someone's stream. Only clear watch target if the watched stream ends.
   useEffect(() => {
-    if (screenSharers.length === 0) {
+    if (!watchTargetIdentity) return;
+    const stillLive = screenSharers.some((s) => s.identity === watchTargetIdentity);
+    if (!stillLive) {
       setWatchTargetIdentity(null);
-      setDismissedStreams(false);
-      return;
     }
-
-    if (watchTargetIdentity) {
-      const stillLive = screenSharers.some((s) => s.identity === watchTargetIdentity);
-      if (stillLive) {
-        setDismissedStreams(false);
-        return;
-      }
-      // Previous stream ended; switch to another active stream if available
-      setWatchTargetIdentity(screenSharers[0].identity);
-      return;
-    }
-
-    if (!dismissedStreams) {
-      setWatchTargetIdentity(screenSharers[0].identity);
-    }
-  }, [dismissedStreams, screenSharers, setWatchTargetIdentity, watchTargetIdentity]);
+  }, [screenSharers, setWatchTargetIdentity, watchTargetIdentity]);
 
   const focusedSharer: VoiceParticipantView | null =
     watchTargetIdentity
@@ -236,7 +215,6 @@ export function VoiceStage({
   }
 
   function handleCloseStream() {
-    setDismissedStreams(true);
     setWatchTargetIdentity(null);
     if (isStageMaximized) {
       onToggleMaximize();
@@ -307,12 +285,11 @@ export function VoiceStage({
     e: React.MouseEvent<HTMLElement>,
     p: VoiceParticipantView
   ) {
-    const currentVol = userVolumes[p.identity] ?? 1;
-    const isLocallyMuted = currentVol === 0;
     const rect = e.currentTarget.getBoundingClientRect();
+    const fresh = resolveMemberVisuals(p.identity, p);
 
     const entries: ContextMenuEntry[] = [
-      { type: "header", id: "hdr", label: p.name },
+      { type: "header", id: "hdr", label: fresh.name },
     ];
 
     if (p.isScreenSharing) {
@@ -322,7 +299,6 @@ export function VoiceStage({
         label: "Watch Stream",
         icon: <Play className="h-3.5 w-3.5 text-emerald-400" />,
         onSelect: () => {
-          setDismissedStreams(false);
           setWatchTargetIdentity(p.identity);
         },
       });
@@ -336,11 +312,12 @@ export function VoiceStage({
       onSelect: () => {
         onOpenUserProfile({
           id: p.identity,
-          displayName: p.name,
-          username: p.username,
-          avatarColor: p.avatarColor,
-          avatarUrl: p.avatarUrl,
-          role: p.role,
+          displayName: fresh.name,
+          username: fresh.username,
+          avatarColor: fresh.avatarColor,
+          avatarUrl: fresh.avatarUrl,
+          bannerUrl: fresh.bannerUrl,
+          role: fresh.role,
           online: true,
           inVoiceChannelName: channel.name,
           isScreenSharing: p.isScreenSharing,
@@ -357,62 +334,38 @@ export function VoiceStage({
       },
     });
 
-    if (p.username) {
+    if (fresh.username) {
       entries.push({
         type: "item",
         id: "copy-user",
         label: "Copy Username",
         icon: <Copy className="h-3.5 w-3.5" />,
         onSelect: () => {
-          void navigator.clipboard.writeText(`@${p.username}`);
+          void navigator.clipboard.writeText(`@${fresh.username}`);
           playSound("copy");
         },
       });
     }
 
-    if (!p.isLocal) {
+    if (!p.isLocal && currentUser.role === "admin") {
       entries.push(
-        { type: "divider", id: "d1" },
+        { type: "divider", id: "d-admin" },
         {
-          type: "slider",
-          id: "vol",
-          label: "User Volume",
-          value: currentVol,
-          onChange: (v) => setUserVolume(p.identity, v),
+          type: "item",
+          id: "server-mute",
+          label: "Server Mute",
+          icon: <MicOff className="h-3.5 w-3.5" />,
+          onSelect: () => void serverMuteParticipant(p.identity, channel.slug),
         },
         {
           type: "item",
-          id: "local-mute",
-          label: isLocallyMuted ? "Unmute for me" : "Mute for me",
-          icon: isLocallyMuted ? (
-            <Volume2 className="h-3.5 w-3.5" />
-          ) : (
-            <VolumeX className="h-3.5 w-3.5" />
-          ),
-          onSelect: () => toggleLocalMuteUser(p.identity),
+          id: "kick",
+          label: "Kick from Voice",
+          icon: <UserX className="h-3.5 w-3.5" />,
+          danger: true,
+          onSelect: () => void kickParticipant(p.identity, channel.slug),
         }
       );
-
-      if (currentUser.role === "admin") {
-        entries.push(
-          { type: "divider", id: "d-admin" },
-          {
-            type: "item",
-            id: "server-mute",
-            label: "Server Mute",
-            icon: <MicOff className="h-3.5 w-3.5" />,
-            onSelect: () => void serverMuteParticipant(p.identity, channel.slug),
-          },
-          {
-            type: "item",
-            id: "kick",
-            label: "Kick from Voice",
-            icon: <UserX className="h-3.5 w-3.5" />,
-            danger: true,
-            onSelect: () => void kickParticipant(p.identity, channel.slug),
-          }
-        );
-      }
     }
 
     openMenu(e, entries);
@@ -460,7 +413,7 @@ export function VoiceStage({
                       {fresh.name}
                     </span>
                     {occ.isScreenSharing && (
-                      <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                      <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300">
                         LIVE
                       </span>
                     )}
@@ -482,25 +435,10 @@ export function VoiceStage({
             </div>
           )}
 
-          {error && (
-            <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span className="flex-1">{error}</span>
-              <button type="button" onClick={clearError} className="hover:text-white">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-
           <button
             type="button"
             disabled={!livekitReady || isConnecting}
-            onClick={() =>
-              void joinVoiceChannel(channel, {
-                seedOccupants: previewOccupants,
-                currentUser,
-              })
-            }
+            onClick={() => onJoinVoiceChannel(channel)}
             className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Headphones className="h-4 w-4" />
@@ -516,82 +454,9 @@ export function VoiceStage({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-[#0B0C0F]">
-      {/* Error / Info Notices */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            className="mx-4 mt-3 flex items-center justify-between gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3.5 py-2 text-xs text-rose-200"
-          >
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-            <button type="button" onClick={clearError} className="hover:text-white">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </motion.div>
-        )}
-        {notice && !error && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            className="mx-4 mt-3 flex items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-200"
-          >
-            <div className="flex items-center gap-2">
-              <Info className="h-4 w-4 shrink-0" />
-              <span>{notice}</span>
-            </div>
-            <button type="button" onClick={clearNotice} className="hover:text-white">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Main Media Area */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-5">
-        {/* Watch Stream Opt-in Banner when streams are live but closed/dismissed */}
-        <AnimatePresence>
-          {!focusedSharer && screenSharers.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3"
-            >
-              <div className="flex items-center gap-2.5">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                <span className="text-xs font-medium text-zinc-200">
-                  {screenSharers.length === 1
-                    ? `${screenSharers[0].name} is streaming live`
-                    : `${screenSharers.length} live streams active`}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {screenSharers.map((s) => (
-                  <button
-                    key={s.identity}
-                    type="button"
-                    onClick={() => {
-                      setDismissedStreams(false);
-                      setWatchTargetIdentity(s.identity);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-95"
-                  >
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    <span>Watch {s.name}</span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Focused Screen Share Theater */}
+        {/* Focused Screen Share Theater (only shown when user explicitly clicks Watch Stream) */}
         <AnimatePresence>
           {focusedSharer && focusedSharer.screenTrack && (
             <motion.div
@@ -617,23 +482,23 @@ export function VoiceStage({
                 {/* Top Floating HUD */}
                 <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 py-3 opacity-100 transition-opacity duration-200 md:opacity-0 md:group-hover/theater:opacity-100">
                   <div className="pointer-events-auto flex min-w-0 items-center gap-2.5">
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/35">
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 ring-1 ring-emerald-500/35">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                       LIVE
                     </span>
                     <Avatar
-                      name={focusedSharer.name}
-                      color={focusedSharer.avatarColor}
-                      avatarUrl={focusedSharer.avatarUrl}
+                      name={resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}
+                      color={resolveMemberVisuals(focusedSharer.identity, focusedSharer).avatarColor}
+                      avatarUrl={resolveMemberVisuals(focusedSharer.identity, focusedSharer).avatarUrl}
                       size="xs"
                     />
                     <span dir="auto" className="truncate text-xs font-semibold text-white">
-                      {focusedSharer.name}&apos;s screen
+                      {resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}&apos;s screen
                     </span>
                     {liveVideoMeta && (
-                      <span className="hidden rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10px] text-zinc-300 ring-1 ring-white/10 sm:inline">
+                      <span className="hidden rounded-md bg-black/60 px-2 py-0.5 text-[11px] font-medium tabular-nums text-zinc-200 ring-1 ring-white/10 sm:inline">
                         {liveVideoMeta.width}×{liveVideoMeta.height}
-                        {liveVideoMeta.fps > 0 ? ` · ${liveVideoMeta.fps}fps` : ""}
+                        {liveVideoMeta.fps > 0 ? ` · ${liveVideoMeta.fps} fps` : ""}
                       </span>
                     )}
                   </div>
@@ -651,7 +516,7 @@ export function VoiceStage({
                               : "bg-black/60 text-zinc-300 ring-1 ring-white/15 hover:text-white"
                           }`}
                         >
-                          {s.name}
+                          {resolveMemberVisuals(s.identity, s).name}
                         </button>
                       ))}
 
@@ -707,14 +572,14 @@ export function VoiceStage({
                         }}
                         className="h-1.5 w-24 cursor-pointer accent-emerald-500"
                       />
-                      <span className="w-9 font-mono text-[11px] text-zinc-400">
+                      <span className="w-9 text-[11px] font-medium tabular-nums text-zinc-400">
                         {Math.round(streamAudioVol * 100)}%
                       </span>
                     </div>
                   ) : (
-                    <span className="font-mono text-[11px] text-zinc-500">
+                    <span className="text-xs text-zinc-500">
                       {focusedSharer.isLocal
-                        ? "You are streaming · click Share Screen to adjust or stop"
+                        ? "You are streaming · click Stream Options to adjust or stop"
                         : "Stream video only"}
                     </span>
                   )}
@@ -777,7 +642,7 @@ export function VoiceStage({
           )}
         </AnimatePresence>
 
-        {/* Participant Grid */}
+        {/* Participant Grid (clean cards, NO volume slider here — volume is exclusively in left sidebar) */}
         <div
           className={`grid gap-3 ${
             focusedSharer
@@ -788,7 +653,6 @@ export function VoiceStage({
           }`}
         >
           {participants.map((p) => {
-            const vol = userVolumes[p.identity] ?? 1;
             const fresh = resolveMemberVisuals(p.identity, p);
             return (
               <motion.div
@@ -796,9 +660,9 @@ export function VoiceStage({
                 layout
                 transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 onContextMenu={(e) => handleParticipantContextMenu(e, p)}
-                className={`relative flex flex-col justify-between overflow-hidden rounded-xl border bg-[#121316] transition-colors ${
+                className={`relative flex flex-col justify-between overflow-hidden rounded-xl border bg-[#121316] transition-colors duration-100 ${
                   p.isSpeaking
-                    ? "border-emerald-500/70 ring-1 ring-emerald-500/40"
+                    ? "border-emerald-500/75 ring-1 ring-emerald-500/35"
                     : "border-white/[0.08]"
                 } ${focusedSharer ? "min-h-[126px]" : "min-h-[210px]"}`}
               >
@@ -815,94 +679,56 @@ export function VoiceStage({
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div
-                      className={`rounded-full p-1 transition-shadow ${
-                        p.isSpeaking
-                          ? "ring-2 ring-emerald-400 ring-offset-4 ring-offset-[#0E0F12]"
-                          : ""
-                      }`}
-                    >
-                      <Avatar
-                        name={fresh.name}
-                        color={fresh.avatarColor}
-                        avatarUrl={fresh.avatarUrl}
-                        size={focusedSharer ? "md" : "lg"}
-                      />
-                    </div>
+                    <Avatar
+                      name={fresh.name}
+                      color={fresh.avatarColor}
+                      avatarUrl={fresh.avatarUrl}
+                      size={focusedSharer ? "md" : "lg"}
+                      speaking={p.isSpeaking}
+                      speakingOffsetClassName="ring-offset-[#0E0F12]"
+                    />
                   )}
 
                   {p.isScreenSharing && (
                     <span
                       onClick={(e) => {
                         e.stopPropagation();
-                        setDismissedStreams(false);
-                        setWatchTargetIdentity(p.identity);
+                        openParticipantProfile(e, p);
                       }}
-                      className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-black/80 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-zinc-950"
+                      title="Click to view profile & watch stream"
+                      className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md border border-emerald-500/45 bg-black/80 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-zinc-950"
                     >
-                      <Play className="h-2.5 w-2.5 fill-current" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
                       <span>LIVE</span>
                     </span>
                   )}
                 </button>
 
-                {/* Participant Footer */}
-                <div className="space-y-1.5 border-t border-white/[0.06] bg-[#121316] px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={(e) => openParticipantProfile(e, p)}
-                      className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
-                    >
-                      <span dir="auto" className="truncate text-xs font-medium text-zinc-100">
-                        {fresh.name}
-                      </span>
-                      {p.isLocal && (
-                        <span className="font-mono text-[10px] text-zinc-500">(you)</span>
-                      )}
-                    </button>
-                    <div className="flex shrink-0 items-center gap-1.5 text-zinc-400">
-                      {p.isMuted ? (
-                        <MicOff className="h-3.5 w-3.5 text-rose-400" />
-                      ) : (
-                        <Mic
-                          className={`h-3.5 w-3.5 ${
-                            p.isSpeaking ? "text-emerald-400" : "text-zinc-400"
-                          }`}
-                        />
-                      )}
-                    </div>
-                  </div>
-
-                  {!p.isLocal && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleLocalMuteUser(p.identity)}
-                        title={vol === 0 ? "Unmute for me" : "Mute for me"}
-                        className="shrink-0 text-zinc-500 hover:text-zinc-200"
-                      >
-                        {vol === 0 ? (
-                          <VolumeX className="h-3 w-3 text-rose-400" />
-                        ) : (
-                          <Volume2 className="h-3 w-3" />
-                        )}
-                      </button>
-                      <input
-                        type="range"
-                        min={0}
-                        max={2}
-                        step={0.05}
-                        aria-label={`Volume for ${fresh.name}`}
-                        value={vol}
-                        onChange={(e) => setUserVolume(p.identity, Number(e.target.value))}
-                        className="h-1 flex-1 cursor-pointer accent-emerald-500"
+                {/* Clean Participant Footer (Name + Mic status only) */}
+                <div className="flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121316] px-3.5 py-2.5">
+                  <button
+                    type="button"
+                    onClick={(e) => openParticipantProfile(e, p)}
+                    className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
+                  >
+                    <span dir="auto" className="truncate text-xs font-semibold text-zinc-100">
+                      {fresh.name}
+                    </span>
+                    {p.isLocal && (
+                      <span className="text-[11px] font-medium text-zinc-500">(you)</span>
+                    )}
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5 text-zinc-400">
+                    {p.isMuted ? (
+                      <MicOff className="h-3.5 w-3.5 text-rose-400" />
+                    ) : (
+                      <Mic
+                        className={`h-3.5 w-3.5 transition-colors duration-100 ${
+                          p.isSpeaking ? "text-emerald-400" : "text-zinc-400"
+                        }`}
                       />
-                      <span className="w-8 text-right font-mono text-[10px] text-zinc-500">
-                        {Math.round(vol * 100)}%
-                      </span>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </motion.div>
             );
@@ -917,7 +743,7 @@ export function VoiceStage({
             type="button"
             onClick={onOpenVoiceSettings}
             title="Noise cancellation & audio settings"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#14151A] px-2.5 py-1.5 font-mono text-[11px] text-zinc-400 transition-colors hover:border-emerald-500/35 hover:text-emerald-300"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#14151A] px-2.5 py-1.5 text-[11px] font-medium text-zinc-400 transition-colors hover:border-emerald-500/35 hover:text-emerald-300"
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
@@ -1010,7 +836,7 @@ export function VoiceStage({
 
           <button
             type="button"
-            onClick={() => void leaveVoiceChannel()}
+            onClick={onLeaveVoiceChannel}
             title="Disconnect from voice"
             className="ml-1 flex items-center gap-2 rounded-lg bg-rose-500 px-3.5 py-2 text-xs font-semibold text-white transition-all hover:bg-rose-400 active:scale-[0.97]"
           >

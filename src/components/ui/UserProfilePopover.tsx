@@ -135,7 +135,7 @@ export function UserProfilePopover({
           {/* Avatar + Identity */}
           <div className="px-4 pb-4">
             <div className="-mt-8 mb-3 flex items-end justify-between">
-              <div className="rounded-full ring-4 ring-[#14151A]">
+              <div className="inline-flex rounded-full ring-4 ring-[#14151A]">
                 <Avatar
                   name={target.displayName}
                   color={target.avatarColor}
@@ -147,7 +147,7 @@ export function UserProfilePopover({
               </div>
 
               {target.role === "admin" && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-300">
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300">
                   <Shield className="h-3 w-3" />
                   Admin
                 </span>
@@ -159,12 +159,12 @@ export function UserProfilePopover({
                 {target.displayName}
               </h3>
               {target.username && (
-                <p className="font-mono text-xs text-zinc-400">@{target.username}</p>
+                <p className="text-xs font-medium text-zinc-400">@{target.username}</p>
               )}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-3 text-[11px]">
-              <span className="inline-flex items-center gap-1.5 text-zinc-400">
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.07] pt-3 text-xs">
+              <span className="inline-flex items-center gap-1.5 font-medium text-zinc-300">
                 <span
                   className={`h-2 w-2 rounded-full ${
                     target.online ? "bg-emerald-400" : "bg-zinc-600"
@@ -174,7 +174,7 @@ export function UserProfilePopover({
               </span>
 
               {target.inVoiceChannelName && (
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-emerald-300">
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
                   <Volume2 className="h-3 w-3" />
                   <span dir="auto" className="max-w-[130px] truncate">
                     {target.inVoiceChannelName}
@@ -183,7 +183,7 @@ export function UserProfilePopover({
               )}
             </div>
 
-            {/* Direct Watch Stream CTA when user is live */}
+            {/* Full-width Watch Live Stream button right below Online status */}
             {target.isScreenSharing && onWatchStream && (
               <button
                 type="button"
@@ -191,10 +191,10 @@ export function UserProfilePopover({
                   onWatchStream(target);
                   onClose();
                 }}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98]"
+                className="mt-3.5 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3.5 py-2.5 text-xs font-semibold text-zinc-950 shadow-lg shadow-emerald-500/15 transition-all hover:bg-emerald-400 active:scale-[0.98]"
               >
                 <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Watch Stream</span>
+                <span>Watch Live Stream</span>
               </button>
             )}
           </div>

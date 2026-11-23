@@ -37,6 +37,8 @@ import {
 import {
   NotificationBell,
   NotificationToasts,
+  type SystemNotifyPayload,
+  SystemNotifyProvider,
 } from "@/components/ui/NotificationCenter";
 import {
   type ProfilePopoverTarget,
@@ -96,8 +98,10 @@ function WorkspaceInner({
   initialVoiceOccupancy,
   initialCapabilities,
   onPresenceRef,
+  onNotifyRef,
 }: WorkspaceShellProps & {
   onPresenceRef: React.MutableRefObject<() => void>;
+  onNotifyRef: React.MutableRefObject<(payload: SystemNotifyPayload) => void>;
 }) {
   const router = useRouter();
   const voice = useVoice();
@@ -136,7 +140,15 @@ function WorkspaceInner({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [toasts, setToasts] = useState<NotificationItem[]>([]);
   const seenNotificationIdsRef = useRef<Set<string>>(new Set());
+  const recentSystemAlertRef = useRef<{ key: string; at: number } | null>(null);
+  const channelReadAtMsRef = useRef<Map<string, number>>(new Map());
   const lastNotifyCheckRef = useRef<string>(new Date().toISOString());
+  const pendingVoiceMoveRef = useRef<{
+    userId: string;
+    targetSlug: string | null;
+    leftSlug: string | null;
+    until: number;
+  } | null>(null);
 
   const [profilePopover, setProfilePopover] = useState<ProfilePopoverTarget | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -154,15 +166,93 @@ function WorkspaceInner({
     setSettingsOpen(true);
   }
 
+  /** Apply incoming LiveKit occupancy cleanly while preserving optimistic local voice moves */
+  const applyVoiceOccupancy = useCallback(
+    (incoming: VoiceOccupancyMap | null | undefined) => {
+      if (!incoming) return; // Never wipe existing occupancy on transient fetch error
+
+      const move = pendingVoiceMoveRef.current;
+      if (move && Date.now() < move.until) {
+        const patched: VoiceOccupancyMap = {};
+        for (const [slug, list] of Object.entries(incoming)) {
+          if (slug === move.targetSlug) {
+            patched[slug] = list;
+          } else {
+            patched[slug] = list.filter((o) => o.identity !== move.userId);
+          }
+        }
+        if (move.targetSlug) {
+          const targetList = patched[move.targetSlug] ?? [];
+          if (!targetList.some((o) => o.identity === move.userId)) {
+            patched[move.targetSlug] = [
+              ...targetList,
+              {
+                identity: user.id,
+                name: user.displayName,
+                username: user.username,
+                avatarColor: user.avatarColor,
+                avatarUrl: user.avatarUrl,
+                isScreenSharing: voice.isScreenSharing,
+              },
+            ];
+          }
+        }
+        setVoiceOccupancy(patched);
+        return;
+      }
+
+      if (move && Date.now() >= move.until) {
+        pendingVoiceMoveRef.current = null;
+      }
+      setVoiceOccupancy(incoming);
+    },
+    [user.avatarColor, user.avatarUrl, user.displayName, user.id, user.username, voice.isScreenSharing]
+  );
+
+  /** Called by TextChannelView whenever messages are displayed on screen while visible */
+  const handleMessagesSeen = useCallback(
+    (channelId: string, messageIds: string[], latestCreatedAt?: string) => {
+      for (const id of messageIds) {
+        seenNotificationIdsRef.current.add(id);
+      }
+      if (latestCreatedAt) {
+        const ms = new Date(latestCreatedAt).getTime();
+        if (!Number.isNaN(ms)) {
+          const prev = channelReadAtMsRef.current.get(channelId) ?? 0;
+          if (ms > prev) {
+            channelReadAtMsRef.current.set(channelId, ms);
+          }
+        }
+      }
+      setNotifications((prev) => {
+        let changed = false;
+        const next = prev.map((n) => {
+          if (!n.read && (n.channelId === channelId || messageIds.includes(n.id))) {
+            changed = true;
+            return { ...n, read: true };
+          }
+          return n;
+        });
+        return changed ? next : prev;
+      });
+      setToasts((prev) =>
+        prev.filter((t) => t.channelId !== channelId && !messageIds.includes(t.id))
+      );
+    },
+    []
+  );
+
   const syncPresence = useCallback(async () => {
     try {
       const since = lastNotifyCheckRef.current;
-      const res = await fetch(`/api/presence?since=${encodeURIComponent(since)}`);
+      const res = await fetch(`/api/presence?since=${encodeURIComponent(since)}`, {
+        cache: "no-store",
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (data.members) setMembers(data.members);
       if (data.channels) setChannels(data.channels);
-      if (data.voiceOccupancy) setVoiceOccupancy(data.voiceOccupancy);
+      if (data.voiceOccupancy) applyVoiceOccupancy(data.voiceOccupancy);
       if (data.capabilities) setCapabilities(data.capabilities);
       if (data.serverTime) {
         lastNotifyCheckRef.current = data.serverTime;
@@ -174,6 +264,15 @@ function WorkspaceInner({
         const fresh = incoming.filter((n) => {
           if (seenNotificationIdsRef.current.has(n.id)) return false;
           seenNotificationIdsRef.current.add(n.id);
+
+          // Already viewed in that channel before switching away
+          const readWatermark = channelReadAtMsRef.current.get(n.channelId) ?? 0;
+          const msgMs = new Date(n.createdAt).getTime();
+          if (!Number.isNaN(msgMs) && msgMs <= readWatermark) {
+            return false;
+          }
+
+          // Currently actively looking at that exact channel
           const viewingSameChannel =
             document.visibilityState === "visible" &&
             n.channelId === selectedChannelIdRef.current;
@@ -191,11 +290,97 @@ function WorkspaceInner({
     } catch {
       // ignore transient heartbeat failure
     }
+  }, [applyVoiceOccupancy]);
+
+  const syncVoiceOccupancyOnly = useCallback(async () => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    try {
+      const res = await fetch("/api/voice/occupancy", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      applyVoiceOccupancy(data.voiceOccupancy);
+    } catch {
+      // ignore transient poll error
+    }
+  }, [applyVoiceOccupancy]);
+
+  const pushSystemNotification = useCallback((payload: SystemNotifyPayload) => {
+    const cleanMsg = payload.message.trim();
+    if (!cleanMsg) return;
+
+    // Deduplicate rapid identical alerts within 1.5s
+    const dedupKey = `${payload.kind}:${payload.title}:${cleanMsg}`;
+    const now = Date.now();
+    if (
+      recentSystemAlertRef.current &&
+      recentSystemAlertRef.current.key === dedupKey &&
+      now - recentSystemAlertRef.current.at < 1500
+    ) {
+      return;
+    }
+    recentSystemAlertRef.current = { key: dedupKey, at: now };
+
+    const item: NotificationItem = {
+      id: `sys-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      kind: payload.kind,
+      channelId: "",
+      channelName: payload.source ?? "System",
+      authorId: "system",
+      authorDisplayName: payload.title,
+      authorAvatarColor:
+        payload.kind === "error"
+          ? "#F43F5E"
+          : payload.kind === "warning"
+            ? "#F59E0B"
+            : payload.kind === "info"
+              ? "#0EA5E9"
+              : "#10B981",
+      authorAvatarUrl: null,
+      content: cleanMsg,
+      hasAttachments: false,
+      createdAt: new Date(now).toISOString(),
+      read: false,
+    };
+
+    setNotifications((prev) => [item, ...prev].slice(0, 30));
+    setToasts((prev) => [...prev, item].slice(-3));
+    if (payload.kind === "error" || payload.kind === "warning") {
+      playSound("notification");
+    }
   }, []);
 
+  onNotifyRef.current = pushSystemNotification;
+
   onPresenceRef.current = () => {
+    void syncVoiceOccupancyOnly();
     void syncPresence();
   };
+
+  // Fast 3s live voice occupancy refresh (keeps other voice channels live without flicker)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void syncVoiceOccupancyOnly();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [syncVoiceOccupancyOnly]);
+
+  // Mark active channel read when returning focus to the browser tab
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        const chId = selectedChannelIdRef.current;
+        if (chId) {
+          setNotifications((prev) =>
+            prev.map((n) => (n.channelId === chId ? { ...n, read: true } : n))
+          );
+          setToasts((prev) => prev.filter((t) => t.channelId !== chId));
+        }
+        void syncVoiceOccupancyOnly();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [syncVoiceOccupancyOnly]);
 
   // Always-online Web Worker heartbeat (never throttled on Alt+Tab / background tabs)
   useEffect(() => {
@@ -253,7 +438,106 @@ function WorkspaceInner({
     setNotifications((prev) =>
       prev.map((n) => (n.channelId === channelId ? { ...n, read: true } : n))
     );
+    setToasts((prev) => prev.filter((t) => t.channelId !== channelId));
   }
+
+  /** Snapshot live participants from the channel we're leaving & optimistically move self
+   *  into targetChannel so neither the old channel nor the new channel ever flickers or reloads. */
+  const handleJoinVoiceChannel = useCallback(
+    (targetChannel: ChannelItem, watchIdentity?: string | null) => {
+      const prevChannel = voice.activeChannel;
+      const seedOccupants = (voiceOccupancy[targetChannel.slug] ?? []).filter(
+        (o) => o.identity !== user.id
+      );
+
+      pendingVoiceMoveRef.current = {
+        userId: user.id,
+        targetSlug: targetChannel.slug,
+        leftSlug:
+          prevChannel && prevChannel.slug !== targetChannel.slug
+            ? prevChannel.slug
+            : null,
+        until: Date.now() + 2600,
+      };
+
+      setVoiceOccupancy((prev) => {
+        const next: VoiceOccupancyMap = {};
+        for (const [slug, list] of Object.entries(prev)) {
+          next[slug] = list.filter((o) => o.identity !== user.id);
+        }
+
+        // Preserve live remote participants from the room we are leaving so they NEVER flicker away
+        if (prevChannel && prevChannel.slug !== targetChannel.slug) {
+          next[prevChannel.slug] = voice.participants
+            .filter((p) => p.identity !== user.id)
+            .map((p) => ({
+              identity: p.identity,
+              name: p.name,
+              username: p.username,
+              avatarColor: p.avatarColor,
+              avatarUrl: p.avatarUrl,
+              isScreenSharing: p.isScreenSharing,
+            }));
+        }
+
+        // Append self smoothly into target channel without shifting existing occupants
+        const targetExisting = next[targetChannel.slug] ?? [];
+        next[targetChannel.slug] = [
+          ...targetExisting,
+          {
+            identity: user.id,
+            name: user.displayName,
+            username: user.username,
+            avatarColor: user.avatarColor,
+            avatarUrl: user.avatarUrl,
+            isScreenSharing: false,
+          },
+        ];
+
+        return next;
+      });
+
+      void voice.joinVoiceChannel(targetChannel, {
+        watchIdentity,
+        seedOccupants,
+        currentUser: user,
+      });
+    },
+    [user, voice, voiceOccupancy]
+  );
+
+  const handleLeaveVoiceChannel = useCallback(() => {
+    const prevChannel = voice.activeChannel;
+    if (prevChannel) {
+      pendingVoiceMoveRef.current = {
+        userId: user.id,
+        targetSlug: null,
+        leftSlug: prevChannel.slug,
+        until: Date.now() + 2600,
+      };
+
+      // Snapshot remaining peers into voiceOccupancy before disconnecting so they stay rock-solid
+      setVoiceOccupancy((prev) => {
+        const next: VoiceOccupancyMap = {};
+        for (const [slug, list] of Object.entries(prev)) {
+          next[slug] = list.filter((o) => o.identity !== user.id);
+        }
+        next[prevChannel.slug] = voice.participants
+          .filter((p) => p.identity !== user.id)
+          .map((p) => ({
+            identity: p.identity,
+            name: p.name,
+            username: p.username,
+            avatarColor: p.avatarColor,
+            avatarUrl: p.avatarUrl,
+            isScreenSharing: p.isScreenSharing,
+          }));
+        return next;
+      });
+    }
+
+    void voice.leaveVoiceChannel();
+  }, [user.id, voice]);
 
   async function handleSignOut() {
     if (isVoiceConnected) {
@@ -366,11 +650,7 @@ function WorkspaceInner({
     if (voice.activeChannel?.id === targetChannel.id && isVoiceConnected) {
       voice.setWatchTargetIdentity(targetUserId);
     } else {
-      void voice.joinVoiceChannel(targetChannel, {
-        watchIdentity: targetUserId,
-        seedOccupants: voiceOccupancy[targetChannel.slug] ?? [],
-        currentUser: user,
-      });
+      handleJoinVoiceChannel(targetChannel, targetUserId);
     }
   }
 
@@ -438,25 +718,29 @@ function WorkspaceInner({
       avatarUrl?: string | null;
       role?: "admin" | "member";
     },
-    voiceRoomSlug?: string | null
+    options?: {
+      voiceRoomSlug?: string | null;
+      allowVolumeControl?: boolean;
+    }
   ) {
     const isSelf = person.id === user.id;
     const voiceInfo = findMemberVoiceInfo(person.id);
-    const roomSlug = voiceRoomSlug ?? voiceInfo.channel?.slug ?? null;
+    const roomSlug = options?.voiceRoomSlug ?? voiceInfo.channel?.slug ?? null;
+    const allowVolumeControl = Boolean(options?.allowVolumeControl);
     const currentVol = voice.userVolumes[person.id] ?? 1;
     const isLocallyMuted = currentVol === 0;
     const rect = e.currentTarget.getBoundingClientRect();
     const matchedMember = members.find((m) => m.id === person.id);
 
     const entries: ContextMenuEntry[] = [
-      { type: "header", id: "u-hdr", label: person.displayName },
+      { type: "header", id: "u-hdr", label: matchedMember?.displayName ?? person.displayName },
     ];
 
     if (voiceInfo.isScreenSharing) {
       entries.push({
         type: "item",
         id: "u-watch-live",
-        label: "Watch Stream",
+        label: "Watch Live Stream",
         icon: <Play className="h-3.5 w-3.5 text-emerald-400" />,
         onSelect: () => handleWatchUserStream(person.id, voiceInfo.channel?.id),
       });
@@ -501,7 +785,7 @@ function WorkspaceInner({
       });
     }
 
-    if (!isSelf) {
+    if (!isSelf && allowVolumeControl) {
       entries.push(
         { type: "divider", id: "u-d1" },
         {
@@ -523,27 +807,27 @@ function WorkspaceInner({
           onSelect: () => voice.toggleLocalMuteUser(person.id),
         }
       );
+    }
 
-      if (user.role === "admin" && roomSlug) {
-        entries.push(
-          { type: "divider", id: "u-d-admin" },
-          {
-            type: "item",
-            id: "u-server-mute",
-            label: "Server Mute",
-            icon: <MicOff className="h-3.5 w-3.5" />,
-            onSelect: () => void voice.serverMuteParticipant(person.id, roomSlug),
-          },
-          {
-            type: "item",
-            id: "u-kick",
-            label: "Kick from Voice",
-            icon: <UserX className="h-3.5 w-3.5" />,
-            danger: true,
-            onSelect: () => void voice.kickParticipant(person.id, roomSlug),
-          }
-        );
-      }
+    if (!isSelf && user.role === "admin" && roomSlug) {
+      entries.push(
+        { type: "divider", id: "u-d-admin" },
+        {
+          type: "item",
+          id: "u-server-mute",
+          label: "Server Mute",
+          icon: <MicOff className="h-3.5 w-3.5" />,
+          onSelect: () => void voice.serverMuteParticipant(person.id, roomSlug),
+        },
+        {
+          type: "item",
+          id: "u-kick",
+          label: "Kick from Voice",
+          icon: <UserX className="h-3.5 w-3.5" />,
+          danger: true,
+          onSelect: () => void voice.kickParticipant(person.id, roomSlug),
+        }
+      );
     }
 
     openMenu(e, entries);
@@ -568,10 +852,7 @@ function WorkspaceInner({
             icon: <Headphones className="h-3.5 w-3.5" />,
             onSelect: () => {
               selectChannel(channel.id);
-              void voice.joinVoiceChannel(channel, {
-                seedOccupants: voiceOccupancy[channel.slug] ?? [],
-                currentUser: user,
-              });
+              handleJoinVoiceChannel(channel);
             },
           }
         : {
@@ -645,7 +926,7 @@ function WorkspaceInner({
             <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
               <Headphones className="h-3.5 w-3.5" />
             </div>
-            <span className="font-mono text-sm font-semibold tracking-tight text-zinc-100">
+            <span className="text-sm font-bold tracking-tight text-zinc-100">
               siq
             </span>
           </div>
@@ -823,10 +1104,7 @@ function WorkspaceInner({
                         onClick={() => selectChannel(channel.id)}
                         onDoubleClick={() => {
                           selectChannel(channel.id);
-                          void voice.joinVoiceChannel(channel, {
-                            seedOccupants: voiceOccupancy[channel.slug] ?? [],
-                            currentUser: user,
-                          });
+                          handleJoinVoiceChannel(channel);
                         }}
                         title="Double-click to join voice"
                         className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
@@ -848,7 +1126,7 @@ function WorkspaceInner({
                           {channel.name}
                         </span>
                         {occupants.length > 0 && (
-                          <span className="ml-auto font-mono text-[10px] text-zinc-500">
+                          <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">
                             {occupants.length}
                           </span>
                         )}
@@ -904,34 +1182,38 @@ function WorkspaceInner({
                                     avatarUrl: occ.avatarUrl,
                                     role: occ.role,
                                   },
-                                  channel.slug
+                                  { voiceRoomSlug: channel.slug, allowVolumeControl: true }
                                 )
                               }
                               className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-zinc-300 transition-colors hover:bg-white/[0.05]"
                             >
-                              <div
-                                className={`rounded-full transition-shadow ${
-                                  occ.isSpeaking ? "ring-2 ring-emerald-400" : ""
-                                }`}
-                              >
-                                <Avatar
-                                  name={occ.name}
-                                  color={occ.avatarColor}
-                                  avatarUrl={occ.avatarUrl}
-                                  size="xs"
-                                />
-                              </div>
-                              <span dir="auto" className="min-w-0 flex-1 truncate text-xs">
+                              <Avatar
+                                name={occ.name}
+                                color={occ.avatarColor}
+                                avatarUrl={occ.avatarUrl}
+                                size="xs"
+                                speaking={occ.isSpeaking}
+                                speakingOffsetClassName="ring-offset-[#0E0F12]"
+                              />
+                              <span dir="auto" className="min-w-0 flex-1 truncate text-xs font-medium">
                                 {occ.name}
                               </span>
                               {occ.isScreenSharing && (
                                 <span
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleWatchUserStream(occ.identity, channel.id);
+                                    openUserCard(e, {
+                                      id: occ.identity,
+                                      displayName: occ.name,
+                                      username: occ.username,
+                                      avatarColor: occ.avatarColor,
+                                      avatarUrl: occ.avatarUrl,
+                                      role: occ.role,
+                                      online: true,
+                                    });
                                   }}
-                                  title="Watch live stream"
-                                  className="rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-emerald-300 hover:bg-emerald-500 hover:text-zinc-950"
+                                  title="Live streaming — click to view & watch"
+                                  className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300 hover:bg-emerald-500 hover:text-zinc-950"
                                 >
                                   LIVE
                                 </span>
@@ -970,7 +1252,7 @@ function WorkspaceInner({
                     onClick={() => selectChannel(voice.activeChannel!.id)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <p className="font-mono text-[11px] font-semibold text-emerald-400">
+                    <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
                       {voice.connectionState === ConnectionState.Connecting
                         ? "Connecting..."
                         : "Voice Connected"}
@@ -983,7 +1265,7 @@ function WorkspaceInner({
 
                 <button
                   type="button"
-                  onClick={() => void voice.leaveVoiceChannel()}
+                  onClick={handleLeaveVoiceChannel}
                   title="Disconnect"
                   className="rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
                 >
@@ -1061,7 +1343,7 @@ function WorkspaceInner({
                 <p dir="auto" className="truncate text-xs font-medium text-zinc-100">
                   {user.displayName}
                 </p>
-                <p className="truncate font-mono text-[11px] text-zinc-500">
+                <p className="truncate text-[11px] font-medium text-zinc-500">
                   @{user.username}
                 </p>
               </div>
@@ -1130,6 +1412,11 @@ function WorkspaceInner({
             <NotificationBell
               notifications={notifications}
               onSelectChannel={(id) => selectChannel(id)}
+              onMarkItemRead={(id) =>
+                setNotifications((prev) =>
+                  prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+                )
+              }
               onMarkAllRead={() =>
                 setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
               }
@@ -1144,10 +1431,12 @@ function WorkspaceInner({
               <TextChannelView
                 channel={activeChannel}
                 currentUser={user}
+                members={members}
                 blobReady={capabilities.blobReady}
                 density={appPrefs.messageDensity}
                 textScale={appPrefs.textScale}
                 onOpenUserProfile={openEnrichedProfilePopover}
+                onMessagesSeen={handleMessagesSeen}
               />
             ) : (
               <VoiceStage
@@ -1161,6 +1450,8 @@ function WorkspaceInner({
                 onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
                 onOpenVoiceSettings={() => openSettings("voice")}
                 onOpenUserProfile={openEnrichedProfilePopover}
+                onJoinVoiceChannel={(ch) => handleJoinVoiceChannel(ch)}
+                onLeaveVoiceChannel={handleLeaveVoiceChannel}
               />
             )
           ) : (
@@ -1184,7 +1475,7 @@ function WorkspaceInner({
                   <Users className="h-3.5 w-3.5" />
                   <span>Members</span>
                 </div>
-                <span className="font-mono text-[11px] text-zinc-500">
+                <span className="text-[11px] font-medium tabular-nums text-zinc-500">
                   {onlineMembers.length}/{members.length}
                 </span>
               </div>
@@ -1235,12 +1526,12 @@ function WorkspaceInner({
                               <p dir="auto" className="truncate font-medium text-zinc-200">
                                 {member.displayName}
                               </p>
-                              <p className="truncate font-mono text-[10px] text-zinc-500">
-                                {member.role === "admin" ? "admin" : `@${member.username}`}
+                              <p className="truncate text-[11px] text-zinc-500">
+                                {member.role === "admin" ? "Admin" : `@${member.username}`}
                               </p>
                             </div>
                             {voiceInfo.isScreenSharing && (
-                              <span className="rounded bg-emerald-500/20 px-1 py-0.5 font-mono text-[9px] font-semibold text-emerald-300">
+                              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-emerald-300">
                                 LIVE
                               </span>
                             )}
@@ -1295,7 +1586,7 @@ function WorkspaceInner({
                               <p dir="auto" className="truncate font-medium text-zinc-300">
                                 {member.displayName}
                               </p>
-                              <p className="truncate font-mono text-[10px] text-zinc-500">
+                              <p className="truncate text-[11px] text-zinc-500">
                                 @{member.username}
                               </p>
                             </div>
@@ -1359,6 +1650,18 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
   const [presenceRef] = useState<{ current: () => void }>(() => ({
     current: () => {},
   }));
+  const [notifyRef] = useState<{
+    current: (payload: SystemNotifyPayload) => void;
+  }>(() => ({
+    current: () => {},
+  }));
+
+  const notify = useCallback(
+    (payload: SystemNotifyPayload) => {
+      notifyRef.current(payload);
+    },
+    [notifyRef]
+  );
 
   const buildFallbackMenu = useCallback((): ContextMenuEntry[] => {
     return [
@@ -1374,11 +1677,17 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
 
   return (
     <MotionConfig reducedMotion="user">
-      <ContextMenuProvider fallbackEntries={buildFallbackMenu}>
-        <VoiceProvider onOccupancyChanged={() => presenceRef.current()}>
-          <WorkspaceInner {...props} onPresenceRef={presenceRef} />
-        </VoiceProvider>
-      </ContextMenuProvider>
+      <SystemNotifyProvider value={notify}>
+        <ContextMenuProvider fallbackEntries={buildFallbackMenu}>
+          <VoiceProvider onOccupancyChanged={() => presenceRef.current()}>
+            <WorkspaceInner
+              {...props}
+              onPresenceRef={presenceRef}
+              onNotifyRef={notifyRef}
+            />
+          </VoiceProvider>
+        </ContextMenuProvider>
+      </SystemNotifyProvider>
     </MotionConfig>
   );
 }

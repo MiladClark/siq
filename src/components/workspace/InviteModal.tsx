@@ -3,6 +3,7 @@
 import { Check, Copy, KeyRound, Link2, Plus, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
+import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { playSound } from "@/lib/sounds";
 
 interface InviteRow {
@@ -21,31 +22,40 @@ interface InviteModalProps {
 }
 
 export function InviteModal({ open, onClose }: InviteModalProps) {
+  const notify = useSystemNotify();
   const [invites, setInvites] = useState<InviteRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [maxUses, setMaxUses] = useState(5);
   const [expiresInDays, setExpiresInDays] = useState<number | null>(7);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const loadInvites = useCallback(async () => {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch("/api/invites");
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Failed to load invites.");
+        notify({
+          kind: "error",
+          title: "Invites Error",
+          message: data.error ?? "Failed to load invites.",
+          source: "Invites",
+        });
       } else {
         setInvites(data.invites ?? []);
       }
     } catch {
-      setError("Network error while loading invites.");
+      notify({
+        kind: "error",
+        title: "Invites Error",
+        message: "Network error while loading invites.",
+        source: "Invites",
+      });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [notify]);
 
   useEffect(() => {
     if (open) {
@@ -55,7 +65,6 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
 
   async function handleCreate() {
     setCreating(true);
-    setError(null);
     try {
       const res = await fetch("/api/invites", {
         method: "POST",
@@ -64,12 +73,22 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Failed to create invite.");
+        notify({
+          kind: "error",
+          title: "Invites Error",
+          message: data.error ?? "Failed to create invite.",
+          source: "Invites",
+        });
       } else if (data.invite) {
         setInvites((prev) => [data.invite, ...prev]);
       }
     } catch {
-      setError("Network error while creating invite.");
+      notify({
+        kind: "error",
+        title: "Invites Error",
+        message: "Network error while creating invite.",
+        source: "Invites",
+      });
     } finally {
       setCreating(false);
     }
@@ -84,7 +103,12 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
         );
       }
     } catch {
-      setError("Could not revoke invite.");
+      notify({
+        kind: "error",
+        title: "Invites Error",
+        message: "Could not revoke invite.",
+        source: "Invites",
+      });
     }
   }
 
@@ -95,7 +119,12 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
       setCopiedId(key);
       setTimeout(() => setCopiedId((curr) => (curr === key ? null : curr)), 1800);
     } catch {
-      setError("Clipboard access denied.");
+      notify({
+        kind: "warning",
+        title: "Clipboard Blocked",
+        message: "Clipboard access denied.",
+        source: "Invites",
+      });
     }
   }
 
@@ -197,16 +226,10 @@ export function InviteModal({ open, onClose }: InviteModalProps) {
                 </button>
               </div>
 
-              {error && (
-                <p className="rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-                  {error}
-                </p>
-              )}
-
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs text-zinc-400">
                   <span>Invite codes</span>
-                  <span className="font-mono text-[11px] text-zinc-500">
+                  <span className="text-[11px] font-medium tabular-nums text-zinc-500">
                     {invites.length} total
                   </span>
                 </div>

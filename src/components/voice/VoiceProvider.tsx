@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { RemoteAudioPlayer } from "@/components/voice/AudioRenderer";
 import {
   createNoiseProcessor,
@@ -291,8 +292,10 @@ export function VoiceProvider({
   children: ReactNode;
   onOccupancyChanged?: () => void;
 }) {
+  const notify = useSystemNotify();
   const roomRef = useRef<Room | null>(null);
   const switchingRef = useRef<boolean>(false);
+  const joinAttemptIdRef = useRef<number>(0);
   const preDeafenMutedRef = useRef<boolean>(false);
   const preLocalMuteVolumeRef = useRef<Record<string, number>>({});
   const serverHostRef = useRef<string>("");
@@ -302,8 +305,28 @@ export function VoiceProvider({
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected
   );
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const [notice, setNoticeState] = useState<string | null>(null);
+
+  const setError = useCallback(
+    (msg: string | null) => {
+      setErrorState(msg);
+      if (msg) {
+        notify({ kind: "error", title: "Voice Error", message: msg, source: "Voice" });
+      }
+    },
+    [notify]
+  );
+
+  const setNotice = useCallback(
+    (msg: string | null) => {
+      setNoticeState(msg);
+      if (msg) {
+        notify({ kind: "warning", title: "Voice Notice", message: msg, source: "Voice" });
+      }
+    },
+    [notify]
+  );
   const [participants, setParticipants] = useState<VoiceParticipantView[]>([]);
   const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
   const [networkStats, setNetworkStats] = useState<VoiceNetworkStats>(EMPTY_NETWORK_STATS);
@@ -357,15 +380,30 @@ export function VoiceProvider({
 
   const syncParticipants = useCallback(() => {
     const room = roomRef.current;
-    if (!room || room.state === ConnectionState.Disconnected) {
-      setParticipants([]);
+    // Never wipe optimistic/seeded participants while a new room is still connecting.
+    if (!room) {
+      if (!switchingRef.current) {
+        setParticipants([]);
+      }
+      return;
+    }
+    if (room.state === ConnectionState.Disconnected) {
+      if (!switchingRef.current) {
+        setParticipants([]);
+      }
+      return;
+    }
+    if (room.state !== ConnectionState.Connected) {
       return;
     }
 
     const speakers = activeSpeakerIdsRef.current;
-    const list: VoiceParticipantView[] = [
-      buildParticipantView(room.localParticipant, true, speakers),
-    ];
+    const liveMap = new Map<string, VoiceParticipantView>();
+
+    liveMap.set(
+      room.localParticipant.identity,
+      buildParticipantView(room.localParticipant, true, speakers)
+    );
 
     room.remoteParticipants.forEach((rp: RemoteParticipant) => {
       // Ensure remote screen share tracks always subscribe at HIGH quality
@@ -379,10 +417,30 @@ export function VoiceProvider({
           // ignore if track isn't simulcast
         }
       }
-      list.push(buildParticipantView(rp, false, speakers));
+      liveMap.set(rp.identity, buildParticipantView(rp, false, speakers));
     });
 
-    setParticipants(list);
+    // Preserve existing visual order so participant cards and sidebar rows never jump
+    setParticipants((prev) => {
+      const ordered: VoiceParticipantView[] = [];
+      const added = new Set<string>();
+
+      for (const item of prev) {
+        const fresh = liveMap.get(item.identity);
+        if (fresh) {
+          ordered.push(fresh);
+          added.add(item.identity);
+        }
+      }
+
+      liveMap.forEach((view, identity) => {
+        if (!added.has(identity)) {
+          ordered.push(view);
+        }
+      });
+
+      return ordered;
+    });
 
     const local: LocalParticipant = room.localParticipant;
     setIsMuted(!local.isMicrophoneEnabled);
@@ -598,6 +656,165 @@ export function VoiceProvider({
     [activeChannel?.slug]
   );
 
+  // Instant low-latency Web Audio RMS Voice Activity Detection (~45ms attack, ~140ms release)
+  // Eliminates LiveKit's ~500-800ms server-side ActiveSpeakersChanged delay.
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected) {
+      activeSpeakerIdsRef.current = new Set();
+      setActiveSpeakerIds(new Set());
+      return;
+    }
+
+    let audioCtx: AudioContext | null = null;
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      audioCtx = new AudioCtx();
+    } catch {
+      return;
+    }
+
+    interface MeterEntry {
+      trackId: string;
+      source: MediaStreamAudioSourceNode;
+      analyser: AnalyserNode;
+      data: Uint8Array<ArrayBuffer>;
+      lastLoudAt: number;
+    }
+
+    const meters = new Map<string, MeterEntry>();
+    const SPEAK_THRESHOLD = 0.015;
+    const HOLD_MS = 140;
+
+    const tick = () => {
+      const room = roomRef.current;
+      if (!room || !audioCtx || room.state !== ConnectionState.Connected) return;
+
+      if (audioCtx.state === "suspended") {
+        void audioCtx.resume().catch(() => {});
+      }
+
+      const activeParticipants: Participant[] = [
+        room.localParticipant,
+        ...Array.from(room.remoteParticipants.values()),
+      ];
+      const presentIds = new Set<string>();
+
+      for (const p of activeParticipants) {
+        presentIds.add(p.identity);
+        const micPub = p.getTrackPublication(Track.Source.Microphone);
+        const mediaTrack =
+          micPub && !micPub.isMuted ? micPub.track?.mediaStreamTrack : undefined;
+
+        const existing = meters.get(p.identity);
+        if (!mediaTrack || mediaTrack.readyState !== "live") {
+          if (existing) {
+            try {
+              existing.source.disconnect();
+              existing.analyser.disconnect();
+            } catch {
+              // ignore
+            }
+            meters.delete(p.identity);
+          }
+          continue;
+        }
+
+        if (!existing || existing.trackId !== mediaTrack.id) {
+          if (existing) {
+            try {
+              existing.source.disconnect();
+              existing.analyser.disconnect();
+            } catch {
+              // ignore
+            }
+          }
+          try {
+            const source = audioCtx.createMediaStreamSource(new MediaStream([mediaTrack]));
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.15;
+            source.connect(analyser);
+            meters.set(p.identity, {
+              trackId: mediaTrack.id,
+              source,
+              analyser,
+              data: new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount)),
+              lastLoudAt: 0,
+            });
+          } catch {
+            // ignore track attach error
+          }
+        }
+      }
+
+      // Clean up disconnected participant meters
+      meters.forEach((entry, id) => {
+        if (!presentIds.has(id)) {
+          try {
+            entry.source.disconnect();
+            entry.analyser.disconnect();
+          } catch {
+            // ignore
+          }
+          meters.delete(id);
+        }
+      });
+
+      const now = performance.now();
+      const nextSpeakers = new Set<string>();
+
+      meters.forEach((entry, identity) => {
+        entry.analyser.getByteTimeDomainData(entry.data);
+        let sumSq = 0;
+        for (let i = 0; i < entry.data.length; i++) {
+          const norm = (entry.data[i] - 128) / 128;
+          sumSq += norm * norm;
+        }
+        const rms = Math.sqrt(sumSq / entry.data.length);
+        if (rms >= SPEAK_THRESHOLD) {
+          entry.lastLoudAt = now;
+        }
+        if (now - entry.lastLoudAt <= HOLD_MS) {
+          nextSpeakers.add(identity);
+        }
+      });
+
+      const prev = activeSpeakerIdsRef.current;
+      let changed = prev.size !== nextSpeakers.size;
+      if (!changed) {
+        nextSpeakers.forEach((id) => {
+          if (!prev.has(id)) changed = true;
+        });
+      }
+
+      if (changed) {
+        activeSpeakerIdsRef.current = nextSpeakers;
+        setActiveSpeakerIds(nextSpeakers);
+        syncParticipants();
+      }
+    };
+
+    const timer = setInterval(tick, 45);
+
+    return () => {
+      clearInterval(timer);
+      meters.forEach((entry) => {
+        try {
+          entry.source.disconnect();
+          entry.analyser.disconnect();
+        } catch {
+          // ignore
+        }
+      });
+      meters.clear();
+      if (audioCtx && audioCtx.state !== "closed") {
+        void audioCtx.close().catch(() => {});
+      }
+    };
+  }, [connectionState, syncParticipants]);
+
   // Live WebRTC ping + packet loss telemetry every 2s
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected) {
@@ -655,12 +872,10 @@ export function VoiceProvider({
   }, [connectionState]);
 
   const leaveVoiceChannel = useCallback(async () => {
+    joinAttemptIdRef.current += 1;
+    switchingRef.current = false;
     const room = roomRef.current;
     roomRef.current = null;
-    if (room) {
-      await room.disconnect();
-      playSound("leave");
-    }
     setActiveChannel(null);
     setConnectionState(ConnectionState.Disconnected);
     setParticipants([]);
@@ -671,7 +886,12 @@ export function VoiceProvider({
     setIsDeafened(false);
     setIsCameraOn(false);
     setIsScreenSharing(false);
+    if (room) {
+      await room.disconnect();
+      playSound("leave");
+    }
     onOccupancyChanged?.();
+    setTimeout(() => onOccupancyChanged?.(), 500);
   }, [onOccupancyChanged]);
 
   const joinVoiceChannel = useCallback(
@@ -682,38 +902,23 @@ export function VoiceProvider({
 
       if (
         activeChannel?.id === channel.id &&
-        roomRef.current?.state === ConnectionState.Connected
+        roomRef.current &&
+        (roomRef.current.state === ConnectionState.Connected ||
+          roomRef.current.state === ConnectionState.Connecting)
       ) {
         return;
       }
 
+      const attemptId = ++joinAttemptIdRef.current;
       setError(null);
       setNotice(null);
 
-      // Build optimistic participants list immediately so existing people NEVER disappear
-      // and you smoothly append into the room with zero reload flicker.
+      // Build optimistic participants list keeping EXISTING people in their exact order first,
+      // then appending you cleanly so nobody vanishes or shifts while connecting.
       const optimisticList: VoiceParticipantView[] = [];
-      if (options?.currentUser) {
-        optimisticList.push({
-          identity: options.currentUser.id,
-          name: options.currentUser.displayName,
-          username: options.currentUser.username,
-          avatarColor: options.currentUser.avatarColor,
-          avatarUrl: options.currentUser.avatarUrl,
-          role: options.currentUser.role,
-          isLocal: true,
-          isSpeaking: false,
-          isMuted: false,
-          isCameraOn: false,
-          isScreenSharing: false,
-          cameraTrack: null,
-          screenTrack: null,
-          screenAudioTrack: null,
-          micAudioTrack: null,
-        });
-      }
       if (options?.seedOccupants) {
         for (const occ of options.seedOccupants) {
+          if (options.currentUser && occ.identity === options.currentUser.id) continue;
           if (optimisticList.some((p) => p.identity === occ.identity)) continue;
           optimisticList.push({
             identity: occ.identity,
@@ -733,20 +938,39 @@ export function VoiceProvider({
           });
         }
       }
+      if (options?.currentUser) {
+        optimisticList.push({
+          identity: options.currentUser.id,
+          name: options.currentUser.displayName,
+          username: options.currentUser.username,
+          avatarColor: options.currentUser.avatarColor,
+          avatarUrl: options.currentUser.avatarUrl,
+          role: options.currentUser.role,
+          isLocal: true,
+          isSpeaking: false,
+          isMuted: false,
+          isCameraOn: false,
+          isScreenSharing: false,
+          cameraTrack: null,
+          screenTrack: null,
+          screenAudioTrack: null,
+          micAudioTrack: null,
+        });
+      }
 
       switchingRef.current = true;
       setActiveChannel(channel);
       setConnectionState(ConnectionState.Connecting);
-      if (optimisticList.length > 0) {
-        setParticipants(optimisticList);
-      }
+      setParticipants(optimisticList);
+      setNetworkStats(EMPTY_NETWORK_STATS);
 
       if (roomRef.current) {
         const oldRoom = roomRef.current;
         roomRef.current = null;
         await oldRoom.disconnect();
       }
-      setNetworkStats(EMPTY_NETWORK_STATS);
+
+      if (attemptId !== joinAttemptIdRef.current) return;
 
       try {
         const res = await fetch("/api/livekit/token", {
@@ -755,6 +979,7 @@ export function VoiceProvider({
           body: JSON.stringify({ channelId: channel.id }),
         });
         const data = await res.json();
+        if (attemptId !== joinAttemptIdRef.current) return;
         if (!res.ok) {
           switchingRef.current = false;
           setError(data.error ?? "Could not connect to voice server.");
@@ -794,24 +1019,29 @@ export function VoiceProvider({
         });
 
         roomRef.current = room;
-        switchingRef.current = false;
 
-        const handleRoomUpdate = () => syncParticipants();
+        const handleRoomUpdate = () => {
+          if (roomRef.current !== room) return;
+          syncParticipants();
+        };
 
         room
           .on(RoomEvent.ConnectionStateChanged, (state) => {
             if (roomRef.current !== room) return;
             setConnectionState(state);
             if (state === ConnectionState.Connected) {
+              switchingRef.current = false;
               syncParticipants();
             }
           })
           .on(RoomEvent.ParticipantConnected, () => {
+            if (roomRef.current !== room) return;
             playSound("peer-join");
             syncParticipants();
             onOccupancyChanged?.();
           })
           .on(RoomEvent.ParticipantDisconnected, () => {
+            if (roomRef.current !== room) return;
             playSound("peer-leave");
             syncParticipants();
             onOccupancyChanged?.();
@@ -822,12 +1052,6 @@ export function VoiceProvider({
           .on(RoomEvent.TrackUnmuted, handleRoomUpdate)
           .on(RoomEvent.LocalTrackPublished, handleRoomUpdate)
           .on(RoomEvent.LocalTrackUnpublished, handleRoomUpdate)
-          .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-            const ids = new Set(speakers.map((s) => s.identity));
-            activeSpeakerIdsRef.current = ids;
-            setActiveSpeakerIds(ids);
-            syncParticipants();
-          })
           .on(RoomEvent.Disconnected, () => {
             if (roomRef.current === room && !switchingRef.current) {
               roomRef.current = null;
@@ -844,7 +1068,13 @@ export function VoiceProvider({
           });
 
         await room.connect(data.url, data.token);
+        if (attemptId !== joinAttemptIdRef.current) {
+          await room.disconnect();
+          return;
+        }
+        switchingRef.current = false;
         playSound("join");
+        syncParticipants();
 
         try {
           await room.localParticipant.setMicrophoneEnabled(true, {
@@ -853,6 +1083,7 @@ export function VoiceProvider({
             noiseSuppression: noiseMode === "standard",
             deviceId: selectedAudioInput || undefined,
           });
+          if (attemptId !== joinAttemptIdRef.current) return;
           await applyNoiseProcessorToCurrentMic(
             noiseMode,
             echoCancellation,
@@ -860,13 +1091,18 @@ export function VoiceProvider({
             false
           );
         } catch {
-          setError("Microphone permission denied. Connected in listen-only mode.");
+          if (attemptId === joinAttemptIdRef.current) {
+            setError("Microphone permission denied. Connected in listen-only mode.");
+          }
         }
 
+        if (attemptId !== joinAttemptIdRef.current) return;
         await refreshDevices();
         syncParticipants();
         onOccupancyChanged?.();
+        setTimeout(() => onOccupancyChanged?.(), 600);
       } catch (err) {
+        if (attemptId !== joinAttemptIdRef.current) return;
         switchingRef.current = false;
         const msg = err instanceof Error ? err.message : "Failed to join voice channel.";
         setError(msg);
@@ -1009,7 +1245,6 @@ export function VoiceProvider({
         );
 
         playSound("stream-start");
-        setWatchTargetIdentity(room.localParticipant.identity);
         syncParticipants();
         onOccupancyChanged?.();
         return true;

@@ -24,9 +24,10 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
+import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { useVoice } from "@/components/voice/VoiceProvider";
 import type { NoiseCancellationMode } from "@/lib/noise-processor";
 import {
@@ -109,6 +110,7 @@ export function SettingsModal({
   onSignOut,
 }: SettingsModalProps) {
   const voice = useVoice();
+  const notify = useSystemNotify();
 
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
@@ -123,18 +125,37 @@ export function SettingsModal({
     null
   );
   const [savingAccount, setSavingAccount] = useState(false);
-  const [accountMsg, setAccountMsg] = useState<{ type: "ok" | "err"; text: string } | null>(
-    null
-  );
 
   // Change password state
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
-  const [passwordMsg, setPasswordMsg] = useState<{
-    type: "ok" | "err";
-    text: string;
-  } | null>(null);
+
+  const setAccountMsg = useCallback(
+    (msg: { type: "ok" | "err"; text: string } | null) => {
+      if (!msg) return;
+      notify({
+        kind: msg.type === "err" ? "error" : "success",
+        title: msg.type === "err" ? "Profile Error" : "Profile Updated",
+        message: msg.text,
+        source: "Settings",
+      });
+    },
+    [notify]
+  );
+
+  const setPasswordMsg = useCallback(
+    (msg: { type: "ok" | "err"; text: string } | null) => {
+      if (!msg) return;
+      notify({
+        kind: msg.type === "err" ? "error" : "success",
+        title: msg.type === "err" ? "Password Error" : "Password Updated",
+        message: msg.text,
+        source: "Settings",
+      });
+    },
+    [notify]
+  );
 
   // Sound prefs
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -235,6 +256,12 @@ export function SettingsModal({
       setMicTesting(true);
     } catch {
       setMicTesting(false);
+      notify({
+        kind: "error",
+        title: "Microphone Error",
+        message: "Could not access microphone for test.",
+        source: "Settings",
+      });
     }
   }
 
@@ -516,7 +543,7 @@ export function SettingsModal({
                   aria-label="Close settings"
                   className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#18191E] px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:border-white/[0.18] hover:text-white"
                 >
-                  <span className="font-mono text-[10px]">ESC</span>
+                  <span className="text-[10px] font-semibold tracking-wide">ESC</span>
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -600,7 +627,7 @@ export function SettingsModal({
 
                             <div className="flex flex-wrap items-end justify-between gap-4 px-4 pb-4">
                               <div className="-mt-8 flex items-end gap-3.5">
-                                <div className="relative rounded-full ring-4 ring-[#0E0F12]">
+                                <div className="relative inline-flex rounded-full ring-4 ring-[#0E0F12]">
                                   <Avatar
                                     name={displayName || user.username}
                                     color={avatarColor}
@@ -618,11 +645,11 @@ export function SettingsModal({
                                     >
                                       {displayName || user.username}
                                     </p>
-                                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-emerald-300">
                                       {user.role}
                                     </span>
                                   </div>
-                                  <p className="font-mono text-xs text-zinc-500">
+                                  <p className="text-xs font-medium text-zinc-500">
                                     @{user.username}
                                   </p>
                                 </div>
@@ -738,18 +765,6 @@ export function SettingsModal({
                             </div>
                           </div>
 
-                          {accountMsg && (
-                            <p
-                              className={`rounded-lg border px-3 py-2 text-xs ${
-                                accountMsg.type === "ok"
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                  : "border-rose-500/30 bg-rose-500/10 text-rose-300"
-                              }`}
-                            >
-                              {accountMsg.text}
-                            </p>
-                          )}
-
                           <div className="flex justify-end">
                             <button
                               type="submit"
@@ -810,18 +825,6 @@ export function SettingsModal({
                               />
                             </div>
                           </div>
-
-                          {passwordMsg && (
-                            <p
-                              className={`rounded-lg border px-3 py-2 text-xs ${
-                                passwordMsg.type === "ok"
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                  : "border-rose-500/30 bg-rose-500/10 text-rose-300"
-                              }`}
-                            >
-                              {passwordMsg.text}
-                            </p>
-                          )}
 
                           <div className="flex justify-end">
                             <button
@@ -936,7 +939,7 @@ export function SettingsModal({
                                 AI Noise Cancellation
                               </h3>
                             </div>
-                            <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 font-mono text-[10px] text-emerald-300">
+                            <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300">
                               Active: {voice.activeNoiseEngine.toUpperCase()}
                             </span>
                           </div>
@@ -960,7 +963,7 @@ export function SettingsModal({
                                       <span className="text-xs font-semibold text-zinc-100">
                                         {m.title}
                                       </span>
-                                      <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                                      <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
                                         {m.badge}
                                       </span>
                                     </div>
@@ -1046,7 +1049,7 @@ export function SettingsModal({
                               <p className="text-xs font-medium text-zinc-100">
                                 Default Stream Quality
                               </p>
-                              <p className="font-mono text-[11px] text-zinc-400">
+                              <p className="text-[11px] font-medium tabular-nums text-zinc-400">
                                 {voice.screenShareConfig.resolution} ·{" "}
                                 {voice.screenShareConfig.fps}fps ·{" "}
                                 {voice.screenShareConfig.codec.toUpperCase()} ·{" "}
@@ -1142,7 +1145,7 @@ export function SettingsModal({
                                   }}
                                   className="h-1.5 flex-1 cursor-pointer accent-emerald-500"
                                 />
-                                <span className="w-9 text-right font-mono text-xs text-zinc-400">
+                                <span className="w-9 text-right text-xs font-semibold tabular-nums text-zinc-400">
                                   {Math.round(soundVolume * 100)}%
                                 </span>
                               </div>
@@ -1212,6 +1215,12 @@ export function SettingsModal({
                             onClick={() => {
                               clearLocalWorkspaceData();
                               onResetPrefs();
+                              notify({
+                                kind: "info",
+                                title: "Preferences Reset",
+                                message: "Local preferences and user volumes were restored to defaults.",
+                                source: "Settings",
+                              });
                             }}
                             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-rose-500/40 hover:text-rose-300"
                           >

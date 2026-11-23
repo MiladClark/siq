@@ -57,37 +57,40 @@ export async function GET(request: Request) {
         : Promise.resolve([]),
     ]);
 
-    return NextResponse.json({
-      serverTime: now.toISOString(),
-      members: memberRows.map(serializeUser),
-      channels: channelRows.map((ch) => ({
-        id: ch.id,
-        name: ch.name,
-        slug: ch.slug,
-        type: ch.type,
-        description: ch.description,
-        position: ch.position,
-        createdById: ch.createdById,
-      })),
-      voiceOccupancy,
-      recentNotifications: recentMessageRows.reverse().map((m) => ({
-        id: m.id,
-        channelId: m.channelId,
-        channelName: m.channelName,
-        authorId: m.authorId,
-        authorDisplayName: m.authorDisplayName,
-        authorAvatarColor: m.authorAvatarColor,
-        authorAvatarUrl: m.authorAvatarUrl,
-        content: m.content,
-        hasAttachments: (m.attachments?.length ?? 0) > 0,
-        createdAt: m.createdAt.toISOString(),
-        read: false,
-      })),
-      capabilities: {
-        livekitReady: isLiveKitConfigured(),
-        blobReady: isBlobStorageConfigured(),
+    return NextResponse.json(
+      {
+        serverTime: now.toISOString(),
+        members: memberRows.map(serializeUser),
+        channels: channelRows.map((ch) => ({
+          id: ch.id,
+          name: ch.name,
+          slug: ch.slug,
+          type: ch.type,
+          description: ch.description,
+          position: ch.position,
+          createdById: ch.createdById,
+        })),
+        voiceOccupancy,
+        recentNotifications: recentMessageRows.reverse().map((m) => ({
+          id: m.id,
+          channelId: m.channelId,
+          channelName: m.channelName,
+          authorId: m.authorId,
+          authorDisplayName: m.authorDisplayName,
+          authorAvatarColor: m.authorAvatarColor,
+          authorAvatarUrl: m.authorAvatarUrl,
+          content: m.content,
+          hasAttachments: (m.attachments?.length ?? 0) > 0,
+          createdAt: m.createdAt.toISOString(),
+          read: false,
+        })),
+        capabilities: {
+          livekitReady: isLiveKitConfigured(),
+          blobReady: isBlobStorageConfigured(),
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     console.error("[presence GET]", error);
     return NextResponse.json({ error: "Failed to sync presence." }, { status: 500 });

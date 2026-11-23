@@ -72,8 +72,11 @@ export interface VoiceParticipantSummary {
 
 export type VoiceOccupancyMap = Record<string, VoiceParticipantSummary[]>;
 
+export type NotificationKind = "message" | "error" | "warning" | "info" | "success";
+
 export interface NotificationItem {
   id: string;
+  kind?: NotificationKind;
   channelId: string;
   channelName: string;
   authorId: string;

@@ -1,22 +1,25 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Vazirmatn } from "next/font/google";
+import { JetBrains_Mono, Plus_Jakarta_Sans, Vazirmatn } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const plusJakarta = Plus_Jakarta_Sans({
+  variable: "--font-ui-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-ui-mono",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
   display: "swap",
 });
 
 const vazirmatn = Vazirmatn({
   variable: "--font-vazirmatn",
   subsets: ["arabic", "latin"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -39,7 +42,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${vazirmatn.variable} dark`}
+      className={`${plusJakarta.variable} ${jetbrainsMono.variable} ${vazirmatn.variable} dark`}
     >
       <body className="min-h-[100dvh] bg-[#09090B] text-zinc-100 antialiased selection:bg-emerald-500/25 selection:text-emerald-200">
         {children}

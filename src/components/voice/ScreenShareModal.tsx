@@ -179,7 +179,7 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
                         }`}
                       >
                         <div className="text-xs font-semibold">{p.label}</div>
-                        <div className="mt-0.5 font-mono text-[10px] text-zinc-500">
+                        <div className="mt-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
                           {p.sub}
                         </div>
                       </button>
@@ -201,7 +201,7 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
                           key={res}
                           type="button"
                           onClick={() => setDraft((d) => ({ ...d, resolution: res }))}
-                          className={`rounded-md py-1.5 font-mono text-[11px] font-medium transition-colors ${
+                          className={`rounded-md py-1.5 text-[11px] font-semibold tabular-nums transition-colors ${
                             draft.resolution === res
                               ? "bg-emerald-500 text-zinc-950"
                               : "text-zinc-400 hover:text-zinc-100"
@@ -224,7 +224,7 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
                         key={fps}
                         type="button"
                         onClick={() => setDraft((d) => ({ ...d, fps }))}
-                        className={`rounded-md py-1.5 font-mono text-[11px] font-medium transition-colors ${
+                        className={`rounded-md py-1.5 text-[11px] font-semibold tabular-nums transition-colors ${
                           draft.fps === fps
                             ? "bg-emerald-500 text-zinc-950"
                             : "text-zinc-400 hover:text-zinc-100"
@@ -281,7 +281,7 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
                         key={codec}
                         type="button"
                         onClick={() => setDraft((d) => ({ ...d, codec }))}
-                        className={`rounded-md py-1.5 font-mono text-[11px] font-medium uppercase transition-colors ${
+                        className={`rounded-md py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
                           draft.codec === codec
                             ? "bg-[#1E2027] text-zinc-100"
                             : "text-zinc-400 hover:text-zinc-200"
@@ -299,7 +299,7 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-zinc-300">Max Bitrate</span>
-                    <span className="font-mono text-emerald-400">
+                    <span className="font-semibold tabular-nums text-emerald-400">
                       {draft.bitrateMbps} Mbps
                     </span>
                   </div>

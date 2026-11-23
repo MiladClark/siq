@@ -72,7 +72,7 @@ export async function getWorkspaceInitialData(): Promise<{
       createdById: ch.createdById,
     })),
     members: memberRows.map(serializeUser),
-    voiceOccupancy,
+    voiceOccupancy: voiceOccupancy ?? {},
     capabilities: {
       livekitReady: isLiveKitConfigured(),
       blobReady: isBlobStorageConfigured(),

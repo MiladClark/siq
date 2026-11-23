@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { channels, messages, users } from "@/db/schema";
@@ -81,6 +81,7 @@ export async function GET(
   const { id: channelId } = await context.params;
   const { searchParams } = new URL(request.url);
   const afterParam = searchParams.get("after");
+  const beforeParam = searchParams.get("before");
 
   try {
     const db = getDb();
@@ -108,12 +109,51 @@ export async function GET(
         .innerJoin(users, eq(messages.authorId, users.id))
         .where(and(eq(messages.channelId, channelId), gt(messages.createdAt, afterDate)))
         .orderBy(asc(messages.createdAt))
-        .limit(50);
+        .limit(80);
 
       const items = await hydrateMessages(rows);
-      return NextResponse.json({ messages: items });
+      return NextResponse.json(
+        { messages: items },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
+    if (beforeParam) {
+      const beforeDate = new Date(beforeParam);
+      if (Number.isNaN(beforeDate.getTime())) {
+        return NextResponse.json({ error: "Invalid before timestamp." }, { status: 400 });
+      }
+
+      const PAGE_SIZE = 50;
+      const olderDesc = await db
+        .select({
+          message: messages,
+          author: {
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+            avatarColor: users.avatarColor,
+            avatarUrl: users.avatarUrl,
+            bannerUrl: users.bannerUrl,
+            role: users.role,
+          },
+        })
+        .from(messages)
+        .innerJoin(users, eq(messages.authorId, users.id))
+        .where(and(eq(messages.channelId, channelId), lt(messages.createdAt, beforeDate)))
+        .orderBy(desc(messages.createdAt))
+        .limit(PAGE_SIZE + 1);
+
+      const hasMore = olderDesc.length > PAGE_SIZE;
+      const slice = hasMore ? olderDesc.slice(0, PAGE_SIZE) : olderDesc;
+      const items = await hydrateMessages(slice.reverse());
+      return NextResponse.json(
+        { messages: items, hasMore },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    const INITIAL_LIMIT = 80;
     const latestDesc = await db
       .select({
         message: messages,
@@ -131,10 +171,15 @@ export async function GET(
       .innerJoin(users, eq(messages.authorId, users.id))
       .where(eq(messages.channelId, channelId))
       .orderBy(desc(messages.createdAt))
-      .limit(80);
+      .limit(INITIAL_LIMIT + 1);
 
-    const items = await hydrateMessages(latestDesc.reverse());
-    return NextResponse.json({ messages: items });
+    const hasMore = latestDesc.length > INITIAL_LIMIT;
+    const slice = hasMore ? latestDesc.slice(0, INITIAL_LIMIT) : latestDesc;
+    const items = await hydrateMessages(slice.reverse());
+    return NextResponse.json(
+      { messages: items, hasMore },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     console.error("[messages GET]", error);
     return NextResponse.json({ error: "Failed to load messages." }, { status: 500 });

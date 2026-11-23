@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-geist-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-sans: var(--font-ui-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-ui-mono), ui-monospace, SFMono-Regular, monospace;
 
   --color-canvas: #09090b;
   --color-rail: #0e0f12;
@@ -21,7 +21,8 @@ html,
 body {
   background-color: #09090b;
   color: #f4f4f5;
-  font-family: var(--font-geist-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-ui-sans), var(--font-vazirmatn), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -45,7 +46,7 @@ body {
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* Subtle architectural dot/hairline grid for auth backdrop */
+/* Subtle architectural hairline grid for auth backdrop */
 .siq-grid-bg {
   background-image:
     linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
