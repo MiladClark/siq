@@ -632,7 +632,7 @@ export function SettingsModal({
                             </div>
 
                             <div className="flex flex-wrap items-end justify-between gap-4 px-4 pb-4">
-                              <div className="-mt-8 flex items-end gap-3.5">
+                              <div className="relative z-10 -mt-8 flex items-end gap-3.5">
                                 <div className="relative inline-flex rounded-full ring-4 ring-[#0E0F12]">
                                   <Avatar
                                     name={displayName || user.username}
@@ -643,11 +643,11 @@ export function SettingsModal({
                                     ringClassName="ring-[#0E0F12]"
                                   />
                                 </div>
-                                <div className="pb-1">
+                                <div className="relative z-10 pb-1">
                                   <div className="flex items-center gap-2">
                                     <p
                                       dir="auto"
-                                      className="text-sm font-semibold text-zinc-100"
+                                      className="text-sm font-semibold text-zinc-100 drop-shadow-sm"
                                     >
                                       {displayName || user.username}
                                     </p>
@@ -655,7 +655,7 @@ export function SettingsModal({
                                       {user.role}
                                     </span>
                                   </div>
-                                  <p className="text-xs font-medium text-zinc-500">
+                                  <p className="text-xs font-medium text-zinc-400 drop-shadow-sm">
                                     @{user.username}
                                   </p>
                                 </div>

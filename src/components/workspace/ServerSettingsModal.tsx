@@ -719,7 +719,7 @@ export function ServerSettingsModal({
                       </div>
 
                       <div className="flex items-end justify-between px-4 pb-4">
-                        <div className="-mt-8 flex items-end gap-3.5">
+                        <div className="relative z-10 -mt-8 flex items-end gap-3.5">
                           <div className="relative">
                             <div
                               className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border-4 border-[#0E0F12] text-base font-bold text-zinc-950"
@@ -751,11 +751,11 @@ export function ServerSettingsModal({
                             )}
                           </div>
 
-                          <div className="pb-1">
-                            <p dir="auto" className="text-sm font-bold text-zinc-100">
+                          <div className="relative z-10 pb-1">
+                            <p dir="auto" className="text-sm font-bold text-zinc-100 drop-shadow-sm">
                               {srvName.trim() || server.name}
                             </p>
-                            <p className="text-[11px] text-zinc-500">
+                            <p className="text-[11px] text-zinc-400 drop-shadow-sm">
                               {uploadingAsset
                                 ? "Uploading WebP image..."
                                 : "Images auto-convert to crisp WebP"}
