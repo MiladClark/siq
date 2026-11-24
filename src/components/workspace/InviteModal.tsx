@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, Copy, KeyRound, Link2, Plus, Trash2, X } from "lucide-react";
+import { Check, Clock, Copy, KeyRound, Link2, Plus, Trash2, Users, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
+import { SelectDropdown } from "@/components/ui/SelectDropdown";
 import { playSound } from "@/lib/sounds";
 
 interface InviteRow {
@@ -191,18 +192,20 @@ export function InviteModal({
                     >
                       Max uses
                     </label>
-                    <select
+                    <SelectDropdown
                       id="invite-max-uses"
-                      value={maxUses}
-                      onChange={(e) => setMaxUses(Number(e.target.value))}
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
-                    >
-                      <option value={1}>1 use (single friend)</option>
-                      <option value={5}>5 uses</option>
-                      <option value={10}>10 uses</option>
-                      <option value={25}>25 uses</option>
-                      <option value={100}>100 uses</option>
-                    </select>
+                      ariaLabel="Max uses"
+                      value={String(maxUses)}
+                      onChange={(v) => setMaxUses(Number(v))}
+                      icon={<Users className="h-3.5 w-3.5" />}
+                      options={[
+                        { value: "1", label: "1 use", badge: "Single" },
+                        { value: "5", label: "5 uses" },
+                        { value: "10", label: "10 uses" },
+                        { value: "25", label: "25 uses" },
+                        { value: "100", label: "100 uses" },
+                      ]}
+                    />
                   </div>
 
                   <div className="space-y-1.5">
@@ -212,21 +215,19 @@ export function InviteModal({
                     >
                       Expires after
                     </label>
-                    <select
+                    <SelectDropdown
                       id="invite-expiry"
+                      ariaLabel="Expires after"
                       value={expiresInDays === null ? "never" : String(expiresInDays)}
-                      onChange={(e) =>
-                        setExpiresInDays(
-                          e.target.value === "never" ? null : Number(e.target.value)
-                        )
-                      }
-                      className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
-                    >
-                      <option value="1">24 hours</option>
-                      <option value="7">7 days</option>
-                      <option value="30">30 days</option>
-                      <option value="never">Never expires</option>
-                    </select>
+                      onChange={(v) => setExpiresInDays(v === "never" ? null : Number(v))}
+                      icon={<Clock className="h-3.5 w-3.5" />}
+                      options={[
+                        { value: "1", label: "24 hours" },
+                        { value: "7", label: "7 days", badge: "Default" },
+                        { value: "30", label: "30 days" },
+                        { value: "never", label: "Never expires" },
+                      ]}
+                    />
                   </div>
                 </div>
 

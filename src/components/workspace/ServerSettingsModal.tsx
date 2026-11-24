@@ -3,6 +3,7 @@
 import {
   Camera,
   Check,
+  Clock,
   Copy,
   Crown,
   ImagePlus,
@@ -23,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
+import { SelectDropdown } from "@/components/ui/SelectDropdown";
 import {
   type EffectivePermissions,
   PERMISSION_DEFINITIONS,
@@ -1161,40 +1163,48 @@ export function ServerSettingsModal({
                   <div className="flex-1 space-y-4 overflow-y-auto p-6">
                     <div className="rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <label className="text-[11px] font-medium text-zinc-400">
+                        <div className="space-y-1.5">
+                          <label
+                            htmlFor="srv-invite-max-uses"
+                            className="block text-[11px] font-medium text-zinc-400"
+                          >
                             Max uses
                           </label>
-                          <select
-                            value={maxUses}
-                            onChange={(e) => setMaxUses(Number(e.target.value))}
-                            className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
-                          >
-                            <option value={1}>1 use</option>
-                            <option value={5}>5 uses</option>
-                            <option value={10}>10 uses</option>
-                            <option value={25}>25 uses</option>
-                            <option value={100}>100 uses</option>
-                          </select>
+                          <SelectDropdown
+                            id="srv-invite-max-uses"
+                            ariaLabel="Max uses"
+                            value={String(maxUses)}
+                            onChange={(v) => setMaxUses(Number(v))}
+                            icon={<Users className="h-3.5 w-3.5" />}
+                            options={[
+                              { value: "1", label: "1 use", badge: "Single" },
+                              { value: "5", label: "5 uses" },
+                              { value: "10", label: "10 uses" },
+                              { value: "25", label: "25 uses" },
+                              { value: "100", label: "100 uses" },
+                            ]}
+                          />
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-[11px] font-medium text-zinc-400">
+                        <div className="space-y-1.5">
+                          <label
+                            htmlFor="srv-invite-expiry"
+                            className="block text-[11px] font-medium text-zinc-400"
+                          >
                             Expires after
                           </label>
-                          <select
+                          <SelectDropdown
+                            id="srv-invite-expiry"
+                            ariaLabel="Expires after"
                             value={expiresInDays === null ? "never" : String(expiresInDays)}
-                            onChange={(e) =>
-                              setExpiresInDays(
-                                e.target.value === "never" ? null : Number(e.target.value)
-                              )
-                            }
-                            className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
-                          >
-                            <option value="1">24 hours</option>
-                            <option value="7">7 days</option>
-                            <option value="30">30 days</option>
-                            <option value="never">Never expires</option>
-                          </select>
+                            onChange={(v) => setExpiresInDays(v === "never" ? null : Number(v))}
+                            icon={<Clock className="h-3.5 w-3.5" />}
+                            options={[
+                              { value: "1", label: "24 hours" },
+                              { value: "7", label: "7 days", badge: "Default" },
+                              { value: "30", label: "30 days" },
+                              { value: "never", label: "Never expires" },
+                            ]}
+                          />
                         </div>
                       </div>
                       <button

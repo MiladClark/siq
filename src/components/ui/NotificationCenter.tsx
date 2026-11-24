@@ -4,7 +4,6 @@ import {
   AlertCircle,
   AlertTriangle,
   AtSign,
-  Bell,
   CheckCheck,
   CheckCircle2,
   Hash,
@@ -14,7 +13,11 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { sileo, Toaster as SileoToaster } from "sileo";
+import { useAnimatedIconHover } from "@/components/ui/AnimatedIcon";
+import { BellIcon } from "@/components/ui/animated-icons";
 import { Avatar } from "@/components/ui/Avatar";
+import type { ToastStyle } from "@/lib/preferences";
 import type { NotificationItem, NotificationKind } from "@/lib/types";
 
 export interface SystemNotifyPayload {
@@ -136,6 +139,7 @@ export function NotificationBell({
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const bellHover = useAnimatedIconHover();
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const visibleItems = notifications.slice(0, 3);
@@ -161,25 +165,34 @@ export function NotificationBell({
 
   return (
     <div ref={containerRef} className="relative">
-      <button
+      <motion.button
         type="button"
+        whileTap={{ scale: 0.94 }}
         onClick={() => setOpen((v) => !v)}
+        {...bellHover.hoverProps}
         aria-label="Notifications"
         title="Notifications"
-        className={`relative flex h-8 w-8 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+        className={`relative flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
           open
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-            : "border-white/[0.1] bg-[#18191E] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+            : "border-white/[0.1] bg-[#16171D] text-zinc-300 hover:border-white/[0.18] hover:text-white"
         }`}
       >
-        <Bell className="h-4 w-4" />
+        <BellIcon
+          ref={bellHover.iconRef}
+          size={16}
+          className="pointer-events-none inline-flex items-center justify-center"
+        />
         {unreadCount > 0 && (
           <span
             aria-label={`${unreadCount} unread notifications`}
-            className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[#18191E]"
-          />
+            className="absolute right-1.5 top-1.5 flex h-2 w-2"
+          >
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[#16171D]" />
+          </span>
         )}
-      </button>
+      </motion.button>
 
       <AnimatePresence>
         {open && (
@@ -310,38 +323,173 @@ const TOAST_DURATION_MS = 5000;
 
 export function NotificationToasts({
   toasts,
+  toastStyle = "liquid",
   onDismiss,
   onOpenChannel,
   onOpenNotification,
 }: {
   toasts: NotificationItem[];
+  toastStyle?: ToastStyle;
   onDismiss: (id: string) => void;
   onOpenChannel: (channelId: string, toastId: string) => void;
   onOpenNotification?: (item: NotificationItem) => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const visibleToasts = toasts.slice(-4);
+
+  // Reset hover lock when the last toast disappears so future toasts never start stuck paused
+  useEffect(() => {
+    if (visibleToasts.length === 0) {
+      setHovered(false);
+    }
+  }, [visibleToasts.length]);
+
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+  const onOpenChannelRef = useRef(onOpenChannel);
+  onOpenChannelRef.current = onOpenChannel;
+  const onOpenNotificationRef = useRef(onOpenNotification);
+  onOpenNotificationRef.current = onOpenNotification;
+
+  // Bridge incoming toasts to Sileo liquid pill toaster when toastStyle === "liquid"
+  const sileoIdMapRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (toastStyle !== "liquid") {
+      if (sileoIdMapRef.current.size > 0) {
+        sileo.clear("bottom-right");
+        sileoIdMapRef.current.clear();
+      }
+      return;
+    }
+
+    const activeIds = new Set(toasts.map((t) => t.id));
+    // Dismiss any Sileo toast whose backing item was removed (e.g., user opened the channel)
+    for (const [itemId, sileoId] of sileoIdMapRef.current.entries()) {
+      if (!activeIds.has(itemId)) {
+        sileo.dismiss(sileoId);
+        sileoIdMapRef.current.delete(itemId);
+      }
+    }
+
+    for (const toast of toasts) {
+      if (sileoIdMapRef.current.has(toast.id)) continue;
+
+      const sysKind = isSystemKind(toast.kind) ? toast.kind : null;
+      const title = toast.channelName
+        ? `${toast.authorDisplayName} · ${sysKind ? toast.channelName : toast.dmConversationId ? `@${toast.channelName}` : `#${toast.channelName}`}`
+        : toast.authorDisplayName;
+
+      const descriptionText = sysKind
+        ? toast.content
+        : toast.content
+          ? truncatePreview(toast.content, 68)
+          : "Sent an attachment";
+
+      const isNavigable =
+        !sysKind && Boolean(toast.channelId || toast.dmConversationId);
+
+      const opts = {
+        title,
+        description: (
+          <span dir="auto" className="block text-xs leading-relaxed text-zinc-300">
+            {descriptionText}
+          </span>
+        ),
+        duration: TOAST_DURATION_MS,
+        fill: "#14161D",
+        roundness: 18,
+        autopilot: { expand: 160, collapse: TOAST_DURATION_MS - 450 },
+        ...(isNavigable
+          ? {
+              button: {
+                title: "Open",
+                onClick: () => {
+                  if (onOpenNotificationRef.current) {
+                    onOpenNotificationRef.current(toast);
+                  } else if (toast.channelId) {
+                    onOpenChannelRef.current(toast.channelId, toast.id);
+                  }
+                  const sid = sileoIdMapRef.current.get(toast.id);
+                  if (sid) sileo.dismiss(sid);
+                  sileoIdMapRef.current.delete(toast.id);
+                  onDismissRef.current(toast.id);
+                },
+              },
+            }
+          : {}),
+      };
+
+      let sileoId: string;
+      if (sysKind === "error") {
+        sileoId = sileo.error(opts);
+      } else if (sysKind === "warning") {
+        sileoId = sileo.warning(opts);
+      } else if (sysKind === "success") {
+        sileoId = sileo.success(opts);
+      } else if (sysKind === "info") {
+        sileoId = sileo.info(opts);
+      } else {
+        sileoId = sileo.action(opts);
+      }
+
+      sileoIdMapRef.current.set(toast.id, sileoId);
+    }
+  }, [toasts, toastStyle]);
+
+  if (toastStyle === "liquid") {
+    return (
+      <SileoToaster
+        position="bottom-right"
+        theme="dark"
+        offset={{ bottom: 16, right: 16 }}
+        options={{
+          fill: "#14161D",
+          roundness: 18,
+          duration: TOAST_DURATION_MS,
+        }}
+      />
+    );
+  }
+
+  const hasToasts = visibleToasts.length > 0;
+
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-[110] flex w-[320px] max-w-[calc(100vw-2rem)] flex-col gap-2.5"
+      onMouseEnter={() => {
+        if (hasToasts) setHovered(true);
+      }}
+      onMouseLeave={() => setHovered(false)}
+      onPointerLeave={() => setHovered(false)}
+      className={`fixed bottom-4 right-4 z-[110] flex w-[340px] max-w-[calc(100vw-2rem)] flex-col items-end ${
+        hasToasts ? "pointer-events-auto" : "pointer-events-none"
+      }`}
     >
-      <AnimatePresence initial={false}>
-        {toasts.map((toast) => (
-          <ToastCard
-            key={toast.id}
-            toast={toast}
-            onDismiss={() => onDismiss(toast.id)}
-            onOpen={() => {
-              if (isSystemKind(toast.kind) || (!toast.channelId && !toast.dmConversationId)) {
-                onDismiss(toast.id);
-              } else if (onOpenNotification) {
-                onOpenNotification(toast);
-                onDismiss(toast.id);
-              } else {
-                onOpenChannel(toast.channelId, toast.id);
-              }
-            }}
-          />
-        ))}
+      <AnimatePresence mode="popLayout">
+        {visibleToasts.map((toast, idx) => {
+          const depthFromFront = visibleToasts.length - 1 - idx;
+          const isStacked = !hovered && depthFromFront > 0;
+          return (
+            <ToastCard
+              key={toast.id}
+              toast={toast}
+              depthFromFront={depthFromFront}
+              stacked={isStacked}
+              paused={hovered}
+              onDismiss={() => onDismissRef.current(toast.id)}
+              onOpen={() => {
+                if (isSystemKind(toast.kind) || (!toast.channelId && !toast.dmConversationId)) {
+                  onDismissRef.current(toast.id);
+                } else if (onOpenNotificationRef.current) {
+                  onOpenNotificationRef.current(toast);
+                  onDismissRef.current(toast.id);
+                } else {
+                  onOpenChannelRef.current(toast.channelId, toast.id);
+                }
+              }}
+            />
+          );
+        })}
       </AnimatePresence>
     </div>
   );
@@ -349,28 +497,79 @@ export function NotificationToasts({
 
 function ToastCard({
   toast,
+  depthFromFront,
+  stacked,
+  paused,
   onDismiss,
   onOpen,
 }: {
   toast: NotificationItem;
+  depthFromFront: number;
+  stacked: boolean;
+  paused: boolean;
   onDismiss: () => void;
   onOpen: () => void;
 }) {
   const sysKind = isSystemKind(toast.kind) ? toast.kind : null;
 
+  // Keep latest callbacks in refs so parent re-renders NEVER restart the toast timer
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
+  const remainingMsRef = useRef<number>(TOAST_DURATION_MS);
+  const dismissedRef = useRef<boolean>(false);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
-    const timer = setTimeout(onDismiss, TOAST_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [onDismiss]);
+    if (paused || dismissedRef.current) return;
+
+    let rafId = 0;
+    let lastTs = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(100, Math.max(0, now - lastTs));
+      lastTs = now;
+      remainingMsRef.current = Math.max(0, remainingMsRef.current - dt);
+
+      const ratio = remainingMsRef.current / TOAST_DURATION_MS;
+      if (progressBarRef.current) {
+        progressBarRef.current.style.transform = `scaleX(${ratio})`;
+      }
+
+      if (remainingMsRef.current <= 0) {
+        if (!dismissedRef.current) {
+          dismissedRef.current = true;
+          onDismissRef.current();
+        }
+        return;
+      }
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [paused]);
+
+  const stackScale = stacked ? Math.max(0.88, 1 - depthFromFront * 0.045) : 1;
+  const stackOpacity = stacked ? Math.max(0.55, 1 - depthFromFront * 0.18) : 1;
 
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 18, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 24, scale: 0.96 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="pointer-events-auto relative overflow-hidden rounded-xl border border-white/[0.11] bg-[#14151A]/95 shadow-2xl shadow-black/75 backdrop-blur-md"
+      initial={{ opacity: 0, y: 22, scale: 0.94 }}
+      animate={{
+        opacity: stackOpacity,
+        y: 0,
+        scale: stackScale,
+        marginBottom: stacked ? -56 : depthFromFront === 0 ? 0 : 10,
+      }}
+      exit={{ opacity: 0, x: 36, scale: 0.94 }}
+      transition={{ type: "spring", stiffness: 420, damping: 32 }}
+      style={{ zIndex: 20 - depthFromFront }}
+      className={`siq-bezel pointer-events-auto relative w-full origin-bottom overflow-hidden rounded-2xl border bg-[#121319]/96 backdrop-blur-xl transition-colors ${
+        paused ? "border-white/[0.18]" : "border-white/[0.11]"
+      }`}
     >
       <div
         onClick={onOpen}
@@ -432,20 +631,23 @@ function ToastCard({
 
       <button
         type="button"
-        onClick={onDismiss}
+        onClick={(e) => {
+          e.stopPropagation();
+          dismissedRef.current = true;
+          onDismissRef.current();
+        }}
         aria-label="Dismiss notification"
         className="absolute right-2 top-2 rounded-md p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
       >
         <X className="h-3.5 w-3.5" />
       </button>
 
-      {/* Animated Progress Bar */}
+      {/* Precision RAF Progress Bar (pauses cleanly on hover, resumes smoothly on unhover) */}
       <div className="h-[2.5px] w-full bg-white/[0.05]">
-        <motion.div
-          initial={{ scaleX: 1 }}
-          animate={{ scaleX: 0 }}
-          transition={{ duration: TOAST_DURATION_MS / 1000, ease: "linear" }}
-          className={`h-full origin-left ${getProgressBarClass(toast.kind)}`}
+        <div
+          ref={progressBarRef}
+          style={{ transform: "scaleX(1)" }}
+          className={`h-full origin-left will-change-transform ${getProgressBarClass(toast.kind)}`}
         />
       </div>
     </motion.div>

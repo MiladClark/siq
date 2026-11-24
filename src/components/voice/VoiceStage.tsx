@@ -26,7 +26,15 @@ import { ConnectionState, type Track } from "livekit-client";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { BarVisualizer } from "@/components/ui/BarVisualizer";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
+import {
+  DockItem,
+  FloatingDock,
+  SlidingNumber,
+  SpotlightCard,
+  StatusPill,
+} from "@/components/ui/MotionPrimitives";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
 import {
   useVoice,
@@ -105,6 +113,7 @@ export function VoiceStage({
     activeChannel,
     connectionState,
     participants,
+    networkStats,
     isMuted,
     isDeafened,
     isCameraOn,
@@ -384,74 +393,93 @@ export function VoiceStage({
     })();
 
     return (
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#0B0C0F] p-6">
-        {/* Subtle ambient matte obsidian depth (zero blurple slop) */}
+      <div className="siq-grid-bg relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#08090C] p-6">
+        {/* Subtle ambient matte obsidian depth */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(60% 50% at 50% 42%, rgba(16, 185, 129, 0.07) 0%, rgba(9, 9, 11, 0) 72%)",
+              "radial-gradient(58% 48% at 50% 42%, rgb(var(--siq-accent-rgb) / 0.09) 0%, rgba(8, 9, 12, 0) 72%)",
           }}
         />
 
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
           className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center"
         >
-          {/* Occupant Preview Tile Row (matches Discord lobby cards in Obsidian + user accent tint) */}
+          {/* Occupant Preview Tile Row or Studio Acoustic Visualizer */}
           {previewOccupants.length > 0 ? (
             <div className="mb-7 flex flex-wrap items-center justify-center gap-3">
               {previewOccupants.slice(0, 6).map((occ) => {
                 const fresh = resolveMemberVisuals(occ.identity, occ);
                 return (
-                  <button
+                  <SpotlightCard
                     key={occ.identity}
-                    type="button"
-                    onClick={(e) => openParticipantProfile(e, occ)}
-                    style={{
-                      backgroundColor: `${fresh.avatarColor}18`,
-                      borderColor: `${fresh.avatarColor}30`,
-                    }}
-                    className="group relative flex h-28 w-44 flex-col items-center justify-center rounded-xl border transition-all duration-150 hover:-translate-y-0.5 hover:brightness-110 active:scale-[0.98]"
+                    spotlightColor={`${fresh.avatarColor}28`}
+                    className="siq-bezel-sm rounded-2xl border border-white/[0.09] bg-[#111218]/90 transition-transform duration-150 hover:-translate-y-0.5"
                   >
-                    {occ.isScreenSharing && (
-                      <span className="absolute right-2 top-2 rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-sm">
-                        LIVE
-                      </span>
-                    )}
-                    <Avatar
-                      name={fresh.name}
-                      color={fresh.avatarColor}
-                      avatarUrl={fresh.avatarUrl}
-                      size="lg"
-                    />
-                    <span
-                      dir="auto"
-                      className="mt-2 max-w-[140px] truncate text-[11px] font-medium text-zinc-200"
+                    <button
+                      type="button"
+                      onClick={(e) => openParticipantProfile(e, occ)}
+                      className="relative z-10 flex h-32 w-44 flex-col items-center justify-center px-3 focus:outline-none active:scale-[0.98]"
                     >
-                      {fresh.name}
-                    </span>
-                  </button>
+                      {occ.isScreenSharing && (
+                        <StatusPill
+                          label="LIVE"
+                          tone="rose"
+                          pulse
+                          className="absolute right-2.5 top-2.5"
+                        />
+                      )}
+                      <Avatar
+                        name={fresh.name}
+                        color={fresh.avatarColor}
+                        avatarUrl={fresh.avatarUrl}
+                        size="lg"
+                      />
+                      <span
+                        dir="auto"
+                        className="mt-2.5 max-w-[140px] truncate text-xs font-semibold text-zinc-100"
+                      >
+                        {fresh.name}
+                      </span>
+                    </button>
+                  </SpotlightCard>
                 );
               })}
               {previewOccupants.length > 6 && (
-                <div className="flex h-28 w-24 items-center justify-center rounded-xl border border-white/[0.08] bg-[#14151A] text-sm font-semibold tabular-nums text-zinc-300">
+                <div className="siq-bezel-sm flex h-32 w-24 items-center justify-center rounded-2xl border border-white/[0.08] bg-[#111218] text-sm font-semibold tabular-nums text-zinc-300">
                   +{previewOccupants.length - 6}
                 </div>
               )}
             </div>
           ) : (
-            <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
-              <Volume2 className="h-7 w-7" />
+            <div className="siq-bezel mb-6 flex h-24 w-44 flex-col items-center justify-center gap-2 rounded-3xl border border-white/[0.09] bg-[#101116]/90">
+              <BarVisualizer state="listening" barCount={11} size="md" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                READY · OPUS
+              </span>
             </div>
           )}
 
+          <div className="mb-2">
+            <StatusPill
+              label={
+                previewOccupants.length > 0
+                  ? `${previewOccupants.length} active in room`
+                  : "Voice Room Ready"
+              }
+              tone={previewOccupants.length > 0 ? "emerald" : "zinc"}
+              pulse={previewOccupants.length > 0}
+            />
+          </div>
+
           <h2
             dir="auto"
-            className="text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl"
+            className="text-balance text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl"
           >
             {channel.name}
           </h2>
@@ -471,15 +499,17 @@ export function VoiceStage({
             </div>
           )}
 
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
             type="button"
             disabled={!livekitReady || isConnecting}
             onClick={() => onJoinVoiceChannel(channel)}
-            className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-7 py-2.5 text-sm font-semibold text-zinc-950 shadow-lg shadow-emerald-500/15 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45"
+            className="mt-6 inline-flex items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 px-8 py-3 text-sm font-semibold text-zinc-950 shadow-xl shadow-emerald-500/20 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-45"
           >
             <Headphones className="h-4 w-4" />
             <span>{isConnecting ? "Connecting..." : "Join Voice"}</span>
-          </button>
+          </motion.button>
         </motion.div>
       </div>
     );
@@ -678,9 +708,9 @@ export function VoiceStage({
           )}
         </AnimatePresence>
 
-        {/* Participant Grid (clean cards, NO volume slider here — volume is exclusively in left sidebar) */}
+        {/* Participant Grid (SpotlightCards with live BarVisualizer) */}
         <div
-          className={`grid gap-3 ${
+          className={`grid gap-3.5 ${
             focusedSharer
               ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
               : participants.length <= 2
@@ -690,23 +720,28 @@ export function VoiceStage({
         >
           {participants.map((p) => {
             const fresh = resolveMemberVisuals(p.identity, p);
+            const barState = p.isMuted
+              ? "muted"
+              : p.isSpeaking
+                ? "speaking"
+                : "idle";
             return (
-              <motion.div
+              <SpotlightCard
                 key={p.identity}
-                layout
-                transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                active={p.isSpeaking}
+                spotlightColor={`${fresh.avatarColor}22`}
                 onContextMenu={(e) => handleParticipantContextMenu(e, p)}
-                className={`relative flex flex-col justify-between overflow-hidden rounded-xl border bg-[#121316] transition-colors duration-100 ${
+                className={`siq-bezel-sm flex flex-col justify-between rounded-2xl border bg-[#101116] transition-all duration-150 ${
                   p.isSpeaking
-                    ? "border-emerald-500/75 ring-1 ring-emerald-500/35"
-                    : "border-white/[0.08]"
-                } ${focusedSharer ? "min-h-[126px]" : "min-h-[210px]"}`}
+                    ? "border-emerald-500/65 shadow-[0_0_24px_-8px_rgb(var(--siq-accent-rgb)/0.48)]"
+                    : "border-white/[0.08] hover:border-white/[0.14]"
+                } ${focusedSharer ? "min-h-[132px]" : "min-h-[224px]"}`}
               >
                 {/* Video or Avatar Center */}
                 <button
                   type="button"
                   onClick={(e) => openParticipantProfile(e, p)}
-                  className="relative flex flex-1 items-center justify-center overflow-hidden bg-[#0E0F12] text-left focus:outline-none"
+                  className="relative z-10 flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden bg-[#0B0C10]/80 text-left focus:outline-none"
                 >
                   {p.isCameraOn && p.cameraTrack ? (
                     <VideoTrackCanvas
@@ -715,14 +750,24 @@ export function VoiceStage({
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <Avatar
-                      name={fresh.name}
-                      color={fresh.avatarColor}
-                      avatarUrl={fresh.avatarUrl}
-                      size={focusedSharer ? "md" : "lg"}
-                      speaking={p.isSpeaking}
-                      speakingOffsetClassName="ring-offset-[#0E0F12]"
-                    />
+                    <>
+                      <Avatar
+                        name={fresh.name}
+                        color={fresh.avatarColor}
+                        avatarUrl={fresh.avatarUrl}
+                        size={focusedSharer ? "md" : "lg"}
+                        speaking={p.isSpeaking}
+                        speakingOffsetClassName="ring-offset-[#0B0C10]"
+                      />
+                      {!focusedSharer && (
+                        <BarVisualizer
+                          state={barState}
+                          barCount={9}
+                          size="sm"
+                          mediaStreamTrack={p.micAudioTrack?.mediaStreamTrack ?? null}
+                        />
+                      )}
+                    </>
                   )}
 
                   {p.isScreenSharing && (
@@ -732,16 +777,19 @@ export function VoiceStage({
                         openParticipantProfile(e, p);
                       }}
                       title="Click to view profile & watch stream"
-                      className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-md border border-emerald-500/45 bg-black/80 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 transition-colors hover:bg-emerald-500 hover:text-zinc-950"
+                      className="absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/45 bg-black/80 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500 hover:text-zinc-950"
                     >
-                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                      </span>
                       <span>LIVE</span>
                     </span>
                   )}
                 </button>
 
-                {/* Clean Participant Footer (Name + Mic status only) */}
-                <div className="flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121316] px-3.5 py-2.5">
+                {/* Clean Participant Footer (Name + Live Mini Visualizer / Mic Status) */}
+                <div className="relative z-10 flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121319]/95 px-3.5 py-2.5">
                   <button
                     type="button"
                     onClick={(e) => openParticipantProfile(e, p)}
@@ -751,35 +799,51 @@ export function VoiceStage({
                       {fresh.name}
                     </span>
                     {p.isLocal && (
-                      <span className="text-[11px] font-medium text-zinc-500">(you)</span>
+                      <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                        you
+                      </span>
                     )}
                   </button>
-                  <div className="flex shrink-0 items-center gap-1.5 text-zinc-400">
-                    {p.isMuted ? (
-                      <MicOff className="h-3.5 w-3.5 text-rose-400" />
-                    ) : (
-                      <Mic
-                        className={`h-3.5 w-3.5 transition-colors duration-100 ${
-                          p.isSpeaking ? "text-emerald-400" : "text-zinc-400"
-                        }`}
+                  <div className="flex shrink-0 items-center gap-2 text-zinc-400">
+                    {focusedSharer && !p.isMuted && (
+                      <BarVisualizer
+                        state={barState}
+                        barCount={4}
+                        size="xs"
+                        mediaStreamTrack={p.micAudioTrack?.mediaStreamTrack ?? null}
                       />
+                    )}
+                    {p.isMuted ? (
+                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400">
+                        <MicOff className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-lg transition-colors duration-100 ${
+                          p.isSpeaking
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : "bg-white/[0.04] text-zinc-400"
+                        }`}
+                      >
+                        <Mic className="h-3.5 w-3.5" />
+                      </span>
                     )}
                   </div>
                 </div>
-              </motion.div>
+              </SpotlightCard>
             );
           })}
         </div>
       </div>
 
-      {/* Bottom Voice Control Deck */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-white/[0.07] bg-[#0E0F12] px-4 py-3">
-        <div className="hidden items-center gap-2 sm:flex">
+      {/* Bottom Studio Control Deck with Floating Magnification Dock */}
+      <div className="relative flex shrink-0 items-center justify-between gap-3 border-t border-white/[0.07] bg-[#0B0C0F]/95 px-4 py-3 backdrop-blur-md">
+        <div className="hidden items-center gap-2 md:flex">
           <button
             type="button"
             onClick={onOpenVoiceSettings}
             title="Noise cancellation & audio settings"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#14151A] px-2.5 py-1.5 text-[11px] font-medium text-zinc-400 transition-colors hover:border-emerald-500/35 hover:text-emerald-300"
+            className="siq-bezel-sm inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-[#13141A] px-3 py-1.5 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
@@ -787,7 +851,6 @@ export function VoiceStage({
               }`}
             />
             <span>
-              NC:{" "}
               {activeNoiseEngine === "krisp"
                 ? "Krisp AI"
                 : activeNoiseEngine === "gtcrn"
@@ -795,93 +858,77 @@ export function VoiceStage({
                   : activeNoiseEngine === "rnnoise"
                     ? "RNNoise AI"
                     : activeNoiseEngine === "standard"
-                      ? "Standard"
-                      : "Off"}
+                      ? "Standard NC"
+                      : "NC Off"}
             </span>
           </button>
         </div>
 
-        <div className="mx-auto flex items-center gap-2 sm:mx-0">
-          <button
-            type="button"
+        <FloatingDock className="mx-auto">
+          <DockItem
+            label={isMuted ? "Unmute microphone" : "Mute microphone"}
             onClick={() => void toggleMute()}
-            title={isMuted ? "Unmute mic" : "Mute mic"}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-medium transition-all active:scale-[0.97] ${
-              isMuted
-                ? "border-rose-500/40 bg-rose-500/15 text-rose-300"
-                : "border-white/[0.08] bg-[#18191E] text-zinc-100 hover:bg-white/[0.08]"
-            }`}
+            danger={isMuted}
           >
             {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            <span className="hidden sm:inline">{isMuted ? "Muted" : "Mute"}</span>
-          </button>
+            <span className="hidden lg:inline">{isMuted ? "Muted" : "Mute"}</span>
+          </DockItem>
 
-          <button
-            type="button"
+          <DockItem
+            label={isDeafened ? "Undeafen audio" : "Deafen audio"}
             onClick={() => void toggleDeafen()}
-            title={isDeafened ? "Undeafen" : "Deafen"}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-medium transition-all active:scale-[0.97] ${
-              isDeafened
-                ? "border-rose-500/40 bg-rose-500/15 text-rose-300"
-                : "border-white/[0.08] bg-[#18191E] text-zinc-100 hover:bg-white/[0.08]"
-            }`}
+            danger={isDeafened}
           >
             {isDeafened ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-            <span className="hidden sm:inline">{isDeafened ? "Deafened" : "Deafen"}</span>
-          </button>
+            <span className="hidden lg:inline">{isDeafened ? "Deafened" : "Deafen"}</span>
+          </DockItem>
 
-          <button
-            type="button"
+          <DockItem
+            label={isCameraOn ? "Turn off camera" : "Turn on camera"}
             onClick={() => void toggleCamera()}
-            title={isCameraOn ? "Turn off camera" : "Turn on camera"}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-medium transition-all active:scale-[0.97] ${
-              isCameraOn
-                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                : "border-white/[0.08] bg-[#18191E] text-zinc-100 hover:bg-white/[0.08]"
-            }`}
+            active={isCameraOn}
           >
             {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">Camera</span>
-          </button>
+            <span className="hidden lg:inline">Camera</span>
+          </DockItem>
 
-          {/* Share Screen opens options / live controls modal — never kills stream on accidental click */}
-          <button
-            type="button"
+          <DockItem
+            label={isScreenSharing ? "Stream options & stop" : "Share screen"}
             onClick={onOpenScreenShareModal}
-            title={isScreenSharing ? "Stream options & stop" : "Share screen"}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-medium transition-all active:scale-[0.97] ${
-              isScreenSharing
-                ? "border-emerald-500/50 bg-emerald-500/20 text-emerald-300"
-                : "border-white/[0.08] bg-[#18191E] text-zinc-100 hover:bg-white/[0.08]"
-            }`}
+            active={isScreenSharing}
+            badge={isScreenSharing ? "LIVE" : undefined}
           >
             <Monitor className="h-4 w-4" />
-            <span className="hidden sm:inline">
-              {isScreenSharing ? "Stream Options" : "Share Screen"}
+            <span className="hidden lg:inline">
+              {isScreenSharing ? "Streaming" : "Share"}
             </span>
-          </button>
+          </DockItem>
 
-          <button
-            type="button"
-            onClick={onOpenVoiceSettings}
-            title="Voice & Video settings"
-            className="rounded-lg border border-white/[0.08] bg-[#18191E] p-2 text-zinc-300 transition-all hover:text-white active:scale-[0.97]"
-          >
+          <div className="mx-0.5 h-6 w-px bg-white/[0.09]" />
+
+          <DockItem label="Voice & audio settings" onClick={onOpenVoiceSettings}>
             <Settings className="h-4 w-4" />
-          </button>
+          </DockItem>
 
-          <button
-            type="button"
+          <DockItem
+            label="Disconnect from voice"
             onClick={onLeaveVoiceChannel}
-            title="Disconnect from voice"
-            className="ml-1 flex items-center gap-2 rounded-lg bg-rose-500 px-3.5 py-2 text-xs font-semibold text-white transition-all hover:bg-rose-400 active:scale-[0.97]"
+            solidDanger
           >
             <PhoneOff className="h-4 w-4" />
             <span className="hidden sm:inline">Leave</span>
-          </button>
-        </div>
+          </DockItem>
+        </FloatingDock>
 
-        <div className="hidden w-24 sm:block" />
+        <div className="hidden min-w-[92px] items-center justify-end gap-1.5 md:flex">
+          {networkStats.lastPingMs !== null && (
+            <span className="inline-flex items-center gap-1 rounded-xl border border-white/[0.08] bg-[#13141A] px-2.5 py-1.5 font-mono text-[11px] font-medium text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <SlidingNumber value={networkStats.lastPingMs} />
+              <span className="text-zinc-500">ms</span>
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -26,6 +26,8 @@ import {
   SmilePlus,
   Trash2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -46,6 +48,7 @@ import {
   EmojiPickerPopover,
   QUICK_REACTION_EMOJIS,
 } from "@/components/ui/EmojiPickerPopover";
+import { SlidingNumber } from "@/components/ui/MotionPrimitives";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
 import { convertImageFileToWebP } from "@/lib/image-webp";
@@ -346,6 +349,11 @@ export function TextChannelView({
   } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<MessageAttachment | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+
+  useEffect(() => {
+    setLightboxZoom(1);
+  }, [lightboxImage]);
 
   const setError = useCallback(
     (msg: string | null) => {
@@ -1740,8 +1748,8 @@ export function TextChannelView({
         )}
       </AnimatePresence>
 
-      {/* Composer Area */}
-      <div className="shrink-0 border-t border-white/[0.07] bg-[#121316] px-4 py-3 md:px-6">
+      {/* Studio Floating Composer Area */}
+      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-4 pb-3.5 pt-2 md:px-6">
         <AnimatePresence>
           {replyingTo && (
             <motion.div
@@ -1749,12 +1757,12 @@ export function TextChannelView({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 4 }}
               transition={{ duration: 0.14 }}
-              className="mb-2 flex items-center justify-between rounded-lg border border-white/[0.07] bg-[#18191E] px-3 py-1.5 text-xs"
+              className="mb-2 flex items-center justify-between rounded-xl border border-emerald-500/20 bg-[#15171E] px-3 py-1.5 text-xs"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <Reply className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                 <span className="text-zinc-400">Replying to</span>
-                <span dir="auto" className="font-medium text-zinc-200">
+                <span dir="auto" className="font-semibold text-zinc-100">
                   {replyingTo.author.displayName}
                 </span>
                 <span dir="auto" className="truncate text-zinc-500">
@@ -1764,7 +1772,7 @@ export function TextChannelView({
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
-                className="rounded p-0.5 text-zinc-400 hover:text-zinc-100"
+                className="rounded-md p-0.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -1783,14 +1791,14 @@ export function TextChannelView({
               {pendingAttachments.map((att, idx) => (
                 <div
                   key={`${att.url}-${idx}`}
-                  className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-[#18191E] px-2.5 py-1.5 text-xs"
+                  className="siq-bezel-sm flex items-center gap-2 rounded-xl border border-white/[0.09] bg-[#161820] px-2.5 py-1.5 text-xs"
                 >
                   {att.contentType.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={att.url}
                       alt={att.name}
-                      className="h-6 w-6 rounded object-cover"
+                      className="h-6 w-6 rounded-md object-cover"
                     />
                   ) : (
                     <File className="h-3.5 w-3.5 text-emerald-400" />
@@ -1813,7 +1821,7 @@ export function TextChannelView({
 
         <form
           onSubmit={(e) => void handleSend(e)}
-          className="flex items-end gap-2 rounded-xl border border-white/[0.1] bg-[#18191E] px-3 py-2 transition-colors focus-within:border-emerald-500/50"
+          className="siq-bezel flex items-end gap-2 rounded-2xl border border-white/[0.1] bg-[#16171E] px-3 py-2 transition-all focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12"
         >
           <input
             ref={fileInputRef}
@@ -1841,7 +1849,7 @@ export function TextChannelView({
               fileInputRef.current?.click();
             }}
             title={blobReady ? "Attach image or file" : "Blob storage not configured"}
-            className="mb-0.5 rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
+            className="mb-0.5 rounded-xl p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
           >
             <Paperclip className="h-4 w-4" />
           </button>
@@ -1875,12 +1883,13 @@ export function TextChannelView({
             onClick={openComposerEmojiPicker}
             title="Insert emoji"
             aria-label="Insert emoji"
-            className="mb-0.5 rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+            className="mb-0.5 rounded-xl p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
           >
             <Smile className="h-4 w-4" />
           </button>
 
-          <button
+          <motion.button
+            whileTap={{ scale: 0.92 }}
             type="submit"
             disabled={
               sending ||
@@ -1888,10 +1897,10 @@ export function TextChannelView({
               (!composerText.trim() && pendingAttachments.length === 0)
             }
             aria-label="Send message"
-            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-zinc-950 transition-all hover:bg-emerald-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
+            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
           >
             <Send className="h-4 w-4" />
-          </button>
+          </motion.button>
         </form>
       </div>
 
@@ -1913,7 +1922,7 @@ export function TextChannelView({
         )}
       </AnimatePresence>
 
-      {/* Animated Image Lightbox with Direct Download */}
+      {/* Kibo-style Interactive Image Zoom Lightbox with Direct Download */}
       <AnimatePresence>
         {lightboxImage && (
           <motion.div
@@ -1921,27 +1930,63 @@ export function TextChannelView({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.16 }}
-            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/88 p-4 backdrop-blur-md"
             onClick={() => setLightboxImage(null)}
+            onWheel={(e) => {
+              e.preventDefault();
+              setLightboxZoom((z) => {
+                const next = e.deltaY < 0 ? z + 0.25 : z - 0.25;
+                return Math.min(3, Math.max(1, Number(next.toFixed(2))));
+              });
+            }}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.92 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.93 }}
-              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ type: "spring", stiffness: 380, damping: 30 }}
               className="relative flex max-h-[92dvh] max-w-[92vw] flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Top Action Bar */}
-              <div className="mb-2.5 flex items-center justify-between gap-4">
-                <span className="truncate text-xs font-medium text-zinc-300">
+              <div className="mb-3 flex items-center justify-between gap-4 rounded-2xl border border-white/[0.1] bg-[#111218]/90 px-3.5 py-2 backdrop-blur-md">
+                <span className="truncate text-xs font-medium text-zinc-200">
                   {lightboxImage.name}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <div className="hidden items-center gap-1 rounded-xl border border-white/[0.08] bg-[#181920] px-1.5 py-1 sm:flex">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxZoom((z) => Math.max(1, Number((z - 0.5).toFixed(2))))}
+                      disabled={lightboxZoom <= 1}
+                      title="Zoom out"
+                      className="rounded-md p-1 text-zinc-300 hover:bg-white/[0.08] hover:text-white disabled:opacity-35"
+                    >
+                      <ZoomOut className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxZoom(1)}
+                      title="Reset zoom"
+                      className="inline-flex min-w-[42px] items-center justify-center font-mono text-[11px] font-semibold text-zinc-200"
+                    >
+                      <SlidingNumber value={Math.round(lightboxZoom * 100)} />%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxZoom((z) => Math.min(3, Number((z + 0.5).toFixed(2))))}
+                      disabled={lightboxZoom >= 3}
+                      title="Zoom in"
+                      className="rounded-md p-1 text-zinc-300 hover:bg-white/[0.08] hover:text-white disabled:opacity-35"
+                    >
+                      <ZoomIn className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => triggerDirectDownload(lightboxImage)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-95"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-95"
                   >
                     <Download className="h-3.5 w-3.5" />
                     <span>Download</span>
@@ -1951,7 +1996,7 @@ export function TextChannelView({
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Open in new tab"
-                    className="rounded-lg border border-white/[0.12] bg-[#18191E] p-1.5 text-zinc-300 hover:text-white"
+                    className="rounded-xl border border-white/[0.1] bg-[#181920] p-1.5 text-zinc-300 hover:text-white"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
@@ -1959,19 +2004,26 @@ export function TextChannelView({
                     type="button"
                     onClick={() => setLightboxImage(null)}
                     aria-label="Close image preview"
-                    className="rounded-lg border border-white/[0.12] bg-[#18191E] p-1.5 text-zinc-300 hover:text-white"
+                    className="rounded-xl border border-white/[0.1] bg-[#181920] p-1.5 text-zinc-300 hover:text-white"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
               </div>
 
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={lightboxImage.url}
-                alt={lightboxImage.name}
-                className="max-h-[82dvh] max-w-[90vw] rounded-xl border border-white/[0.08] object-contain shadow-2xl"
-              />
+              <div className="flex items-center justify-center overflow-hidden rounded-2xl border border-white/[0.08] bg-black/40">
+                <motion.img
+                  src={lightboxImage.url}
+                  alt={lightboxImage.name}
+                  animate={{ scale: lightboxZoom }}
+                  transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                  onClick={() => setLightboxZoom((z) => (z > 1 ? 1 : 2))}
+                  title={lightboxZoom > 1 ? "Click to reset zoom" : "Click to zoom 200%"}
+                  className={`max-h-[80dvh] max-w-[90vw] select-none object-contain shadow-2xl ${
+                    lightboxZoom > 1 ? "cursor-zoom-out" : "cursor-zoom-in"
+                  }`}
+                />
+              </div>
             </motion.div>
           </motion.div>
         )}

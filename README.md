@@ -30,7 +30,7 @@ Built with Next.js (App Router), Tailwind CSS v4, Drizzle ORM (Neon or standard 
    ```bash
    pnpm dev
    ```
-   Open [http://localhost:3000](http://localhost:3000). The first account you register becomes the workspace admin and automatically creates starter channels (`#general`, `#clips`, `Lounge`, `Gaming`).
+   Open [http://localhost:3100](http://localhost:3100). The first account you register becomes the workspace admin and automatically creates starter channels (`#general`, `#clips`, `Lounge`, `Gaming`).
 
 ## Deployment on Vercel
 

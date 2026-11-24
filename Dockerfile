@@ -20,7 +20,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-EXPOSE 3000
-ENV PORT=3000
+EXPOSE 3100
+ENV PORT=3100
 ENV HOSTNAME="0.0.0.0"
 CMD ["node", "server.js"]

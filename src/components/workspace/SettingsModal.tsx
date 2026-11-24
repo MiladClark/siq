@@ -28,9 +28,12 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
+import { SelectDropdown } from "@/components/ui/SelectDropdown";
 import { useVoice } from "@/components/voice/VoiceProvider";
 import type { NoiseCancellationMode } from "@/lib/noise-processor";
 import {
+  APP_FONT_PRESETS,
+  APP_THEME_PRESETS,
   type AppPreferences,
   clearLocalWorkspaceData,
   type MessageDensity,
@@ -900,38 +903,40 @@ export function SettingsModal({
                               <label htmlFor="s-mic" className="block text-xs text-zinc-300">
                                 Input Device (Mic)
                               </label>
-                              <select
+                              <SelectDropdown
                                 id="s-mic"
+                                ariaLabel="Input Device (Mic)"
                                 value={voice.selectedAudioInput}
-                                onChange={(e) => void voice.setAudioInput(e.target.value)}
-                                className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100"
-                              >
-                                <option value="">System Default</option>
-                                {voice.devices.audioInputs.map((d) => (
-                                  <option key={d.deviceId} value={d.deviceId}>
-                                    {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
-                                  </option>
-                                ))}
-                              </select>
+                                onChange={(v) => void voice.setAudioInput(v)}
+                                icon={<Mic className="h-3.5 w-3.5" />}
+                                options={[
+                                  { value: "", label: "System Default", badge: "Auto" },
+                                  ...voice.devices.audioInputs.map((d) => ({
+                                    value: d.deviceId,
+                                    label: d.label || `Mic ${d.deviceId.slice(0, 6)}`,
+                                  })),
+                                ]}
+                              />
                             </div>
 
                             <div className="space-y-1.5">
                               <label htmlFor="s-out" className="block text-xs text-zinc-300">
                                 Output Device (Headset)
                               </label>
-                              <select
+                              <SelectDropdown
                                 id="s-out"
+                                ariaLabel="Output Device (Headset)"
                                 value={voice.selectedAudioOutput}
-                                onChange={(e) => voice.setAudioOutput(e.target.value)}
-                                className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100"
-                              >
-                                <option value="">System Default</option>
-                                {voice.devices.audioOutputs.map((d) => (
-                                  <option key={d.deviceId} value={d.deviceId}>
-                                    {d.label || `Speaker ${d.deviceId.slice(0, 6)}`}
-                                  </option>
-                                ))}
-                              </select>
+                                onChange={(v) => voice.setAudioOutput(v)}
+                                icon={<Headphones className="h-3.5 w-3.5" />}
+                                options={[
+                                  { value: "", label: "System Default", badge: "Auto" },
+                                  ...voice.devices.audioOutputs.map((d) => ({
+                                    value: d.deviceId,
+                                    label: d.label || `Speaker ${d.deviceId.slice(0, 6)}`,
+                                  })),
+                                ]}
+                              />
                             </div>
                           </div>
 
@@ -939,19 +944,20 @@ export function SettingsModal({
                             <label htmlFor="s-cam" className="block text-xs text-zinc-300">
                               Camera
                             </label>
-                            <select
+                            <SelectDropdown
                               id="s-cam"
+                              ariaLabel="Camera"
                               value={voice.selectedVideoInput}
-                              onChange={(e) => void voice.setVideoInput(e.target.value)}
-                              className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100"
-                            >
-                              <option value="">System Default</option>
-                              {voice.devices.videoInputs.map((d) => (
-                                <option key={d.deviceId} value={d.deviceId}>
-                                  {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
-                                </option>
-                              ))}
-                            </select>
+                              onChange={(v) => void voice.setVideoInput(v)}
+                              icon={<Camera className="h-3.5 w-3.5" />}
+                              options={[
+                                { value: "", label: "System Default", badge: "Auto" },
+                                ...voice.devices.videoInputs.map((d) => ({
+                                  value: d.deviceId,
+                                  label: d.label || `Camera ${d.deviceId.slice(0, 6)}`,
+                                })),
+                              ]}
+                            />
                           </div>
 
                           {/* Live Mic Test */}
@@ -1121,22 +1127,89 @@ export function SettingsModal({
                             </p>
                             <p className="text-[11px] text-zinc-500">
                               Show compact toast cards with progress bar in the bottom-right
-                              corner.
+                              corner. Hover to pause &amp; fan out.
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onUpdatePrefs({ toastsEnabled: !appPrefs.toastsEnabled })
-                            }
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                              appPrefs.toastsEnabled
-                                ? "bg-emerald-500/20 text-emerald-300"
-                                : "bg-white/[0.06] text-zinc-400"
-                            }`}
-                          >
-                            {appPrefs.toastsEnabled ? "On" : "Off"}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                notify({
+                                  kind: "info",
+                                  title: "Toast 1 · Hover to Pause",
+                                  message: "Move cursor over the stack to pause the progress bar.",
+                                  source: "Test",
+                                });
+                                setTimeout(() => {
+                                  notify({
+                                    kind: "success",
+                                    title: "Toast 2 · Stacked Deck",
+                                    message: "Multiple notifications stack cleanly and fan out on hover.",
+                                    source: "Test",
+                                  });
+                                }, 350);
+                                setTimeout(() => {
+                                  notify({
+                                    kind: "warning",
+                                    title: "Toast 3 · Auto-Dismiss",
+                                    message: "Unhover to resume countdown smoothly until dismissed.",
+                                    source: "Test",
+                                  });
+                                }, 700);
+                              }}
+                              className="rounded-lg border border-white/[0.09] bg-[#18191E] px-2.5 py-1.5 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                            >
+                              Test Stack
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdatePrefs({ toastsEnabled: !appPrefs.toastsEnabled })
+                              }
+                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                appPrefs.toastsEnabled
+                                  ? "bg-emerald-500/20 text-emerald-300"
+                                  : "bg-white/[0.06] text-zinc-400"
+                              }`}
+                            >
+                              {appPrefs.toastsEnabled ? "On" : "Off"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
+                          <div>
+                            <p className="text-xs font-medium text-zinc-100">
+                              Toast Animation Style
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-zinc-500">
+                              Choose Sileo liquid SVG-morphing pills or stacked Obsidian cards.
+                            </p>
+                          </div>
+                          <div className="inline-flex shrink-0 items-center rounded-lg border border-white/[0.08] bg-[#14151A] p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => onUpdatePrefs({ toastStyle: "liquid" })}
+                              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                                appPrefs.toastStyle === "liquid"
+                                  ? "bg-emerald-500/20 text-emerald-300"
+                                  : "text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              Sileo Liquid
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onUpdatePrefs({ toastStyle: "classic" })}
+                              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                                appPrefs.toastStyle === "classic"
+                                  ? "bg-emerald-500/20 text-emerald-300"
+                                  : "text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              Obsidian Stack
+                            </button>
+                          </div>
                         </div>
 
                         <div className="space-y-4 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
@@ -1280,56 +1353,199 @@ export function SettingsModal({
 
                     {/* APPEARANCE TAB */}
                     {tab === "appearance" && (
-                      <div className="space-y-4">
-                        <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
-                          <p className="text-xs font-medium text-zinc-200">Message Density</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            {(["comfortable", "compact"] as MessageDensity[]).map((d) => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => onUpdatePrefs({ messageDensity: d })}
-                                className={`rounded-lg border px-3 py-2 text-xs font-medium capitalize transition-colors ${
-                                  appPrefs.messageDensity === d
-                                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                                    : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
-                                }`}
-                              >
-                                {d}
-                              </button>
-                            ))}
+                      <div className="space-y-5">
+                        {/* 8-Color Theme Studio */}
+                        <div className="siq-bezel-sm space-y-3.5 rounded-2xl border border-white/[0.08] bg-[#0D0E12] p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold text-zinc-100">
+                                Accent Theme
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-zinc-500">
+                                8 calibrated studio palettes — updates the entire workspace live.
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                              {APP_THEME_PRESETS.find((t) => t.id === appPrefs.theme)?.name ??
+                                "Obsidian Emerald"}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                            {APP_THEME_PRESETS.map((themeItem) => {
+                              const active = appPrefs.theme === themeItem.id;
+                              return (
+                                <motion.button
+                                  key={themeItem.id}
+                                  type="button"
+                                  whileHover={{ y: -1 }}
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => onUpdatePrefs({ theme: themeItem.id })}
+                                  className={`group relative flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all ${
+                                    active
+                                      ? "border-emerald-500/60 bg-emerald-500/[0.1] ring-1 ring-emerald-500/25"
+                                      : "border-white/[0.08] bg-[#14151C] hover:border-white/[0.16] hover:bg-[#181A22]"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1">
+                                      <span
+                                        className="h-4 w-4 rounded-full ring-2 ring-black/40"
+                                        style={{ backgroundColor: themeItem.primary }}
+                                      />
+                                      <span
+                                        className="-ml-1.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#14151C]"
+                                        style={{ backgroundColor: themeItem.light }}
+                                      />
+                                      <span
+                                        className="-ml-1.5 h-3 w-3 rounded-full ring-2 ring-[#14151C]"
+                                        style={{ backgroundColor: themeItem.deep }}
+                                      />
+                                    </div>
+
+                                    {active && (
+                                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-zinc-950">
+                                        <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-2.5">
+                                    <p className="truncate text-[11px] font-semibold text-zinc-100">
+                                      {themeItem.name}
+                                    </p>
+                                    <p className="truncate text-[10px] text-zinc-500">
+                                      {themeItem.vibe}
+                                    </p>
+                                  </div>
+                                </motion.button>
+                              );
+                            })}
                           </div>
                         </div>
 
-                        <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
-                          <p className="text-xs font-medium text-zinc-200">Chat Text Size</p>
-                          <div className="grid grid-cols-3 gap-2">
-                            {(
-                              [
-                                ["sm", "Small"],
-                                ["md", "Default"],
-                                ["lg", "Large"],
-                              ] as Array<[TextScale, string]>
-                            ).map(([scale, label]) => (
-                              <button
-                                key={scale}
-                                type="button"
-                                onClick={() => onUpdatePrefs({ textScale: scale })}
-                                className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                                  appPrefs.textScale === scale
-                                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                                    : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
-                                }`}
-                              >
-                                {label}
-                              </button>
-                            ))}
+                        {/* 4 Local Self-Hosted Typography Presets */}
+                        <div className="siq-bezel-sm space-y-3.5 rounded-2xl border border-white/[0.08] bg-[#0D0E12] p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold text-zinc-100">
+                                Typography
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-zinc-500">
+                                4 bilingual English + فارسی font pairings bundled locally inside the app.
+                              </p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-white/[0.1] bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-medium text-zinc-400">
+                              LOCAL WOFF2
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                            {APP_FONT_PRESETS.map((preset) => {
+                              const active = appPrefs.fontPreset === preset.id;
+                              return (
+                                <motion.button
+                                  key={preset.id}
+                                  type="button"
+                                  whileHover={{ y: -1 }}
+                                  whileTap={{ scale: 0.985 }}
+                                  onClick={() => onUpdatePrefs({ fontPreset: preset.id })}
+                                  style={{ fontFamily: preset.cssFamily }}
+                                  className={`relative flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all ${
+                                    active
+                                      ? "border-emerald-500/60 bg-emerald-500/[0.1] ring-1 ring-emerald-500/25"
+                                      : "border-white/[0.08] bg-[#14151C] hover:border-white/[0.16] hover:bg-[#181A22]"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <p className="text-xs font-semibold text-zinc-100">
+                                        {preset.name}
+                                      </p>
+                                      <p className="mt-0.5 text-[10px] text-zinc-500">
+                                        {preset.subtitle}
+                                      </p>
+                                    </div>
+                                    {active && (
+                                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-zinc-950">
+                                        <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-3 space-y-1 rounded-lg border border-white/[0.06] bg-[#0B0C10]/80 px-2.5 py-2">
+                                    <p className="truncate text-xs font-medium text-zinc-200">
+                                      {preset.sampleEn}
+                                    </p>
+                                    <p
+                                      dir="rtl"
+                                      className="truncate text-xs font-medium text-zinc-400"
+                                    >
+                                      {preset.sampleFa}
+                                    </p>
+                                  </div>
+                                </motion.button>
+                              );
+                            })}
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] px-4 py-3.5">
+                        {/* Layout Density & Text Scale */}
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div className="space-y-2 rounded-2xl border border-white/[0.07] bg-[#0D0E12] p-4">
+                            <p className="text-xs font-semibold text-zinc-200">
+                              Message Density
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {(["comfortable", "compact"] as MessageDensity[]).map((d) => (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  onClick={() => onUpdatePrefs({ messageDensity: d })}
+                                  className={`rounded-xl border px-3 py-2 text-xs font-medium capitalize transition-colors ${
+                                    appPrefs.messageDensity === d
+                                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                                      : "border-white/[0.08] bg-[#16171E] text-zinc-400 hover:text-zinc-200"
+                                  }`}
+                                >
+                                  {d}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 rounded-2xl border border-white/[0.07] bg-[#0D0E12] p-4">
+                            <p className="text-xs font-semibold text-zinc-200">
+                              Chat Text Size
+                            </p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {(
+                                [
+                                  ["sm", "Small"],
+                                  ["md", "Default"],
+                                  ["lg", "Large"],
+                                ] as Array<[TextScale, string]>
+                              ).map(([scale, label]) => (
+                                <button
+                                  key={scale}
+                                  type="button"
+                                  onClick={() => onUpdatePrefs({ textScale: scale })}
+                                  className={`rounded-xl border px-2.5 py-2 text-xs font-medium transition-colors ${
+                                    appPrefs.textScale === scale
+                                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                                      : "border-white/[0.08] bg-[#16171E] text-zinc-400 hover:text-zinc-200"
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-2xl border border-white/[0.07] bg-[#0D0E12] px-4 py-3.5">
                           <div>
-                            <p className="text-xs font-medium text-zinc-100">
+                            <p className="text-xs font-semibold text-zinc-100">
                               Show Members Sidebar
                             </p>
                             <p className="text-[11px] text-zinc-500">
@@ -1343,7 +1559,7 @@ export function SettingsModal({
                                 showMembersSidebar: !appPrefs.showMembersSidebar,
                               })
                             }
-                            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
                               appPrefs.showMembersSidebar
                                 ? "bg-emerald-500/20 text-emerald-300"
                                 : "bg-white/[0.06] text-zinc-400"

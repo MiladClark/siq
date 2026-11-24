@@ -44,14 +44,32 @@ import { ChannelHeaderTools } from "@/components/chat/ChannelHeaderTools";
 import { TextChannelView } from "@/components/chat/TextChannelView";
 import { ActiveNowRail } from "@/components/dm/ActiveNowRail";
 import { DmConversationView } from "@/components/dm/DmConversationView";
-import { FindConversationModal } from "@/components/dm/FindConversationModal";
+import {
+  type ActiveChatSearchContext,
+  type CommandQuickAction,
+  FindConversationModal,
+  type SearchCategory,
+} from "@/components/dm/FindConversationModal";
 import { FriendsHubView, type FriendsTab } from "@/components/dm/FriendsHubView";
+import { AnimatedIconButton } from "@/components/ui/AnimatedIcon";
+import {
+  MicIcon,
+  MicOffIcon,
+  PhoneIcon,
+  PhoneOffIcon,
+  PlusIcon,
+  SearchIcon,
+  SettingsIcon,
+  UsersIcon,
+} from "@/components/ui/animated-icons";
 import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
+import { BarVisualizer } from "@/components/ui/BarVisualizer";
 import {
   type ContextMenuEntry,
   ContextMenuProvider,
   useContextMenu,
 } from "@/components/ui/ContextMenu";
+import { SlidingNumber } from "@/components/ui/MotionPrimitives";
 import {
   NotificationBell,
   NotificationToasts,
@@ -62,6 +80,7 @@ import {
   type ProfilePopoverTarget,
   UserProfilePopover,
 } from "@/components/ui/UserProfilePopover";
+import { VoiceDynamicIsland } from "@/components/ui/VoiceDynamicIsland";
 import { ConnectionStatusButton } from "@/components/voice/ConnectionStatusPopover";
 import { ScreenShareModal } from "@/components/voice/ScreenShareModal";
 import {
@@ -91,6 +110,7 @@ import {
   getMemberRolesInServer,
 } from "@/lib/permissions";
 import {
+  applyAppearancePreferences,
   type AppPreferences,
   DEFAULT_APP_PREFERENCES,
   loadAppPreferences,
@@ -205,7 +225,9 @@ function WorkspaceInner({
   appPrefsRef.current = appPrefs;
 
   useEffect(() => {
-    setAppPrefs(loadAppPreferences());
+    const loaded = loadAppPreferences();
+    setAppPrefs(loaded);
+    applyAppearancePreferences(loaded);
   }, []);
 
   const updateAppPrefs = useCallback((patch: Partial<AppPreferences>) => {
@@ -289,7 +311,13 @@ function WorkspaceInner({
   const [serverSettingsTab, setServerSettingsTab] =
     useState<ServerSettingsTab>("overview");
   const [findConvOpen, setFindConvOpen] = useState(false);
+  const [findConvCategory, setFindConvCategory] = useState<SearchCategory>("all");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const openSmartSearch = useCallback((initialCategory: SearchCategory = "all") => {
+    setFindConvCategory(initialCategory);
+    setFindConvOpen(true);
+  }, []);
 
   // Derived active server, permissions & accessible channels
   const activeServer = useMemo(
@@ -567,7 +595,7 @@ function WorkspaceInner({
           playSound("notification");
           setNotifications((prev) => [...fresh.reverse(), ...prev].slice(0, 30));
           if (appPrefsRef.current.toastsEnabled) {
-            setToasts((prev) => [...prev, ...fresh].slice(-3));
+            setToasts((prev) => [...prev, ...fresh].slice(-4));
           }
         }
       }
@@ -639,7 +667,7 @@ function WorkspaceInner({
     };
 
     setNotifications((prev) => [item, ...prev].slice(0, 30));
-    setToasts((prev) => [...prev, item].slice(-3));
+    setToasts((prev) => [...prev, item].slice(-4));
     if (payload.kind === "error" || payload.kind === "warning") {
       playSound("notification");
     }
@@ -754,6 +782,19 @@ function WorkspaceInner({
       window.removeEventListener("pagehide", handlePageHide);
     };
   }, [syncPresence]);
+
+  // Global ⌘K / Ctrl+K shortcut for Unified Smart Search
+  useEffect(() => {
+    function handleCommandPaletteKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setFindConvCategory("all");
+        setFindConvOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", handleCommandPaletteKey);
+    return () => window.removeEventListener("keydown", handleCommandPaletteKey);
+  }, []);
 
   // Navigation helpers
   function selectServer(serverId: string, specificChannelId?: string) {
@@ -2068,6 +2109,9 @@ function WorkspaceInner({
                   <span dir="auto" className="min-w-0 flex-1 truncate text-xs font-medium">
                     {occ.name}
                   </span>
+                  {occ.isSpeaking && !occ.isMuted && (
+                    <BarVisualizer state="speaking" barCount={4} size="xs" />
+                  )}
                   {occ.isScreenSharing && (
                     <span
                       onClick={(e) => {
@@ -2114,6 +2158,64 @@ function WorkspaceInner({
     ? (members.find((m) => m.id === activeDm.peer.id) ?? activeDm.peer)
     : null;
 
+  // Contextual message search endpoint for the active text channel or DM
+  const activeChannelIdForSearch =
+    viewMode === "server" && activeChannel?.type === "text"
+      ? activeChannel.id
+      : null;
+  const activeChannelNameForSearch =
+    viewMode === "server" && activeChannel?.type === "text"
+      ? activeChannel.name
+      : null;
+  const activeDmIdForSearch =
+    viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer
+      ? activeDm.id
+      : null;
+  const activeDmUserForSearch =
+    viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer
+      ? activeDmPeer.username
+      : null;
+
+  const activeChatSearchContext = useMemo<ActiveChatSearchContext | null>(() => {
+    if (activeChannelIdForSearch && activeChannelNameForSearch) {
+      return {
+        label: `#${activeChannelNameForSearch}`,
+        apiBasePath: `/api/channels/${activeChannelIdForSearch}/messages`,
+      };
+    }
+    if (activeDmIdForSearch && activeDmUserForSearch) {
+      return {
+        label: `@${activeDmUserForSearch}`,
+        apiBasePath: `/api/dms/${activeDmIdForSearch}/messages`,
+      };
+    }
+    return null;
+  }, [
+    activeChannelIdForSearch,
+    activeChannelNameForSearch,
+    activeDmIdForSearch,
+    activeDmUserForSearch,
+  ]);
+
+  function renderHeaderSmartSearch(placeholder: string) {
+    return (
+      <AnimatedIconButton
+        icon={SearchIcon}
+        iconSize={14}
+        iconClassName="text-zinc-500 transition-colors group-hover:text-emerald-400"
+        onClick={() => openSmartSearch("all")}
+        title={`${placeholder} (Ctrl+K)`}
+        aria-label="Open smart search"
+        className="group flex h-8 items-center justify-between gap-2 rounded-lg border border-white/[0.09] bg-[#16171D] px-2.5 text-left text-xs text-zinc-400 transition-all hover:border-emerald-500/35 hover:bg-[#191B22] hover:text-zinc-200 sm:w-48 lg:w-60"
+      >
+        <span className="hidden min-w-0 flex-1 truncate sm:inline">{placeholder}</span>
+        <kbd className="hidden shrink-0 rounded border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-zinc-500 transition-colors group-hover:border-emerald-500/30 group-hover:text-emerald-300 md:inline">
+          ⌘K
+        </kbd>
+      </AnimatedIconButton>
+    );
+  }
+
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[#09090B] text-zinc-100 select-none">
       {/* Mobile Backdrop */}
@@ -2155,11 +2257,13 @@ function WorkspaceInner({
               <div className="flex h-14 shrink-0 items-center gap-2 border-b border-white/[0.07] px-3">
                 <button
                   type="button"
-                  onClick={() => setFindConvOpen(true)}
-                  className="flex flex-1 items-center gap-2 rounded-lg border border-white/[0.08] bg-[#16171C] px-3 py-1.5 text-left text-xs text-zinc-400 transition-colors hover:border-white/[0.15] hover:text-zinc-200"
+                  onClick={() => openSmartSearch("people")}
+                  className="siq-bezel-sm flex flex-1 items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[#14151B] px-3 py-1.5 text-left text-xs text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-200"
                 >
-                  <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                  <span className="truncate">Find or start a conversation</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Search className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                    <span className="truncate">Find or start a conversation</span>
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -2176,8 +2280,12 @@ function WorkspaceInner({
                 className="flex-1 space-y-4 overflow-y-auto px-2.5 py-3"
                 aria-label="Direct messages"
               >
-                <button
-                  type="button"
+                <AnimatedIconButton
+                  icon={UsersIcon}
+                  iconSize={16}
+                  iconClassName={
+                    homeView === "friends" ? "text-emerald-400" : "text-zinc-400"
+                  }
                   onClick={() => selectHomeFriends()}
                   className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors ${
                     homeView === "friends"
@@ -2185,32 +2293,26 @@ function WorkspaceInner({
                       : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                   }`}
                 >
-                  <Users
-                    className={`h-4 w-4 ${
-                      homeView === "friends" ? "text-emerald-400" : "text-zinc-400"
-                    }`}
-                  />
                   <span>Friends</span>
                   {incomingRequestsCount > 0 && (
                     <span className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white">
                       {incomingRequestsCount}
                     </span>
                   )}
-                </button>
+                </AnimatedIconButton>
 
                 <div>
                   <div className="mb-1.5 flex items-center justify-between px-2">
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                       Direct Messages
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setFindConvOpen(true)}
+                    <AnimatedIconButton
+                      icon={PlusIcon}
+                      iconSize={14}
+                      onClick={() => openSmartSearch("people")}
                       title="Start a Direct Message"
-                      className="rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
+                      className="inline-flex items-center justify-center rounded p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                    />
                   </div>
 
                   {dmConversations.length === 0 ? (
@@ -2633,7 +2735,7 @@ function WorkspaceInner({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 12 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                className="border-t border-white/[0.07] bg-[#111317] px-3 py-2.5"
+                className="border-t border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] to-[#0E1014] px-3 py-2.5"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -2650,30 +2752,52 @@ function WorkspaceInner({
                       }}
                       className="min-w-0 flex-1 text-left"
                     >
-                      <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
-                        {voice.connectionState === ConnectionState.Connecting
-                          ? "Connecting..."
-                          : "Voice Connected"}
-                      </p>
-                      <p dir="auto" className="truncate text-xs font-medium text-zinc-300">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
+                          {voice.connectionState === ConnectionState.Connecting
+                            ? "Connecting..."
+                            : "Voice Live"}
+                        </p>
+                        {voice.networkStats.lastPingMs !== null && (
+                          <span className="inline-flex items-center gap-0.5 font-mono text-[10px] text-zinc-400">
+                            <SlidingNumber value={voice.networkStats.lastPingMs} />
+                            <span>ms</span>
+                          </span>
+                        )}
+                      </div>
+                      <p dir="auto" className="truncate text-xs font-medium text-zinc-200">
                         {voice.activeChannel.name}
                       </p>
                     </button>
                   </div>
 
-                  <button
-                    type="button"
+                  <BarVisualizer
+                    state={
+                      voice.connectionState === ConnectionState.Connecting
+                        ? "connecting"
+                        : voice.participants.some((p) => p.isSpeaking)
+                          ? "speaking"
+                          : voice.isMuted
+                            ? "muted"
+                            : "listening"
+                    }
+                    barCount={4}
+                    size="xs"
+                  />
+
+                  <AnimatedIconButton
+                    icon={PhoneOffIcon}
+                    iconSize={16}
                     onClick={handleLeaveVoiceChannel}
                     title="Disconnect"
-                    className="rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
-                  >
-                    <PhoneOff className="h-4 w-4" />
-                  </button>
+                    className="inline-flex items-center justify-center rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
+                  />
                 </div>
 
                 <div className="mt-2 grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
+                  <AnimatedIconButton
+                    icon={voice.isMuted ? MicOffIcon : MicIcon}
+                    iconSize={14}
                     onClick={() => void voice.toggleMute()}
                     title={voice.isMuted ? "Unmute" : "Mute"}
                     className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
@@ -2681,13 +2805,7 @@ function WorkspaceInner({
                         ? "bg-rose-500/15 text-rose-300"
                         : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
                     }`}
-                  >
-                    {voice.isMuted ? (
-                      <MicOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Mic className="h-3.5 w-3.5" />
-                    )}
-                  </button>
+                  />
                   <button
                     type="button"
                     onClick={() => void voice.toggleDeafen()}
@@ -2757,14 +2875,13 @@ function WorkspaceInner({
                 </div>
               </button>
 
-              <button
-                type="button"
+              <AnimatedIconButton
+                icon={SettingsIcon}
+                iconSize={16}
                 onClick={() => openSettings("account")}
                 title="User & App Settings"
-                className="rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
+                className="inline-flex items-center justify-center rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+              />
             </div>
           </div>
         </aside>
@@ -2799,25 +2916,33 @@ function WorkspaceInner({
                     { id: "all", label: "All" },
                     { id: "pending", label: "Pending" },
                   ] as const
-                ).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setFriendsTab(t.id)}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                      friendsTab === t.id
-                        ? "bg-white/[0.1] text-zinc-100"
-                        : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
-                    }`}
-                  >
-                    <span>{t.label}</span>
-                    {t.id === "pending" && incomingRequestsCount > 0 && (
-                      <span className="rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-bold tabular-nums text-white">
-                        {incomingRequestsCount}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                ).map((t) => {
+                  const isTabActive = friendsTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setFriendsTab(t.id)}
+                      className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        isTabActive ? "text-zinc-50" : "text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      {isTabActive && (
+                        <motion.span
+                          layoutId="friends-active-tab"
+                          transition={{ type: "spring", stiffness: 440, damping: 32 }}
+                          className="absolute inset-0 rounded-lg border border-white/[0.08] bg-white/[0.09]"
+                        />
+                      )}
+                      <span className="relative z-10">{t.label}</span>
+                      {t.id === "pending" && incomingRequestsCount > 0 && (
+                        <span className="relative z-10 rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-bold tabular-nums text-white">
+                          {incomingRequestsCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
 
                 <button
                   type="button"
@@ -2833,19 +2958,22 @@ function WorkspaceInner({
               </div>
             </div>
 
-            <NotificationBell
-              notifications={notifications}
-              onSelectChannel={(id) => selectChannel(id)}
-              onSelectNotification={handleOpenNotification}
-              onMarkItemRead={(id) =>
-                setNotifications((prev) =>
-                  prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-                )
-              }
-              onMarkAllRead={() =>
-                setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-              }
-            />
+            <div className="flex shrink-0 items-center gap-2">
+              {renderHeaderSmartSearch("Search friends, settings...")}
+              <NotificationBell
+                notifications={notifications}
+                onSelectChannel={(id) => selectChannel(id)}
+                onSelectNotification={handleOpenNotification}
+                onMarkItemRead={(id) =>
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+                  )
+                }
+                onMarkAllRead={() =>
+                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+                }
+              />
+            </div>
           </header>
         ) : viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer ? (
           <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-4 md:px-6">
@@ -2881,15 +3009,14 @@ function WorkspaceInner({
             </div>
 
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
+              <AnimatedIconButton
+                icon={PhoneIcon}
+                iconSize={16}
                 onClick={() => void handleStartDmCall(activeDmPeer.id, false)}
                 title="Start Voice Call"
                 aria-label="Start Voice Call"
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
-              >
-                <Phone className="h-4 w-4" />
-              </button>
+              />
               <button
                 type="button"
                 onClick={() => void handleStartDmCall(activeDmPeer.id, true)}
@@ -2904,7 +3031,6 @@ function WorkspaceInner({
                 channelId={activeDm.id}
                 channelName={activeDmPeer.displayName}
                 apiBasePath={`/api/dms/${activeDm.id}/messages`}
-                searchPlaceholder={`Search @${activeDmPeer.username}`}
                 currentUser={user}
                 members={members}
                 onJumpToMessage={(messageId) =>
@@ -2928,6 +3054,8 @@ function WorkspaceInner({
               >
                 <PanelRight className="h-4 w-4" />
               </button>
+
+              {renderHeaderSmartSearch(`Search @${activeDmPeer.username}...`)}
 
               <NotificationBell
                 notifications={notifications}
@@ -2984,7 +3112,7 @@ function WorkspaceInner({
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {activeChannel && activeChannel.type === "text" && (
                 <ChannelHeaderTools
                   channelId={activeChannel.id}
@@ -3004,11 +3132,17 @@ function WorkspaceInner({
                 <button
                   type="button"
                   onClick={() => openServerInvites(activeServer)}
-                  className="hidden items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 sm:inline-flex"
+                  className="hidden h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 sm:inline-flex"
                 >
                   <KeyRound className="h-3.5 w-3.5" />
                   <span>Invite</span>
                 </button>
+              )}
+
+              {renderHeaderSmartSearch(
+                activeChannel && activeChannel.type === "text"
+                  ? `Search #${activeChannel.name}...`
+                  : "Search channels, settings..."
               )}
 
               <NotificationBell
@@ -3374,15 +3508,291 @@ function WorkspaceInner({
         onSaved={handleChannelSaved}
       />
 
+      <VoiceDynamicIsland
+        visible={Boolean(
+          isVoiceConnected &&
+            voice.activeChannel &&
+            !(
+              viewMode === "server" &&
+              activeChannel?.type === "voice" &&
+              activeChannel.id === voice.activeChannel.id
+            ) &&
+            !(
+              viewMode === "home" &&
+              homeView === "dm" &&
+              voice.activeChannel.slug.startsWith("dm-") &&
+              activeDmId === voice.activeChannel.id
+            )
+        )}
+        onReturnToStage={() => {
+          if (!voice.activeChannel) return;
+          if (voice.activeChannel.slug.startsWith("dm-")) {
+            selectDmConversation(voice.activeChannel.id);
+          } else {
+            selectChannel(voice.activeChannel.id);
+          }
+        }}
+        onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
+        onLeaveVoice={handleLeaveVoiceChannel}
+      />
+
       <FindConversationModal
         open={findConvOpen}
+        initialCategory={findConvCategory}
         currentUserId={user.id}
         members={members}
         onlineMemberIds={onlineMemberIds}
         servers={servers}
+        activeChatContext={activeChatSearchContext}
+        quickActions={
+          [
+            {
+              id: "settings-appearance",
+              label: "Appearance, Themes & Local Fonts",
+              description: "Switch among 8 dark color themes, 4 local fonts, density & scale",
+              keywords: [
+                "theme",
+                "color",
+                "font",
+                "appearance",
+                "ui",
+                "dark",
+                "scale",
+                "density",
+                "تم",
+                "رنگ",
+                "فونت",
+                "ظاهر",
+                "استایل",
+              ],
+              hint: "Settings",
+              icon: "appearance",
+              onSelect: () => openSettings("appearance"),
+            },
+            {
+              id: "settings-account",
+              label: "Account, Profile & Avatar",
+              description: "Edit display name, bio, custom status, avatar & banner",
+              keywords: [
+                "account",
+                "profile",
+                "avatar",
+                "banner",
+                "bio",
+                "username",
+                "status",
+                "پروفایل",
+                "اکانت",
+                "حساب",
+                "آواتار",
+              ],
+              hint: "Settings",
+              icon: "settings",
+              onSelect: () => openSettings("account"),
+            },
+            {
+              id: "settings-voice",
+              label: "Voice, Audio & Noise Cancellation",
+              description: "Microphone, speakers, Krisp/RNNoise filter & push-to-talk",
+              keywords: [
+                "voice",
+                "audio",
+                "mic",
+                "microphone",
+                "speaker",
+                "noise",
+                "volume",
+                "sound",
+                "ویس",
+                "صدا",
+                "میکروفون",
+                "نویز",
+              ],
+              hint: "Settings",
+              icon: "voice",
+              onSelect: () => openSettings("voice"),
+            },
+            {
+              id: "settings-notifications",
+              label: "Notifications, Sounds & Toast Test",
+              description: "Configure desktop alerts, sound effects & test toast stacking",
+              keywords: [
+                "notifications",
+                "notify",
+                "toast",
+                "sound",
+                "alert",
+                "bell",
+                "test",
+                "نوتیف",
+                "نوتیفیکیشن",
+                "اعلان",
+                "صدای پیام",
+              ],
+              hint: "Settings",
+              icon: "notifications",
+              onSelect: () => openSettings("notifications"),
+            },
+            {
+              id: "settings-privacy",
+              label: "Privacy, Security & Password",
+              description: "Change password, session security & local cache controls",
+              keywords: [
+                "privacy",
+                "security",
+                "password",
+                "cache",
+                "reset",
+                "امنیت",
+                "رمز",
+                "حریم خصوصی",
+              ],
+              hint: "Settings",
+              icon: "privacy",
+              onSelect: () => openSettings("privacy"),
+            },
+            {
+              id: "friends-hub",
+              label: "Friends & Direct Messages",
+              description: "View online friends, pending requests & private chats",
+              keywords: ["friends", "dm", "home", "online", "دوستان", "پیام خصوصی", "خانه"],
+              hint: "Home",
+              icon: "friends",
+              onSelect: () => selectHomeFriends("online"),
+            },
+            {
+              id: "add-friend",
+              label: "Add a Friend",
+              description: "Send a friend request by username",
+              keywords: ["add friend", "request", "invite", "افزودن دوست", "دوست جدید"],
+              hint: "Friends",
+              icon: "add-friend",
+              onSelect: () => selectHomeFriends("add"),
+            },
+            {
+              id: "create-join-server",
+              label: "Create or Join a Server",
+              description: "Start a new server or join with an invite code",
+              keywords: ["create server", "join server", "new server", "ساخت سرور", "ورود به سرور"],
+              hint: "Server",
+              icon: "server",
+              onSelect: () => setServerCreateJoinOpen(true),
+            },
+            ...(activeServer
+              ? ([
+                  {
+                    id: "server-settings",
+                    label: `Server Settings — ${activeServer.name}`,
+                    description: "Edit server name, icon, overview & members",
+                    keywords: ["server settings", "manage server", "تنظیمات سرور", activeServer.name],
+                    hint: activeServer.name,
+                    icon: "settings",
+                    onSelect: () => {
+                      setServerSettingsTab("overview");
+                      setServerSettingsOpen(true);
+                    },
+                  },
+                  {
+                    id: "server-roles",
+                    label: `Roles & Permissions — ${activeServer.name}`,
+                    description: "Configure server roles, colors & access permissions",
+                    keywords: ["roles", "permissions", "admin", "نقش", "دسترسی", activeServer.name],
+                    hint: activeServer.name,
+                    icon: "roles",
+                    onSelect: () => {
+                      setServerSettingsTab("roles");
+                      setServerSettingsOpen(true);
+                    },
+                  },
+                  ...(canCreateInvites
+                    ? ([
+                        {
+                          id: "server-invite",
+                          label: `Invite People to ${activeServer.name}`,
+                          description: "Generate or copy a server invite link",
+                          keywords: ["invite", "link", "code", "دعوت", "لینک دعوت"],
+                          hint: activeServer.name,
+                          icon: "invite",
+                          onSelect: () => openServerInvites(activeServer),
+                        },
+                      ] satisfies CommandQuickAction[])
+                    : []),
+                  ...(canManageChannels
+                    ? ([
+                        {
+                          id: "create-channel",
+                          label: `Create Channel in ${activeServer.name}`,
+                          description: "Add a new text or voice channel",
+                          keywords: ["create channel", "new channel", "text", "voice", "ساخت کانال", "کانال جدید"],
+                          hint: activeServer.name,
+                          icon: "channel",
+                          onSelect: () => openCreateChannel("text", null),
+                        },
+                        {
+                          id: "create-category",
+                          label: `Create Category in ${activeServer.name}`,
+                          description: "Group server channels under a new category",
+                          keywords: ["create category", "new category", "گروه کانال", "دسته‌بندی"],
+                          hint: activeServer.name,
+                          icon: "category",
+                          onSelect: () => {
+                            setEditingCategory(null);
+                            setCategoryModalOpen(true);
+                          },
+                        },
+                      ] satisfies CommandQuickAction[])
+                    : []),
+                ] satisfies CommandQuickAction[])
+              : []),
+            ...(isVoiceConnected
+              ? ([
+                  {
+                    id: "voice-toggle-mute",
+                    label: voice.isMuted ? "Unmute Microphone" : "Mute Microphone",
+                    description: `Active in ${voice.activeChannel?.name ?? "voice"}`,
+                    keywords: ["mute", "unmute", "mic", "میوت", "میکروفون"],
+                    hint: "Voice",
+                    icon: "mic",
+                    onSelect: () => void voice.toggleMute(),
+                  },
+                  {
+                    id: "voice-toggle-deafen",
+                    label: voice.isDeafened ? "Undeafen Audio" : "Deafen Audio",
+                    description: "Toggle incoming voice sound & microphone",
+                    keywords: ["deafen", "undeafen", "audio", "دیفن", "قطع صدا"],
+                    hint: "Voice",
+                    icon: "voice",
+                    onSelect: () => void voice.toggleDeafen(),
+                  },
+                  {
+                    id: "voice-screen-share",
+                    label: voice.isScreenSharing ? "Screen Share Options" : "Share Screen",
+                    description: "Configure stream resolution, FPS & audio",
+                    keywords: ["screen", "share", "stream", "live", "استریم", "اشتراک صفحه"],
+                    hint: "Voice",
+                    icon: "voice",
+                    onSelect: () => setScreenShareModalOpen(true),
+                  },
+                  {
+                    id: "voice-leave",
+                    label: "Disconnect from Voice",
+                    description: `Leave ${voice.activeChannel?.name ?? "current voice room"}`,
+                    keywords: ["leave", "disconnect", "hangup", "خروج از ویس", "قطع تماس"],
+                    hint: "Voice",
+                    icon: "voice",
+                    onSelect: () => handleLeaveVoiceChannel(),
+                  },
+                ] satisfies CommandQuickAction[])
+              : []),
+          ] satisfies CommandQuickAction[]
+        }
         onClose={() => setFindConvOpen(false)}
         onStartDm={(uid) => void handleStartDm(uid)}
+        onSelectServer={(sid) => selectServer(sid)}
         onSelectChannel={(sid, cid) => selectChannel(cid, sid)}
+        onJumpToMessage={(messageId) =>
+          setJumpTarget({ messageId, nonce: Date.now() })
+        }
       />
 
       <ScreenShareModal
@@ -3439,6 +3849,7 @@ function WorkspaceInner({
 
       <NotificationToasts
         toasts={toasts}
+        toastStyle={appPrefs.toastStyle}
         onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
         onOpenChannel={(channelId, toastId) => {
           selectChannel(channelId);

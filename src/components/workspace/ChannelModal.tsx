@@ -1,9 +1,10 @@
 "use client";
 
-import { Hash, Lock, Volume2, X } from "lucide-react";
+import { Folder, Hash, Lock, Volume2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
+import { SelectDropdown } from "@/components/ui/SelectDropdown";
 import type { CategoryItem, ChannelItem, RoleItem } from "@/lib/types";
 
 interface ChannelModalProps {
@@ -231,19 +232,20 @@ export function ChannelModal({
                   >
                     Category
                   </label>
-                  <select
+                  <SelectDropdown
                     id="channel-category"
+                    ariaLabel="Channel category"
                     value={categoryId}
-                    onChange={(e) => setCategoryId(e.target.value)}
-                    className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-xs text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
-                  >
-                    <option value="">No category (Top-level)</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setCategoryId}
+                    icon={<Folder className="h-3.5 w-3.5" />}
+                    options={[
+                      { value: "", label: "No category", badge: "Top-level" },
+                      ...categories.map((cat) => ({
+                        value: cat.id,
+                        label: cat.name,
+                      })),
+                    ]}
+                  />
                 </div>
               )}
 
