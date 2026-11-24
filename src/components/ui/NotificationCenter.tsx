@@ -17,6 +17,7 @@ import { sileo, Toaster as SileoToaster } from "sileo";
 import { useAnimatedIconHover } from "@/components/ui/AnimatedIcon";
 import { BellIcon } from "@/components/ui/animated-icons";
 import { Avatar } from "@/components/ui/Avatar";
+import { HeaderPanel } from "@/components/ui/HeaderPanel";
 import type { ToastStyle } from "@/lib/preferences";
 import type { NotificationItem, NotificationKind } from "@/lib/types";
 
@@ -125,54 +126,44 @@ function getUnreadTintClass(kind?: NotificationKind): string {
 }
 
 export function NotificationBell({
+  open,
+  onToggle,
+  onClose,
   notifications,
   onSelectChannel,
   onSelectNotification,
   onMarkItemRead,
   onMarkAllRead,
 }: {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
   notifications: NotificationItem[];
   onSelectChannel: (channelId: string) => void;
   onSelectNotification?: (item: NotificationItem) => void;
   onMarkItemRead?: (id: string) => void;
   onMarkAllRead: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const bellHover = useAnimatedIconHover();
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const visibleItems = notifications.slice(0, 3);
   const overflowCount = Math.max(0, notifications.length - 3);
 
-  useEffect(() => {
-    if (!open) return;
-    function handleOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
-
   return (
-    <div ref={containerRef} className="relative">
+    <div className="siq-header-slot">
       <motion.button
         type="button"
         whileTap={{ scale: 0.94 }}
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         {...bellHover.hoverProps}
         aria-label="Notifications"
+        aria-expanded={open}
+        aria-controls={open ? "workspace-header-notifications" : undefined}
+        aria-haspopup="dialog"
+        data-header-trigger="notifications"
         title="Notifications"
-        className={`relative flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
+        className={`siq-header-trigger flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
           open
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
             : "border-white/[0.1] bg-[#16171D] text-zinc-300 hover:border-white/[0.18] hover:text-white"
@@ -186,7 +177,7 @@ export function NotificationBell({
         {unreadCount > 0 && (
           <span
             aria-label={`${unreadCount} unread notifications`}
-            className="absolute right-1.5 top-1.5 flex h-2 w-2"
+            className="pointer-events-none absolute right-1.5 top-1.5 flex h-2 w-2 md:-right-[3px] md:-top-[3px]"
           >
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[#16171D]" />
@@ -196,13 +187,7 @@ export function NotificationBell({
 
       <AnimatePresence>
         {open && (
-          <motion.div
-            initial={{ opacity: 0, y: -6, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.96 }}
-            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            className="absolute right-0 top-10 z-50 w-80 origin-top-right overflow-hidden rounded-xl border border-white/[0.1] bg-[#14151A] shadow-2xl shadow-black/75"
-          >
+          <HeaderPanel kind="notifications" label="Notifications">
             <div className="flex items-center justify-between border-b border-white/[0.07] px-3.5 py-2.5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-zinc-100">Notifications</span>
@@ -244,7 +229,7 @@ export function NotificationBell({
                         } else if (item.channelId) {
                           onSelectChannel(item.channelId);
                         }
-                        setOpen(false);
+                        onClose();
                       }}
                       className={`flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.04] ${
                         !item.read ? getUnreadTintClass(item.kind) : ""
@@ -278,6 +263,7 @@ export function NotificationBell({
                             sysKind ? "line-clamp-2 leading-relaxed" : "truncate"
                           }`}
                         >
+                          {item.mentioned && <span className="mr-1 text-emerald-300">Mentioned you</span>}
                           {sysKind
                             ? item.content
                             : item.content
@@ -312,7 +298,7 @@ export function NotificationBell({
                 … and {overflowCount} more {overflowCount === 1 ? "notification" : "notifications"}
               </div>
             )}
-          </motion.div>
+          </HeaderPanel>
         )}
       </AnimatePresence>
     </div>
@@ -375,7 +361,9 @@ export function NotificationToasts({
       if (sileoIdMapRef.current.has(toast.id)) continue;
 
       const sysKind = isSystemKind(toast.kind) ? toast.kind : null;
-      const title = toast.channelName
+      const title = toast.mentioned
+        ? `${toast.authorDisplayName} mentioned you`
+        : toast.channelName
         ? `${toast.authorDisplayName} · ${sysKind ? toast.channelName : toast.dmConversationId ? `@${toast.channelName}` : `#${toast.channelName}`}`
         : toast.authorDisplayName;
 
@@ -438,16 +426,28 @@ export function NotificationToasts({
 
   if (toastStyle === "liquid") {
     return (
-      <SileoToaster
-        position="bottom-right"
-        theme="dark"
-        offset={{ bottom: 16, right: 16 }}
-        options={{
-          fill: "#14161D",
-          roundness: 18,
-          duration: TOAST_DURATION_MS,
-        }}
-      />
+      <>
+        <svg aria-hidden="true" className="pointer-events-none absolute size-0">
+          <defs>
+            <filter id="siq-toast-outline" x="-10%" y="-10%" width="120%" height="120%" colorInterpolationFilters="sRGB">
+              <feMorphology in="SourceAlpha" operator="dilate" radius="1" result="outline-mask" />
+              <feFlood floodColor="var(--workspace-outline)" result="outline-color" />
+              <feComposite in="outline-color" in2="outline-mask" operator="in" />
+              <feComposite in="SourceGraphic" operator="over" />
+            </filter>
+          </defs>
+        </svg>
+        <SileoToaster
+          position="bottom-right"
+          theme="dark"
+          offset={{ bottom: 16, right: 16 }}
+          options={{
+            fill: "#14161D",
+            roundness: 18,
+            duration: TOAST_DURATION_MS,
+          }}
+        />
+      </>
     );
   }
 
@@ -568,7 +568,7 @@ function ToastCard({
       transition={{ type: "spring", stiffness: 420, damping: 32 }}
       style={{ zIndex: 20 - depthFromFront }}
       className={`siq-bezel pointer-events-auto relative w-full origin-bottom overflow-hidden rounded-2xl border bg-[#121319]/96 backdrop-blur-xl transition-colors ${
-        paused ? "border-white/[0.18]" : "border-white/[0.11]"
+        paused ? "border-white/[0.18]" : "border-white/[0.11] md:border-[color:var(--workspace-outline)]"
       }`}
     >
       <div
@@ -615,6 +615,7 @@ function ToastCard({
               sysKind ? "line-clamp-2 leading-relaxed" : "truncate"
             }`}
           >
+            {toast.mentioned && <span className="mr-1 text-emerald-300">Mentioned you</span>}
             {sysKind ? (
               toast.content
             ) : toast.content ? (

@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }
 
     const identifier = (parsed.data.identifier || parsed.data.username || "").trim().toLowerCase();
-    const { password } = parsed.data;
+    const { password, rememberMe } = parsed.data;
     await ensureAppSchema();
     const db = getDb();
 
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       username: updated.username,
       role: updated.role,
     });
-    await setSessionCookie(token);
+    await setSessionCookie(token, rememberMe);
 
     return NextResponse.json({ user: serializePrivateUser(updated) });
   } catch (error) {

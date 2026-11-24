@@ -10,7 +10,7 @@ interface ImageCropModalProps {
   file: File | null;
   mode: CropMode;
   onCancel: () => void;
-  onCropped: (result: { file: File; previewUrl: string }) => void;
+  onCropped: (file: File) => void;
 }
 
 const FRAME_CONFIG: Record<
@@ -189,8 +189,7 @@ export function ImageCropModal({
       const outFile = new File([blob], `${mode}-${Date.now()}.webp`, {
         type: "image/webp",
       });
-      const previewUrl = URL.createObjectURL(blob);
-      onCropped({ file: outFile, previewUrl });
+      onCropped(outFile);
     } finally {
       setProcessing(false);
     }

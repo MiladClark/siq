@@ -25,8 +25,9 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
+import { HeaderPanel } from "@/components/ui/HeaderPanel";
 import type { MessageItem, PublicUser, ServerDetail } from "@/lib/types";
 
 export type SearchCategory =
@@ -65,7 +66,7 @@ export interface ActiveChatSearchContext {
   apiBasePath: string;
 }
 
-interface FindConversationModalProps {
+interface FindConversationPanelProps {
   open: boolean;
   initialCategory?: SearchCategory;
   currentUserId: string;
@@ -138,7 +139,7 @@ function formatMsgDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function FindConversationModal({
+export function FindConversationPanel({
   open,
   initialCategory = "all",
   currentUserId,
@@ -152,7 +153,7 @@ export function FindConversationModal({
   onSelectServer,
   onSelectChannel,
   onJumpToMessage,
-}: FindConversationModalProps) {
+}: FindConversationPanelProps) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<SearchCategory>(initialCategory);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -172,7 +173,8 @@ export function FindConversationModal({
     setActiveIndex(0);
     setMsgResults([]);
     setMsgLoading(false);
-    setTimeout(() => inputRef.current?.focus(), 20);
+    const frame = requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
   }, [open, initialCategory]);
 
   const activeApiBasePath = activeChatContext?.apiBasePath ?? null;
@@ -208,13 +210,13 @@ export function FindConversationModal({
           return;
         }
         const data = await res.json();
-        setMsgResults(data.messages ?? []);
+        if (!controller.signal.aborted) setMsgResults(data.messages ?? []);
       } catch (err) {
         if ((err as { name?: string })?.name !== "AbortError") {
           setMsgResults([]);
         }
       } finally {
-        setMsgLoading(false);
+        if (!controller.signal.aborted) setMsgLoading(false);
       }
     }, 220);
 
@@ -345,42 +347,20 @@ export function FindConversationModal({
     onClose();
   }
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key === "Tab") {
-        e.preventDefault();
-        const available = CATEGORIES.filter(
-          (c) => c.id !== "messages" || Boolean(activeChatContext)
-        );
-        const curIdx = available.findIndex((c) => c.id === category);
-        const dir = e.shiftKey ? -1 : 1;
-        const next = available[(curIdx + dir + available.length) % available.length];
-        if (next) setCategory(next.id);
-        return;
-      }
-      if (flatItems.length === 0) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setActiveIndex((i) => (i + 1) % flatItems.length);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setActiveIndex((i) => (i - 1 + flatItems.length) % flatItems.length);
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        const chosen = flatItems[activeIndex];
-        if (chosen) executeItem(chosen);
-      }
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.nativeEvent.isComposing || flatItems.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % flatItems.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => (index - 1 + flatItems.length) % flatItems.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const chosen = flatItems[activeIndex];
+      if (chosen) executeItem(chosen);
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, flatItems, activeIndex, category, activeChatContext, onClose]);
+  }
 
   useEffect(() => {
     if (!open || !listRef.current) return;
@@ -397,27 +377,9 @@ export function FindConversationModal({
   return (
     <AnimatePresence>
       {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.14 }}
-          onClick={onClose}
-          className="fixed inset-0 z-[95] flex items-start justify-center bg-black/75 p-4 pt-[9vh] backdrop-blur-[3px]"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Universal Smart Search"
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -6 }}
-            transition={{ type: "spring", stiffness: 440, damping: 32 }}
-            onClick={(e) => e.stopPropagation()}
-            className="siq-bezel w-full max-w-xl overflow-hidden rounded-2xl border border-white/[0.12] bg-[#101117]/98 backdrop-blur-xl"
-          >
+        <HeaderPanel kind="search" label="Universal Smart Search">
             {/* Unified Search Input */}
-            <div className="flex items-center gap-2.5 border-b border-white/[0.08] px-4 py-3.5">
+            <div className="flex shrink-0 items-center gap-2.5 border-b border-white/[0.08] px-3.5 py-3">
               {msgLoading ? (
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-400" />
               ) : (
@@ -426,17 +388,19 @@ export function FindConversationModal({
               <input
                 ref={inputRef}
                 type="text"
+                aria-label="Search everything"
                 dir="auto"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 placeholder={
                   category === "messages" && activeChatContext
                     ? `Search messages in ${activeChatContext.label}...`
                     : activeChatContext
-                      ? `Search ${activeChatContext.label}, channels, people, settings...`
-                      : "Search channels, people, servers, settings..."
+                      ? `Search ${activeChatContext.label} or workspace…`
+                      : "Search workspace…"
                 }
-                className="flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
               />
               {query && (
                 <button
@@ -457,7 +421,7 @@ export function FindConversationModal({
             </div>
 
             {/* Category Filter Pill Bar */}
-            <div className="flex items-center gap-1 overflow-x-auto border-b border-white/[0.07] bg-[#0B0C10]/85 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-white/[0.07] bg-[#0E0F12] px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {availableCategories.map((cat) => {
                 const active = category === cat.id;
                 const count =
@@ -468,6 +432,7 @@ export function FindConversationModal({
                   <button
                     key={cat.id}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => {
                       setCategory(cat.id);
                       inputRef.current?.focus();
@@ -497,7 +462,7 @@ export function FindConversationModal({
             {/* Categorized Results Viewport */}
             <div
               ref={listRef}
-              className="max-h-[420px] space-y-4 overflow-y-auto p-3"
+              className="min-h-0 max-h-[420px] space-y-4 overflow-y-auto p-3"
             >
               {/* Messages Section */}
               {showMessages && (visibleMessages.length > 0 || category === "messages") && (
@@ -806,7 +771,7 @@ export function FindConversationModal({
             </div>
 
             {/* Keyboard Footer */}
-            <div className="flex items-center justify-between border-t border-white/[0.07] bg-[#0A0B0F] px-4 py-2 text-[11px] text-zinc-500">
+            <div className="flex shrink-0 items-center border-t border-white/[0.07] bg-[#0E0F12] px-3.5 py-2 text-[11px] text-zinc-500">
               <div className="flex flex-wrap items-center gap-3">
                 <span className="inline-flex items-center gap-1">
                   <kbd className="rounded border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 font-mono text-[9px] text-zinc-300">
@@ -815,22 +780,14 @@ export function FindConversationModal({
                   <span>Navigate</span>
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <kbd className="rounded border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 font-mono text-[9px] text-zinc-300">
-                    Tab
-                  </kbd>
-                  <span>Category</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
                   <kbd className="inline-flex items-center rounded border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 font-mono text-[9px] text-zinc-300">
                     <CornerDownLeft className="h-2.5 w-2.5" />
                   </kbd>
                   <span>Open</span>
                 </span>
               </div>
-              <span className="font-mono text-[10px] text-zinc-500">siq Smart Search</span>
             </div>
-          </motion.div>
-        </motion.div>
+        </HeaderPanel>
       )}
     </AnimatePresence>
   );

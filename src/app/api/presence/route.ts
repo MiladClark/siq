@@ -4,6 +4,7 @@ import { getDb, isDatabaseConfigured } from "@/db";
 import { channels, messages, users } from "@/db/schema";
 import { getCurrentUser, serializeUser } from "@/lib/auth";
 import { fetchVoiceOccupancySnapshot, isLiveKitConfigured } from "@/lib/livekit";
+import { mentionsUsername } from "@/lib/mentions";
 import { isBlobStorageConfigured } from "@/lib/storage";
 import {
   loadUserDms,
@@ -109,6 +110,7 @@ export async function GET(request: Request) {
       ...recentChannelRows.map((m) => ({
         id: m.id,
         kind: "message" as const,
+        mentioned: mentionsUsername(m.content, user.username),
         channelId: m.channelId ?? "",
         dmConversationId: null,
         serverId: m.serverId ?? null,
@@ -125,6 +127,7 @@ export async function GET(request: Request) {
       ...recentDmRows.map((m) => ({
         id: m.id,
         kind: "message" as const,
+        mentioned: mentionsUsername(m.content, user.username),
         channelId: "",
         dmConversationId: m.dmConversationId ?? null,
         serverId: null,

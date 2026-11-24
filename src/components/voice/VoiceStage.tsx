@@ -31,7 +31,6 @@ import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMe
 import {
   DockItem,
   FloatingDock,
-  SlidingNumber,
   SpotlightCard,
   StatusPill,
 } from "@/components/ui/MotionPrimitives";
@@ -113,12 +112,10 @@ export function VoiceStage({
     activeChannel,
     connectionState,
     participants,
-    networkStats,
     isMuted,
     isDeafened,
     isCameraOn,
     isScreenSharing,
-    activeNoiseEngine,
     userVolumes,
     setUserVolume,
     kickParticipant,
@@ -519,7 +516,7 @@ export function VoiceStage({
   const streamAudioVol = streamAudioKey ? (userVolumes[streamAudioKey] ?? 1) : 1;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-[#0B0C0F]">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#0B0C0F]">
       {/* Main Media Area */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-5">
         {/* Focused Screen Share Theater (only shown when user explicitly clicks Watch Stream) */}
@@ -837,34 +834,8 @@ export function VoiceStage({
       </div>
 
       {/* Bottom Studio Control Deck with Floating Magnification Dock */}
-      <div className="relative flex shrink-0 items-center justify-between gap-3 border-t border-white/[0.07] bg-[#0B0C0F]/95 px-4 py-3 backdrop-blur-md">
-        <div className="hidden items-center gap-2 md:flex">
-          <button
-            type="button"
-            onClick={onOpenVoiceSettings}
-            title="Noise cancellation & audio settings"
-            className="siq-bezel-sm inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] bg-[#13141A] px-3 py-1.5 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                activeNoiseEngine === "off" ? "bg-zinc-600" : "bg-emerald-400"
-              }`}
-            />
-            <span>
-              {activeNoiseEngine === "krisp"
-                ? "Krisp AI"
-                : activeNoiseEngine === "gtcrn"
-                  ? "GTCRN AI"
-                  : activeNoiseEngine === "rnnoise"
-                    ? "RNNoise AI"
-                    : activeNoiseEngine === "standard"
-                      ? "Standard NC"
-                      : "NC Off"}
-            </span>
-          </button>
-        </div>
-
-        <FloatingDock className="mx-auto">
+      <div className="relative flex shrink-0 items-center justify-center border-t border-white/[0.07] bg-[#0B0C0F]/95 px-1.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
+        <FloatingDock className="siq-voice-stage-dock">
           <DockItem
             label={isMuted ? "Unmute microphone" : "Mute microphone"}
             onClick={() => void toggleMute()}
@@ -920,15 +891,6 @@ export function VoiceStage({
           </DockItem>
         </FloatingDock>
 
-        <div className="hidden min-w-[92px] items-center justify-end gap-1.5 md:flex">
-          {networkStats.lastPingMs !== null && (
-            <span className="inline-flex items-center gap-1 rounded-xl border border-white/[0.08] bg-[#13141A] px-2.5 py-1.5 font-mono text-[11px] font-medium text-emerald-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              <SlidingNumber value={networkStats.lastPingMs} />
-              <span className="text-zinc-500">ms</span>
-            </span>
-          )}
-        </div>
       </div>
     </div>
   );

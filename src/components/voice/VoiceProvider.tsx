@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { preconnect } from "react-dom";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { RemoteAudioPlayer } from "@/components/voice/AudioRenderer";
 import {
@@ -41,10 +42,10 @@ import {
   pickAvatarColor,
   type ChannelItem,
   type PublicUser,
-  type VoiceNetworkSample,
   type VoiceNetworkStats,
   type VoiceParticipantSummary,
 } from "@/lib/types";
+import { summarizeVoiceNetwork } from "@/lib/voice-network";
 
 export interface JoinVoiceOptions {
   watchIdentity?: string | null;
@@ -129,10 +130,11 @@ const VOLUME_STORAGE_KEY = "siq_user_volumes_v1";
 const EMPTY_NETWORK_STATS: VoiceNetworkStats = {
   lastPingMs: null,
   avgPingMs: null,
-  packetLossPct: 0,
+  packetLossPct: null,
   history: [],
   serverHost: "",
-  encrypted: true,
+  transport: null,
+  joinTiming: null,
 };
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
@@ -204,71 +206,17 @@ function buildParticipantView(
   };
 }
 
-async function readLiveKitStats(
-  room: Room
-): Promise<{ pingMs: number | null; packetLossPct: number } | null> {
-  try {
-    const engine = (
-      room as unknown as {
-        engine?: {
-          pcManager?: {
-            publisher?: { getStats?: () => Promise<RTCStatsReport> };
-            subscriber?: { getStats?: () => Promise<RTCStatsReport> };
-          };
-        };
-      }
-    ).engine;
-
-    const pubPc = engine?.pcManager?.publisher;
-    const subPc = engine?.pcManager?.subscriber;
-
-    let rttSeconds: number | null = null;
-    let packetsSent = 0;
-    let packetsLost = 0;
-
-    const reports: RTCStatsReport[] = [];
-    if (pubPc?.getStats) reports.push(await pubPc.getStats());
-    if (subPc?.getStats) reports.push(await subPc.getStats());
-
-    for (const report of reports) {
-      report.forEach((stat) => {
-        if (
-          stat.type === "candidate-pair" &&
-          (stat.state === "succeeded" || stat.nominated) &&
-          typeof stat.currentRoundTripTime === "number" &&
-          stat.currentRoundTripTime > 0
-        ) {
-          rttSeconds = stat.currentRoundTripTime;
-        }
-        if (stat.type === "remote-inbound-rtp" && stat.kind === "audio") {
-          if (
-            typeof stat.roundTripTime === "number" &&
-            stat.roundTripTime > 0 &&
-            rttSeconds === null
-          ) {
-            rttSeconds = stat.roundTripTime;
-          }
-          if (typeof stat.packetsLost === "number") {
-            packetsLost += Math.max(0, stat.packetsLost);
-          }
-        }
-        if (stat.type === "outbound-rtp" && stat.kind === "audio") {
-          if (typeof stat.packetsSent === "number") {
-            packetsSent += Math.max(0, stat.packetsSent);
-          }
-        }
-      });
-    }
-
-    const total = packetsSent + packetsLost;
-    const packetLossPct = total > 0 ? Math.min(100, (packetsLost / total) * 100) : 0;
-    return {
-      pingMs: rttSeconds !== null ? Math.round(rttSeconds * 1000) : null,
-      packetLossPct,
-    };
-  } catch {
-    return null;
-  }
+async function readLiveKitStats(room: Room) {
+  const transports = room.engine?.pcManager;
+  const reports = await Promise.allSettled([
+    transports?.publisher?.getStats(),
+    transports?.subscriber?.getStats(),
+  ]);
+  return summarizeVoiceNetwork(
+    reports.flatMap((result) =>
+      result.status === "fulfilled" && result.value ? [result.value] : []
+    )
+  );
 }
 
 function getResolutionDimensions(res: ScreenShareConfig["resolution"]): {
@@ -298,6 +246,8 @@ export function VoiceProvider({
   const roomRef = useRef<Room | null>(null);
   const switchingRef = useRef<boolean>(false);
   const joinAttemptIdRef = useRef<number>(0);
+  const joinRequestRef = useRef<{ channelId: string; controller: AbortController } | null>(null);
+  const roomDisconnectRef = useRef<Promise<void> | null>(null);
   const preDeafenMutedRef = useRef<boolean>(false);
   const preLocalMuteVolumeRef = useRef<Record<string, number>>({});
   const serverHostRef = useRef<string>("");
@@ -817,67 +767,66 @@ export function VoiceProvider({
     };
   }, [connectionState, syncParticipants]);
 
-  // Live WebRTC ping + packet loss telemetry every 2s
   useEffect(() => {
-    if (connectionState !== ConnectionState.Connected) {
-      setNetworkStats(EMPTY_NETWORK_STATS);
-      return;
-    }
+    const room = roomRef.current;
+    if (!room || connectionState !== ConnectionState.Connected) return;
 
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
     const sample = async () => {
-      const room = roomRef.current;
-      if (!room || cancelled) return;
-
-      const measured = await readLiveKitStats(room);
-      if (cancelled) return;
-
-      let pingMs = measured?.pingMs ?? null;
-      const packetLossPct = measured?.packetLossPct ?? 0;
-
-      if (pingMs === null) {
-        try {
-          const t0 = performance.now();
-          await fetch("/api/auth/status", { method: "HEAD", cache: "no-store" });
-          pingMs = Math.max(1, Math.round(performance.now() - t0));
-        } catch {
-          // ignore
-        }
+      const { pingMs, packetLossPct, transport } = await readLiveKitStats(room).catch(() =>
+        summarizeVoiceNetwork([])
+      );
+      if (cancelled || roomRef.current !== room || room.state !== ConnectionState.Connected) {
+        return;
       }
 
-      if (pingMs === null || cancelled) return;
-
+      const timestamp = Date.now();
+      const serverHost = serverHostRef.current;
       setNetworkStats((prev) => {
-        const nextHistory: VoiceNetworkSample[] = [
-          ...prev.history.slice(-39),
-          { timestamp: Date.now(), pingMs: pingMs! },
-        ];
-        const sum = nextHistory.reduce((acc, s) => acc + s.pingMs, 0);
-        const avgPingMs = Math.round(sum / nextHistory.length);
+        const history = pingMs === null
+          ? prev.history
+          : [...prev.history.slice(-39), { timestamp, pingMs }];
+        const sum = history.reduce((total, entry) => total + entry.pingMs, 0);
         return {
+          ...prev,
           lastPingMs: pingMs,
-          avgPingMs,
+          avgPingMs: history.length ? Math.round(sum / history.length) : null,
           packetLossPct,
-          history: nextHistory,
-          serverHost: serverHostRef.current,
-          encrypted: true,
+          history,
+          serverHost,
+          transport,
         };
       });
+      timer = setTimeout(() => void sample(), 2000);
     };
 
     void sample();
-    const timer = setInterval(() => void sample(), 2000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [connectionState]);
+  }, [activeChannel?.id, connectionState]);
+
+  const disconnectCurrentRoom = useCallback(() => {
+    const room = roomRef.current;
+    if (!room) return roomDisconnectRef.current;
+    roomRef.current = null;
+
+    const closing = room.disconnect().finally(() => {
+      if (roomDisconnectRef.current === closing) roomDisconnectRef.current = null;
+    });
+    roomDisconnectRef.current = closing;
+    return closing;
+  }, []);
 
   const leaveVoiceChannel = useCallback(async () => {
     joinAttemptIdRef.current += 1;
+    joinRequestRef.current?.controller.abort();
+    joinRequestRef.current = null;
     switchingRef.current = false;
-    const room = roomRef.current;
-    roomRef.current = null;
+    const hadRoom = Boolean(roomRef.current);
+    const disconnect = disconnectCurrentRoom();
     setActiveChannel(null);
     setConnectionState(ConnectionState.Disconnected);
     setParticipants([]);
@@ -888,13 +837,11 @@ export function VoiceProvider({
     setIsDeafened(false);
     setIsCameraOn(false);
     setIsScreenSharing(false);
-    if (room) {
-      await room.disconnect();
-      playSound("leave");
-    }
+    await disconnect?.catch(() => {});
+    if (hadRoom) playSound("leave");
     onOccupancyChanged?.();
     setTimeout(() => onOccupancyChanged?.(), 500);
-  }, [onOccupancyChanged]);
+  }, [disconnectCurrentRoom, onOccupancyChanged]);
 
   const joinVoiceChannel = useCallback(
     async (channel: ChannelItem, options?: JoinVoiceOptions) => {
@@ -902,6 +849,7 @@ export function VoiceProvider({
         setWatchTargetIdentity(options.watchIdentity);
       }
 
+      if (joinRequestRef.current?.channelId === channel.id) return;
       if (
         activeChannel?.id === channel.id &&
         roomRef.current &&
@@ -912,6 +860,9 @@ export function VoiceProvider({
       }
 
       const attemptId = ++joinAttemptIdRef.current;
+      joinRequestRef.current?.controller.abort();
+      const request = { channelId: channel.id, controller: new AbortController() };
+      joinRequestRef.current = request;
       setError(null);
       setNotice(null);
 
@@ -966,34 +917,31 @@ export function VoiceProvider({
       setParticipants(optimisticList);
       setNetworkStats(EMPTY_NETWORK_STATS);
 
-      if (roomRef.current) {
-        const oldRoom = roomRef.current;
-        roomRef.current = null;
-        await oldRoom.disconnect();
-      }
-
-      if (attemptId !== joinAttemptIdRef.current) return;
-
       try {
-        const res = await fetch("/api/livekit/token", {
+        const url = process.env.NEXT_PUBLIC_LIVEKIT_URL?.trim();
+        if (url?.startsWith("wss://")) preconnect(url.replace(/^wss:/, "https:"));
+
+        const tokenStartedAt = performance.now();
+        const tokenRequest = fetch("/api/livekit/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: request.controller.signal,
           body: JSON.stringify(
             options?.dmConversationId
               ? { dmConversationId: options.dmConversationId }
               : { channelId: channel.id }
           ),
-        });
-        const data = await res.json();
+        }).then(async (response) => ({
+          response,
+          data: await response.json(),
+          tokenMs: Math.round(performance.now() - tokenStartedAt),
+        }));
+        const [{ response, data, tokenMs }] = await Promise.all([
+          tokenRequest,
+          disconnectCurrentRoom(),
+        ]);
         if (attemptId !== joinAttemptIdRef.current) return;
-        if (!res.ok) {
-          switchingRef.current = false;
-          setError(data.error ?? "Could not connect to voice server.");
-          setActiveChannel(null);
-          setParticipants([]);
-          setConnectionState(ConnectionState.Disconnected);
-          return;
-        }
+        if (!response.ok) throw new Error(data.error ?? "Could not connect to voice server.");
 
         try {
           const parsedUrl = new URL(data.url);
@@ -1073,11 +1021,16 @@ export function VoiceProvider({
             }
           });
 
+        const connectStartedAt = performance.now();
         await room.connect(data.url, data.token);
-        if (attemptId !== joinAttemptIdRef.current) {
-          await room.disconnect();
-          return;
-        }
+        if (attemptId !== joinAttemptIdRef.current) return;
+        const connectMs = Math.round(performance.now() - connectStartedAt);
+        const serverHost = serverHostRef.current;
+        setNetworkStats((prev) => ({
+          ...prev,
+          serverHost,
+          joinTiming: { tokenMs, connectMs },
+        }));
         switchingRef.current = false;
         playSound("join");
         syncParticipants();
@@ -1096,6 +1049,7 @@ export function VoiceProvider({
             autoGainControl,
             false
           );
+          if (attemptId !== joinAttemptIdRef.current) return;
           if (options?.startWithVideo) {
             await room.localParticipant
               .setCameraEnabled(true, {
@@ -1112,27 +1066,31 @@ export function VoiceProvider({
 
         if (attemptId !== joinAttemptIdRef.current) return;
         await refreshDevices();
+        if (attemptId !== joinAttemptIdRef.current) return;
         syncParticipants();
         onOccupancyChanged?.();
         setTimeout(() => onOccupancyChanged?.(), 600);
       } catch (err) {
         if (attemptId !== joinAttemptIdRef.current) return;
+        request.controller.abort();
         switchingRef.current = false;
         const msg = err instanceof Error ? err.message : "Failed to join voice channel.";
         setError(msg);
-        if (roomRef.current) {
-          await roomRef.current.disconnect();
-          roomRef.current = null;
-        }
+        const disconnect = disconnectCurrentRoom();
         setActiveChannel(null);
         setParticipants([]);
         setConnectionState(ConnectionState.Disconnected);
+        setNetworkStats(EMPTY_NETWORK_STATS);
+        await disconnect?.catch(() => {});
+      } finally {
+        if (joinRequestRef.current === request) joinRequestRef.current = null;
       }
     },
     [
       activeChannel?.id,
       applyNoiseProcessorToCurrentMic,
       autoGainControl,
+      disconnectCurrentRoom,
       echoCancellation,
       noiseMode,
       onOccupancyChanged,
@@ -1306,11 +1264,12 @@ export function VoiceProvider({
 
   useEffect(() => {
     return () => {
-      if (roomRef.current) {
-        void roomRef.current.disconnect();
-      }
+      joinAttemptIdRef.current += 1;
+      joinRequestRef.current?.controller.abort();
+      joinRequestRef.current = null;
+      void disconnectCurrentRoom()?.catch(() => {});
     };
-  }, []);
+  }, [disconnectCurrentRoom]);
 
   const value = useMemo<VoiceContextValue>(
     () => ({

@@ -40,6 +40,20 @@ export async function uploadChatAttachment(
   const safeName = sanitizeFilename(file.name);
   const contentType = file.type || "application/octet-stream";
 
+  if (isLocalStorageEnabled()) {
+    await mkdir(LOCAL_UPLOAD_DIR, { recursive: true });
+    const storedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
+    await writeFile(path.join(LOCAL_UPLOAD_DIR, storedName), buffer);
+
+    return {
+      url: `/api/uploads/${encodeURIComponent(storedName)}`,
+      name: file.name || safeName,
+      contentType,
+      size: file.size,
+    };
+  }
+
   if (isVercelBlobConfigured()) {
     const key = `siq-uploads/${userId}/${Date.now()}-${safeName}`;
     const blob = await put(key, file, {
@@ -49,20 +63,6 @@ export async function uploadChatAttachment(
 
     return {
       url: blob.url,
-      name: file.name || safeName,
-      contentType,
-      size: file.size,
-    };
-  }
-
-  if (isLocalStorageEnabled()) {
-    await mkdir(LOCAL_UPLOAD_DIR, { recursive: true });
-    const storedName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(path.join(LOCAL_UPLOAD_DIR, storedName), buffer);
-
-    return {
-      url: `/api/uploads/${encodeURIComponent(storedName)}`,
       name: file.name || safeName,
       contentType,
       size: file.size,

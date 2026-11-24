@@ -167,6 +167,7 @@ export type NotificationKind = "message" | "error" | "warning" | "info" | "succe
 export interface NotificationItem {
   id: string;
   kind?: NotificationKind;
+  mentioned?: boolean;
   channelId: string;
   dmConversationId?: string | null;
   serverId?: string | null;
@@ -189,10 +190,11 @@ export interface VoiceNetworkSample {
 export interface VoiceNetworkStats {
   lastPingMs: number | null;
   avgPingMs: number | null;
-  packetLossPct: number;
+  packetLossPct: number | null;
   history: VoiceNetworkSample[];
   serverHost: string;
-  encrypted: boolean;
+  transport: string | null;
+  joinTiming: { tokenMs: number; connectMs: number } | null;
 }
 
 export const AVATAR_PALETTE = [

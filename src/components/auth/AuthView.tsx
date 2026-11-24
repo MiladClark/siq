@@ -4,6 +4,8 @@ import {
   AlertCircle,
   ArrowRight,
   Database,
+  Eye,
+  EyeOff,
   Headphones,
   KeyRound,
   Lock,
@@ -52,6 +54,8 @@ export function AuthView({
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [inviteCode, setInviteCode] = useState(initialInviteCode.toUpperCase());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +64,7 @@ export function AuthView({
   useEffect(() => {
     if (isBootstrap) {
       setMode("register");
+      setShowPassword(false);
     }
   }, [isBootstrap]);
 
@@ -83,7 +88,7 @@ export function AuthView({
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const payload =
         mode === "login"
-          ? { identifier, password }
+          ? { identifier, password, rememberMe }
           : {
               username,
               email,
@@ -118,7 +123,7 @@ export function AuthView({
       <ContextMenuProvider>
         <main className="siq-grain grid min-h-[100dvh] grid-cols-1 bg-[#070709] lg:grid-cols-12">
           {/* Left acoustic studio showcase */}
-          <section className="siq-grid-bg relative flex flex-col justify-between overflow-hidden border-b border-white/[0.07] px-8 py-10 lg:col-span-7 lg:border-b-0 lg:border-r lg:px-14 lg:py-14">
+          <section className="siq-auth-intro siq-grid-bg relative flex flex-col justify-between overflow-hidden border-b border-white/[0.07] px-5 py-5 sm:px-8 sm:py-10 lg:col-span-7 lg:border-b-0 lg:border-r lg:px-14 lg:py-14">
             {/* Subtle top-left architectural spotlight */}
             <div
               aria-hidden="true"
@@ -151,7 +156,7 @@ export function AuthView({
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-              className="relative z-10 my-12 max-w-xl lg:my-0"
+              className="relative z-10 mt-6 max-w-xl sm:my-12 lg:my-0"
             >
               <h1 className="text-balance text-4xl font-semibold leading-[1.08] tracking-tighter text-zinc-50 sm:text-[3.25rem]">
                 Studio-grade voice &amp; screen share, built for your circle.
@@ -162,7 +167,7 @@ export function AuthView({
               </p>
 
               {/* Bespoke Asymmetric Acoustic Telemetry Showcase (replaces generic 3-col cards) */}
-              <div className="mt-9 grid grid-cols-1 gap-3 sm:grid-cols-12">
+              <div className="mt-9 hidden grid-cols-12 gap-3 sm:grid">
                 <SpotlightCard
                   active
                   className="siq-bezel rounded-2xl border border-white/[0.09] bg-[#0D0E12]/90 p-4 sm:col-span-7"
@@ -216,7 +221,7 @@ export function AuthView({
               </div>
             </motion.div>
 
-            <div className="relative z-10 flex items-center justify-between text-xs font-medium text-zinc-500">
+            <div className="relative z-10 hidden items-center justify-between text-xs font-medium text-zinc-500 sm:flex">
               <span className="font-mono text-[11px] tracking-wide">
                 WebRTC · Opus · End-to-End Private
               </span>
@@ -227,7 +232,7 @@ export function AuthView({
           </section>
 
           {/* Right form column */}
-          <section className="flex flex-col justify-center bg-[#0B0C0F] px-6 py-12 sm:px-12 lg:col-span-5 lg:px-14">
+          <section className="siq-auth-form flex flex-col justify-center bg-[#0B0C0F] px-5 py-7 sm:px-12 sm:py-12 lg:col-span-5 lg:px-14">
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -284,6 +289,7 @@ export function AuthView({
                         type="button"
                         onClick={() => {
                           setMode(item.id);
+                          setShowPassword(false);
                           setError(null);
                         }}
                         className={`relative rounded-lg py-2 text-xs font-medium transition-colors ${
@@ -442,18 +448,61 @@ export function AuthView({
                   <label htmlFor="password" className="block text-xs font-medium text-zinc-300">
                     Password
                   </label>
-                  <input
-                    id="password"
-                    name="password"
-                    type="password"
-                    required
-                    minLength={6}
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full rounded-xl border border-white/[0.09] bg-[#111216] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 transition-all focus:border-emerald-500/60 focus:bg-[#14161C] focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
-                  />
+                  <div className="relative">
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      autoComplete={mode === "login" ? "current-password" : "new-password"}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="min-h-11 w-full rounded-xl border border-white/[0.09] bg-[#111216] py-2.5 pl-3.5 pr-12 text-sm text-zinc-100 placeholder:text-zinc-600 transition-all focus:border-emerald-500/60 focus:bg-[#14161C] focus:outline-none focus:ring-2 focus:ring-emerald-500/15 [&::-ms-reveal]:hidden"
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-controls="password"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-xl text-zinc-400 transition-colors hover:text-zinc-100 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-emerald-400/70"
+                    >
+                      {showPassword ? (
+                        <EyeOff aria-hidden="true" className="h-4 w-4" />
+                      ) : (
+                        <Eye aria-hidden="true" className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                  {mode === "login" && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={rememberMe}
+                      onClick={() => setRememberMe((enabled) => !enabled)}
+                      className="flex min-h-11 w-full cursor-pointer items-center justify-between gap-3 rounded-lg px-1 text-left text-sm font-medium text-zinc-300 transition-colors hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/70"
+                    >
+                      Remember me
+                      <span
+                        aria-hidden="true"
+                        className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors ${
+                          rememberMe
+                            ? "border-emerald-400/50 bg-emerald-500/20"
+                            : "border-white/[0.14] bg-white/[0.06]"
+                        }`}
+                      >
+                        <span
+                          className={`absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full motion-safe:transition-transform ${
+                            rememberMe ? "translate-x-4 bg-emerald-300" : "bg-zinc-400"
+                          }`}
+                        />
+                      </span>
+                    </button>
+                  )}
                 </div>
 
                 <AnimatePresence>

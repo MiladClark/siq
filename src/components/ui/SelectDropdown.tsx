@@ -282,6 +282,7 @@ export function SelectDropdown({
                 ref={menuRef}
                 role="listbox"
                 aria-label={ariaLabel}
+                onPointerDown={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
                 initial={{

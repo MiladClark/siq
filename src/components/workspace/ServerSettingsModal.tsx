@@ -22,6 +22,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { ColorPicker } from "@/components/ui/ColorPicker";
 import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { SelectDropdown } from "@/components/ui/SelectDropdown";
@@ -59,7 +60,7 @@ interface ServerSettingsModalProps {
   permissions: EffectivePermissions;
   blobReady: boolean;
   onClose: () => void;
-  onRefreshServers: () => Promise<void>;
+  onRefreshServers: (updatedServers?: ServerDetail[]) => Promise<void>;
   onServerDeleted: (serverId: string) => void;
 }
 
@@ -100,6 +101,7 @@ export function ServerSettingsModal({
   const [savingOverview, setSavingOverview] = useState(false);
   const [uploadingAsset, setUploadingAsset] = useState(false);
   const [cropJob, setCropJob] = useState<{ file: File; mode: CropMode } | null>(null);
+  const settingsDraftRef = useRef<{ serverId: string; initialTab: ServerSettingsTab } | null>(null);
   const iconInputRef = useRef<HTMLInputElement | null>(null);
   const bannerInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -133,7 +135,19 @@ export function ServerSettingsModal({
   );
 
   useEffect(() => {
-    if (!open || !server) return;
+    if (!open || !server) {
+      settingsDraftRef.current = null;
+      setCropJob(null);
+      return;
+    }
+    if (
+      settingsDraftRef.current?.serverId === server.id &&
+      settingsDraftRef.current.initialTab === initialTab
+    ) {
+      return;
+    }
+    settingsDraftRef.current = { serverId: server.id, initialTab };
+    setCropJob(null);
     setTab(initialTab);
     setSrvName(server.name);
     setSrvTag(server.tag ?? "");
@@ -186,16 +200,19 @@ export function ServerSettingsModal({
 
   if (!server) return null;
 
-  async function handleCroppedAsset(result: { file: File; previewUrl: string }) {
+  async function handleCroppedAsset(file: File) {
+    if (!server) return;
+    const serverName = server.name;
     const mode = cropJob?.mode;
+    const draft = settingsDraftRef.current;
     setCropJob(null);
-    if (!mode || !server) return;
+    if (!mode || !draft || !canManageServer || uploadingAsset || savingOverview) return;
     if (!blobReady) {
       notify({
         kind: "warning",
         title: "Storage Not Configured",
-        message: "Vercel Blob storage is required to upload server images.",
-        source: server.name,
+        message: "Configure file storage to upload server images.",
+        source: serverName,
       });
       return;
     }
@@ -203,30 +220,41 @@ export function ServerSettingsModal({
     setUploadingAsset(true);
     try {
       const fd = new FormData();
-      fd.append("file", result.file);
+      fd.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok || !data.attachment?.url) {
-        notify({
-          kind: "error",
-          title: "Upload Failed",
-          message: data.error ?? "Failed to upload server image.",
-          source: server.name,
-        });
-        return;
+        throw new Error(data.error ?? "Failed to upload server image.");
       }
-      if (mode === "avatar") {
-        setSrvIconUrl(data.attachment.url);
-      } else {
-        setSrvBannerUrl(data.attachment.url);
+
+      const url: string = data.attachment.url;
+      const response = await fetch(`/api/servers/${draft.serverId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mode === "avatar" ? { iconUrl: url } : { bannerUrl: url }),
+      });
+      const saved = await response.json();
+      if (!response.ok || !saved.server) {
+        throw new Error(saved.error ?? "Could not save the server image.");
       }
-      URL.revokeObjectURL(result.previewUrl);
-    } catch {
+
+      if (settingsDraftRef.current === draft) {
+        if (mode === "avatar") setSrvIconUrl(saved.server.iconUrl);
+        else setSrvBannerUrl(saved.server.bannerUrl);
+      }
+      await onRefreshServers(saved.servers);
+      notify({
+        kind: "success",
+        title: "Server Image Saved",
+        message: mode === "avatar" ? "Server icon updated." : "Server banner updated.",
+        source: serverName,
+      });
+    } catch (error) {
       notify({
         kind: "error",
         title: "Upload Failed",
-        message: "Network error uploading image.",
-        source: server.name,
+        message: error instanceof Error ? error.message : "Network error uploading image.",
+        source: serverName,
       });
     } finally {
       setUploadingAsset(false);
@@ -234,7 +262,7 @@ export function ServerSettingsModal({
   }
 
   async function handleSaveOverview() {
-    if (!server || !canManageServer || savingOverview) return;
+    if (!server || !canManageServer || savingOverview || uploadingAsset) return;
     setSavingOverview(true);
     try {
       const res = await fetch(`/api/servers/${server.id}`, {
@@ -258,7 +286,7 @@ export function ServerSettingsModal({
         });
         return;
       }
-      await onRefreshServers();
+      await onRefreshServers(data.servers);
       notify({
         kind: "success",
         title: "Server Saved",
@@ -530,7 +558,7 @@ export function ServerSettingsModal({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.16 }}
             onClick={onClose}
-            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/75 p-3 backdrop-blur-[2px] md:p-6"
+            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/75 backdrop-blur-[2px] md:p-6"
             role="dialog"
             aria-modal="true"
             aria-label={`${server.name} Settings`}
@@ -541,20 +569,26 @@ export function ServerSettingsModal({
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               onClick={(e) => e.stopPropagation()}
-              className="flex h-[min(86dvh,680px)] w-full max-w-4xl overflow-hidden rounded-2xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/80"
+              className="siq-settings-dialog flex h-full w-full max-w-4xl flex-col overflow-hidden bg-[#121316] md:h-[min(86dvh,680px)] md:flex-row md:rounded-2xl md:border md:border-white/[0.1] md:shadow-2xl md:shadow-black/80"
             >
               {/* Left Settings Rail */}
-              <aside className="flex w-52 shrink-0 flex-col border-r border-white/[0.07] bg-[#0E0F12] p-3">
-                <div className="mb-3 px-2.5 pt-1">
+              <aside className="flex shrink-0 flex-col border-b border-white/[0.07] bg-[#0E0F12] p-3 md:w-52 md:border-r md:border-b-0">
+                <div className="mb-1.5 flex items-center justify-between gap-2 px-2.5 md:mb-3 md:block md:pt-1">
+                  <div className="min-w-0">
                   <p dir="auto" className="truncate text-xs font-bold text-zinc-100">
                     {server.name}
                   </p>
                   <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
                     Server Settings
                   </p>
+                  </div>
+                  <div className="flex items-center gap-1 md:hidden">
+                    {isOwner && <button type="button" onClick={() => void handleDeleteServer()} aria-label="Delete server" className="rounded-lg p-2 text-rose-400 hover:bg-rose-500/15"><Trash2 className="size-4" /></button>}
+                    <button type="button" onClick={onClose} aria-label="Close server settings" className="rounded-lg p-2 text-zinc-400 hover:bg-white/[0.06]"><X className="size-4" /></button>
+                  </div>
                 </div>
 
-                <div className="space-y-1">
+                <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin] [&>button]:shrink-0 [&>button]:w-auto md:block md:space-y-1 md:overflow-visible md:[&>button]:w-full">
                   <button
                     type="button"
                     onClick={() => setTab("overview")}
@@ -617,7 +651,7 @@ export function ServerSettingsModal({
                 </div>
 
                 {isOwner && (
-                  <div className="mt-auto border-t border-white/[0.07] pt-3">
+                  <div className="mt-auto hidden border-t border-white/[0.07] pt-3 md:block">
                     <button
                       type="button"
                       onClick={() => void handleDeleteServer()}
@@ -631,8 +665,8 @@ export function ServerSettingsModal({
               </aside>
 
               {/* Right Content */}
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-4">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="flex shrink-0 items-center justify-between border-b border-white/[0.07] px-3.5 py-2.5 md:px-6 md:py-4">
                   <h2 className="text-sm font-semibold capitalize text-zinc-100">
                     {tab === "overview"
                       ? "Server Overview"
@@ -646,7 +680,7 @@ export function ServerSettingsModal({
                     type="button"
                     onClick={onClose}
                     aria-label="Close server settings"
-                    className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+                    className="hidden rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-white md:block"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -678,7 +712,7 @@ export function ServerSettingsModal({
 
                 {/* TAB: OVERVIEW */}
                 {tab === "overview" && (
-                  <div className="flex-1 space-y-5 overflow-y-auto p-6">
+                  <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-3.5 md:p-6">
                     {/* Banner + Icon Card */}
                     <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#0E0F12]">
                       <div
@@ -699,7 +733,7 @@ export function ServerSettingsModal({
                           <div className="absolute right-3 top-3 flex items-center gap-1.5">
                             <button
                               type="button"
-                              disabled={uploadingAsset}
+                              disabled={uploadingAsset || savingOverview}
                               onClick={() => bannerInputRef.current?.click()}
                               className="inline-flex items-center gap-1.5 rounded-lg bg-black/65 px-2.5 py-1.5 text-[11px] font-medium text-zinc-100 backdrop-blur-xs hover:bg-black/85"
                             >
@@ -709,6 +743,7 @@ export function ServerSettingsModal({
                             {srvBannerUrl && (
                               <button
                                 type="button"
+                                disabled={uploadingAsset || savingOverview}
                                 onClick={() => setSrvBannerUrl(null)}
                                 className="rounded-lg bg-black/65 p-1.5 text-zinc-300 hover:bg-rose-500/80 hover:text-white"
                                 title="Remove banner"
@@ -743,7 +778,7 @@ export function ServerSettingsModal({
                             {canManageServer && (
                               <button
                                 type="button"
-                                disabled={uploadingAsset}
+                                disabled={uploadingAsset || savingOverview}
                                 onClick={() => iconInputRef.current?.click()}
                                 title="Upload server icon"
                                 className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border border-white/[0.15] bg-[#18191E] text-zinc-200 hover:border-emerald-500/60 hover:text-emerald-300"
@@ -768,6 +803,7 @@ export function ServerSettingsModal({
                         {canManageServer && srvIconUrl && (
                           <button
                             type="button"
+                            disabled={uploadingAsset || savingOverview}
                             onClick={() => setSrvIconUrl(null)}
                             className="text-[11px] text-zinc-500 hover:text-rose-400"
                           >
@@ -809,33 +845,19 @@ export function ServerSettingsModal({
                       </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <span className="block text-xs font-medium text-zinc-300">
-                        Accent Color
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {AVATAR_PALETTE.map((hex) => (
-                          <button
-                            key={hex}
-                            type="button"
-                            disabled={!canManageServer}
-                            onClick={() => setSrvColor(hex)}
-                            style={{ backgroundColor: hex }}
-                            className={`h-7 w-7 rounded-full transition-transform ${
-                              srvColor === hex
-                                ? "scale-110 ring-2 ring-white ring-offset-2 ring-offset-[#121316]"
-                                : "opacity-75 hover:opacity-100"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                    <ColorPicker
+                      label="Accent color"
+                      value={srvColor}
+                      onChange={setSrvColor}
+                      presets={AVATAR_PALETTE}
+                      disabled={!canManageServer}
+                    />
 
                     {canManageServer && (
                       <div className="flex justify-end border-t border-white/[0.07] pt-4">
                         <button
                           type="button"
-                          disabled={savingOverview || srvName.trim().length < 2}
+                          disabled={savingOverview || uploadingAsset || srvName.trim().length < 2}
                           onClick={() => void handleSaveOverview()}
                           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
                         >
@@ -849,27 +871,27 @@ export function ServerSettingsModal({
 
                 {/* TAB: ROLES */}
                 {tab === "roles" && (
-                  <div className="flex min-h-0 flex-1">
+                  <div className="flex min-h-0 flex-1 flex-col md:flex-row">
                     {/* Role list column */}
-                    <div className="flex w-48 shrink-0 flex-col border-r border-white/[0.07] bg-[#0E0F12]/60 p-3">
+                    <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.07] bg-[#0E0F12]/60 p-2.5 md:w-48 md:flex-col md:items-stretch md:border-r md:border-b-0 md:p-3">
                       {canManageRoles && (
                         <button
                           type="button"
                           disabled={creatingRole}
                           onClick={() => void handleCreateRole()}
-                          className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 disabled:opacity-50"
+                          className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-2.5 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 disabled:opacity-50 md:w-full"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           <span>{creatingRole ? "Adding..." : "Create Role"}</span>
                         </button>
                       )}
-                      <div className="flex-1 space-y-1 overflow-y-auto">
+                      <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:block md:space-y-1 md:overflow-x-hidden md:overflow-y-auto">
                         {sortedRoles.map((r) => (
                           <button
                             key={r.id}
                             type="button"
                             onClick={() => setSelectedRoleId(r.id)}
-                            className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors ${
+                            className={`flex max-w-[152px] shrink-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors md:w-full md:max-w-none ${
                               selectedRoleId === r.id
                                 ? "bg-white/[0.09] text-zinc-100"
                                 : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
@@ -888,7 +910,7 @@ export function ServerSettingsModal({
                     </div>
 
                     {/* Role editor column */}
-                    <div className="flex-1 overflow-y-auto p-5">
+                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-3.5 md:p-5">
                       {activeRole ? (
                         <div className="space-y-5">
                           <div className="flex items-start justify-between gap-3">
@@ -918,27 +940,14 @@ export function ServerSettingsModal({
                             )}
                           </div>
 
-                          <div className="space-y-2">
-                            <span className="block text-xs font-medium text-zinc-300">
-                              Role Color
-                            </span>
-                            <div className="flex flex-wrap gap-2">
-                              {ROLE_COLORS.map((hex) => (
-                                <button
-                                  key={hex}
-                                  type="button"
-                                  disabled={!canManageRoles}
-                                  onClick={() => setRoleColor(hex)}
-                                  style={{ backgroundColor: hex }}
-                                  className={`h-6 w-6 rounded-full transition-transform ${
-                                    roleColor === hex
-                                      ? "scale-110 ring-2 ring-white ring-offset-2 ring-offset-[#121316]"
-                                      : "opacity-75 hover:opacity-100"
-                                  }`}
-                                />
-                              ))}
-                            </div>
-                          </div>
+                          <ColorPicker
+                            key={activeRole.id}
+                            label="Role color"
+                            value={roleColor}
+                            onChange={setRoleColor}
+                            presets={ROLE_COLORS}
+                            disabled={!canManageRoles}
+                          />
 
                           <div className="space-y-2 border-t border-white/[0.07] pt-4">
                             <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -1012,7 +1021,7 @@ export function ServerSettingsModal({
 
                 {/* TAB: MEMBERS */}
                 {tab === "members" && (
-                  <div className="flex min-h-0 flex-1 flex-col p-5">
+                  <div className="flex min-h-0 flex-1 flex-col p-3.5 md:p-5">
                     <div className="relative mb-4">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
                       <input
@@ -1160,7 +1169,7 @@ export function ServerSettingsModal({
 
                 {/* TAB: INVITES */}
                 {tab === "invites" && canManageInvites && (
-                  <div className="flex-1 space-y-4 overflow-y-auto p-6">
+                  <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-3.5 md:p-6">
                     <div className="rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-1.5">

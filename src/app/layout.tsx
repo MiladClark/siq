@@ -119,6 +119,8 @@ export const viewport: Viewport = {
   themeColor: "#070709",
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  GtcrnWorkletNode,
-  loadGtcrn,
-  loadRnnoise,
-  RnnoiseWorkletNode,
-} from "@sapphi-red/web-noise-suppressor";
+import type { GtcrnWorkletNode, RnnoiseWorkletNode } from "@sapphi-red/web-noise-suppressor";
 import type { AudioProcessorOptions, Track, TrackProcessor } from "livekit-client";
 
 export type NoiseCancellationMode = "krisp" | "gtcrn" | "rnnoise" | "standard" | "off";
@@ -32,7 +27,10 @@ async function ensureWorkletModule(ctx: AudioContext, mode: WebWasmMode): Promis
   set.add(mode);
 }
 
-async function getWasmBinary(mode: WebWasmMode): Promise<ArrayBuffer> {
+async function getWasmBinary(
+  mode: WebWasmMode,
+  { loadGtcrn, loadRnnoise }: typeof import("@sapphi-red/web-noise-suppressor")
+): Promise<ArrayBuffer> {
   if (mode === "rnnoise") {
     if (!cachedRnnoiseWasm) {
       cachedRnnoiseWasm = await loadRnnoise({
@@ -76,8 +74,9 @@ export class WasmNoiseTrackProcessor
     const ctx = opts.audioContext;
     this.audioContext = ctx;
 
+    const worklets = await import("@sapphi-red/web-noise-suppressor");
     const [wasmBinary] = await Promise.all([
-      getWasmBinary(this.mode),
+      getWasmBinary(this.mode, worklets),
       ensureWorkletModule(ctx, this.mode),
     ]);
 
@@ -89,8 +88,8 @@ export class WasmNoiseTrackProcessor
     const binaryCopy = wasmBinary.slice(0);
     this.workletNode =
       this.mode === "rnnoise"
-        ? new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: binaryCopy })
-        : new GtcrnWorkletNode(ctx, { maxChannels: 1, wasmBinary: binaryCopy });
+        ? new worklets.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: binaryCopy })
+        : new worklets.GtcrnWorkletNode(ctx, { maxChannels: 1, wasmBinary: binaryCopy });
 
     this.sourceNode.connect(this.workletNode);
     this.workletNode.connect(this.destinationNode);

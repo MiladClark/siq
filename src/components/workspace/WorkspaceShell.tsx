@@ -13,13 +13,11 @@ import {
   LogOut,
   Menu,
   MessageSquare,
-  Mic,
   MicOff,
   Monitor,
   PanelRight,
   Pencil,
   Phone,
-  PhoneOff,
   Play,
   Plus,
   RefreshCw,
@@ -47,11 +45,12 @@ import { DmConversationView } from "@/components/dm/DmConversationView";
 import {
   type ActiveChatSearchContext,
   type CommandQuickAction,
-  FindConversationModal,
+  FindConversationPanel,
   type SearchCategory,
-} from "@/components/dm/FindConversationModal";
+} from "@/components/dm/FindConversationPanel";
 import { FriendsHubView, type FriendsTab } from "@/components/dm/FriendsHubView";
 import { AnimatedIconButton } from "@/components/ui/AnimatedIcon";
+import type { HeaderPanelKind } from "@/components/ui/HeaderPanel";
 import {
   MicIcon,
   MicOffIcon,
@@ -80,7 +79,6 @@ import {
   type ProfilePopoverTarget,
   UserProfilePopover,
 } from "@/components/ui/UserProfilePopover";
-import { VoiceDynamicIsland } from "@/components/ui/VoiceDynamicIsland";
 import { ConnectionStatusButton } from "@/components/voice/ConnectionStatusPopover";
 import { ScreenShareModal } from "@/components/voice/ScreenShareModal";
 import {
@@ -91,7 +89,7 @@ import { useVoice, VoiceProvider } from "@/components/voice/VoiceProvider";
 import { VoiceStage } from "@/components/voice/VoiceStage";
 import { CategoryModal } from "@/components/workspace/CategoryModal";
 import { ChannelModal } from "@/components/workspace/ChannelModal";
-import { InviteModal } from "@/components/workspace/InviteModal";
+import { ServerInvites } from "@/components/workspace/ServerInvites";
 import { ServerCreateJoinModal } from "@/components/workspace/ServerCreateJoinModal";
 import { ServerRail } from "@/components/workspace/ServerRail";
 import {
@@ -269,6 +267,8 @@ function WorkspaceInner({
   const recentSystemAlertRef = useRef<{ key: string; at: number } | null>(null);
   const readWatermarkRef = useRef<Map<string, number>>(new Map());
   const lastNotifyCheckRef = useRef<string>(new Date().toISOString());
+  const serverSnapshotVersion = useRef(0);
+  const memberSnapshotVersion = useRef(0);
   const pendingVoiceMoveRef = useRef<{
     userId: string;
     targetSlug: string | null;
@@ -310,13 +310,40 @@ function WorkspaceInner({
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [serverSettingsTab, setServerSettingsTab] =
     useState<ServerSettingsTab>("overview");
-  const [findConvOpen, setFindConvOpen] = useState(false);
+  const [headerPanel, setHeaderPanel] = useState<HeaderPanelKind | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const [findConvCategory, setFindConvCategory] = useState<SearchCategory>("all");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMembersOpen, setMobileMembersOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileMenuOpen && !mobileMembersOpen) return;
+    function closeDrawers(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        setMobileMenuOpen(false);
+        setMobileMembersOpen(false);
+      }
+    }
+    document.addEventListener("keydown", closeDrawers);
+    return () => document.removeEventListener("keydown", closeDrawers);
+  }, [mobileMenuOpen, mobileMembersOpen]);
 
   const openSmartSearch = useCallback((initialCategory: SearchCategory = "all") => {
     setFindConvCategory(initialCategory);
-    setFindConvOpen(true);
+    setHeaderPanel("search");
+  }, []);
+
+  const closeHeaderPanel = useCallback(() => setHeaderPanel(null), []);
+
+  const focusHeaderTrigger = useCallback((panel: HeaderPanelKind) => {
+    workspaceRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-header-trigger="${panel}"]`)
+      ?.focus({ preventScroll: true });
+  }, []);
+
+  const toggleHeaderPanel = useCallback((panel: HeaderPanelKind) => {
+    if (panel === "search") setFindConvCategory("all");
+    setHeaderPanel((current) => (current === panel ? null : panel));
   }, []);
 
   // Derived active server, permissions & accessible channels
@@ -388,6 +415,21 @@ function WorkspaceInner({
     return members.filter((m) => idSet.has(m.id));
   }, [activeServer, members]);
 
+  const channelMentionMembers = useMemo(() => {
+    if (!activeServer || !activeChannel) return [];
+    if (!activeChannel.isPrivate) return activeServerMembers;
+    return activeServerMembers.filter((member) => {
+      const assignedRoleIds = activeServer.memberRoleIds[member.id] ?? [];
+      const permissions = computeEffectivePermissions({
+        userId: member.id,
+        ownerId: activeServer.ownerId,
+        serverRoles: activeServer.roles,
+        assignedRoleIds,
+      });
+      return canUserAccessChannel({ channel: activeChannel, permissions, assignedRoleIds });
+    });
+  }, [activeChannel, activeServer, activeServerMembers]);
+
   const onlineServerMembers = useMemo(
     () => activeServerMembers.filter((m) => onlineMemberIds.has(m.id)),
     [activeServerMembers, onlineMemberIds]
@@ -424,17 +466,34 @@ function WorkspaceInner({
     };
   }, [serverDropdownOpen]);
 
-  // Ctrl+K / Cmd+K quick conversation & channel switcher
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setFindConvOpen((v) => !v);
+    function handleKey(event: KeyboardEvent) {
+      if (event.defaultPrevented) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (event.repeat) return;
+        toggleHeaderPanel("search");
+        if (headerPanel === "search") focusHeaderTrigger("search");
+      } else if (event.key === "Escape" && headerPanel) {
+        event.preventDefault();
+        closeHeaderPanel();
+        focusHeaderTrigger(headerPanel);
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+
+    function closeOnOutsidePress(event: PointerEvent) {
+      if (!headerPanel || !(event.target instanceof Element)) return;
+      const related = `[data-header-trigger="${headerPanel}"], [data-header-panel="${headerPanel}"]`;
+      if (!event.target.closest(related)) closeHeaderPanel();
+    }
+
+    document.addEventListener("keydown", handleKey);
+    if (headerPanel) document.addEventListener("pointerdown", closeOnOutsidePress);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("pointerdown", closeOnOutsidePress);
+    };
+  }, [headerPanel, closeHeaderPanel, focusHeaderTrigger, toggleHeaderPanel]);
 
   function openSettings(tab: SettingsTab = "account") {
     setSettingsTab(tab);
@@ -517,7 +576,7 @@ function WorkspaceInner({
             n.channelId === feedId ||
             n.dmConversationId === feedId ||
             messageIds.includes(n.id);
-          if (!n.read && matches) {
+          if (!n.read && !n.mentioned && matches) {
             changed = true;
             return { ...n, read: true };
           }
@@ -528,9 +587,11 @@ function WorkspaceInner({
       setToasts((prev) =>
         prev.filter(
           (t) =>
-            t.channelId !== feedId &&
-            t.dmConversationId !== feedId &&
-            !messageIds.includes(t.id)
+            t.mentioned || (
+              t.channelId !== feedId &&
+              t.dmConversationId !== feedId &&
+              !messageIds.includes(t.id)
+            )
         )
       );
     },
@@ -538,6 +599,8 @@ function WorkspaceInner({
   );
 
   const syncPresence = useCallback(async () => {
+    const serverVersion = serverSnapshotVersion.current;
+    const memberVersion = memberSnapshotVersion.current;
     try {
       const since = lastNotifyCheckRef.current;
       const res = await fetch(`/api/presence?since=${encodeURIComponent(since)}`, {
@@ -545,8 +608,12 @@ function WorkspaceInner({
       });
       if (!res.ok) return;
       const data = await res.json();
-      if (data.members) setMembers(data.members);
-      if (data.servers) setServers(data.servers);
+      if (data.members && memberVersion === memberSnapshotVersion.current) {
+        setMembers(data.members);
+      }
+      if (data.servers && serverVersion === serverSnapshotVersion.current) {
+        setServers(data.servers);
+      }
       if (data.friends) setFriends(data.friends);
       if (data.dmConversations) setDmConversations(data.dmConversations);
       if (data.voiceOccupancy) applyVoiceOccupancy(data.voiceOccupancy);
@@ -561,8 +628,10 @@ function WorkspaceInner({
       if (incoming.length > 0) {
         const nav = navStateRef.current;
         const fresh = incoming.filter((n) => {
-          if (seenNotificationIdsRef.current.has(n.id)) return false;
-          seenNotificationIdsRef.current.add(n.id);
+          const seenKey = n.mentioned ? `mention:${n.id}` : n.id;
+          if (seenNotificationIdsRef.current.has(seenKey)) return false;
+          seenNotificationIdsRef.current.add(seenKey);
+          if (n.mentioned) return true;
 
           const feedKey = n.dmConversationId || n.channelId;
           const readWatermark = readWatermarkRef.current.get(feedKey) ?? 0;
@@ -604,12 +673,19 @@ function WorkspaceInner({
     }
   }, [applyVoiceOccupancy]);
 
-  const refreshServersNow = useCallback(async () => {
+  const refreshServersNow = useCallback(async (updatedServers?: ServerDetail[]) => {
+    const version = ++serverSnapshotVersion.current;
+    if (updatedServers) {
+      setServers(updatedServers);
+      return;
+    }
     try {
       const res = await fetch("/api/servers", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (data.servers) setServers(data.servers);
+        if (data.servers && version === serverSnapshotVersion.current) {
+          setServers(data.servers);
+        }
       }
     } catch {
       // ignore
@@ -783,19 +859,6 @@ function WorkspaceInner({
     };
   }, [syncPresence]);
 
-  // Global ⌘K / Ctrl+K shortcut for Unified Smart Search
-  useEffect(() => {
-    function handleCommandPaletteKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setFindConvCategory("all");
-        setFindConvOpen((prev) => !prev);
-      }
-    }
-    window.addEventListener("keydown", handleCommandPaletteKey);
-    return () => window.removeEventListener("keydown", handleCommandPaletteKey);
-  }, []);
-
   // Navigation helpers
   function selectServer(serverId: string, specificChannelId?: string) {
     const targetSrv = servers.find((s) => s.id === serverId);
@@ -855,6 +918,9 @@ function WorkspaceInner({
       selectDmConversation(item.dmConversationId);
     } else if (item.channelId) {
       selectChannel(item.channelId, item.serverId ?? undefined);
+    }
+    if (item.mentioned) {
+      setJumpTarget({ messageId: item.id, nonce: Date.now() });
     }
   }
 
@@ -1062,6 +1128,7 @@ function WorkspaceInner({
   }
 
   function handleUserUpdated(updated: PrivateUser) {
+    memberSnapshotVersion.current += 1;
     setUser(updated);
     setMembers((prev) =>
       prev.map((m) =>
@@ -1845,6 +1912,9 @@ function WorkspaceInner({
     myServerPermissions.createInvites;
   const showMembersRail =
     viewMode === "server" && appPrefs.showMembersSidebar && !isStageMaximized;
+  useEffect(() => {
+    if (!showMembersRail) setMobileMembersOpen(false);
+  }, [showMembersRail]);
 
   // Render helper for a single channel row (Text or Voice)
   function renderChannelItem(channel: ChannelItem) {
@@ -2197,60 +2267,365 @@ function WorkspaceInner({
     activeDmUserForSearch,
   ]);
 
-  function renderHeaderSmartSearch(placeholder: string) {
+  const activeChatPath = activeChatSearchContext?.apiBasePath;
+  useEffect(() => {
+    setHeaderPanel((current) => (current === "pins" ? null : current));
+  }, [activeChatPath]);
+
+  const invitePanelServerId = viewMode === "server" && canCreateInvites ? activeServer?.id : null;
+  useEffect(() => {
+    setHeaderPanel((current) => (current === "invite" ? null : current));
+  }, [invitePanelServerId]);
+
+  const voicePanelAvailable = isVoiceConnected && Boolean(voice.activeChannel);
+  useEffect(() => {
+    if (!voicePanelAvailable) {
+      setHeaderPanel((current) => (current === "voice" ? null : current));
+    }
+  }, [voicePanelAvailable]);
+
+  function renderHeaderSmartSearch() {
     return (
-      <AnimatedIconButton
-        icon={SearchIcon}
-        iconSize={14}
-        iconClassName="text-zinc-500 transition-colors group-hover:text-emerald-400"
-        onClick={() => openSmartSearch("all")}
-        title={`${placeholder} (Ctrl+K)`}
-        aria-label="Open smart search"
-        className="group flex h-8 items-center justify-between gap-2 rounded-lg border border-white/[0.09] bg-[#16171D] px-2.5 text-left text-xs text-zinc-400 transition-all hover:border-emerald-500/35 hover:bg-[#191B22] hover:text-zinc-200 sm:w-48 lg:w-60"
-      >
-        <span className="hidden min-w-0 flex-1 truncate sm:inline">{placeholder}</span>
-        <kbd className="hidden shrink-0 rounded border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-zinc-500 transition-colors group-hover:border-emerald-500/30 group-hover:text-emerald-300 md:inline">
-          ⌘K
-        </kbd>
-      </AnimatedIconButton>
+      <div className="siq-header-slot">
+        <AnimatedIconButton
+          icon={SearchIcon}
+          iconSize={14}
+          iconClassName="text-zinc-500 transition-colors group-hover:text-emerald-400"
+          onClick={() => toggleHeaderPanel("search")}
+          title="Smart search (Ctrl + K)"
+          aria-label="Open smart search"
+          aria-expanded={headerPanel === "search"}
+          aria-controls={headerPanel === "search" ? "workspace-header-search" : undefined}
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Control+K Meta+K"
+          data-header-trigger="search"
+          className="siq-header-trigger group flex h-8 w-8 items-center justify-center gap-2 rounded-lg border border-white/[0.09] bg-[#16171D] text-xs text-zinc-400 transition-colors hover:border-white/[0.18] hover:text-zinc-200 md:w-[108px] md:justify-between md:px-2.5"
+        >
+          <kbd className="hidden shrink-0 font-mono text-[10px] md:inline">Ctrl + K</kbd>
+        </AnimatedIconButton>
+        {searchPanel}
+      </div>
     );
   }
 
-  return (
-    <div className="flex h-[100dvh] w-full overflow-hidden bg-[#09090B] text-zinc-100 select-none">
-      {/* Mobile Backdrop */}
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-30 bg-black/65 md:hidden"
-            onClick={() => setMobileMenuOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+  function renderNotificationBell() {
+    return (
+      <NotificationBell
+        open={headerPanel === "notifications"}
+        onToggle={() => toggleHeaderPanel("notifications")}
+        onClose={closeHeaderPanel}
+        notifications={notifications}
+        onSelectChannel={(id) => selectChannel(id)}
+        onSelectNotification={handleOpenNotification}
+        onMarkItemRead={(id) =>
+          setNotifications((prev) => prev.map((item) =>
+            item.id === id ? { ...item, read: true } : item
+          ))
+        }
+        onMarkAllRead={() =>
+          setNotifications((prev) => prev.map((item) => ({ ...item, read: true })))
+        }
+      />
+    );
+  }
 
-      {/* Left Navigation Cluster: ServerRail + Secondary Sidebar */}
+  const searchPanel = (
+    <FindConversationPanel
+      open={headerPanel === "search"}
+      initialCategory={findConvCategory}
+      currentUserId={user.id}
+      members={members}
+      onlineMemberIds={onlineMemberIds}
+      servers={servers}
+      activeChatContext={activeChatSearchContext}
+      quickActions={
+        [
+          {
+            id: "settings-appearance",
+            label: "Appearance, Themes & Local Fonts",
+            description: "Switch among 8 dark color themes, 4 local fonts, density & scale",
+            keywords: [
+              "theme",
+              "color",
+              "font",
+              "appearance",
+              "ui",
+              "dark",
+              "scale",
+              "density",
+              "تم",
+              "رنگ",
+              "فونت",
+              "ظاهر",
+              "استایل",
+            ],
+            hint: "Settings",
+            icon: "appearance",
+            onSelect: () => openSettings("appearance"),
+          },
+          {
+            id: "settings-account",
+            label: "Account, Profile & Avatar",
+            description: "Edit display name, bio, custom status, avatar & banner",
+            keywords: [
+              "account",
+              "profile",
+              "avatar",
+              "banner",
+              "bio",
+              "username",
+              "status",
+              "پروفایل",
+              "اکانت",
+              "حساب",
+              "آواتار",
+            ],
+            hint: "Settings",
+            icon: "settings",
+            onSelect: () => openSettings("account"),
+          },
+          {
+            id: "settings-voice",
+            label: "Voice, Audio & Noise Cancellation",
+            description: "Microphone, speakers, Krisp/RNNoise filter & push-to-talk",
+            keywords: [
+              "voice",
+              "audio",
+              "mic",
+              "microphone",
+              "speaker",
+              "noise",
+              "volume",
+              "sound",
+              "ویس",
+              "صدا",
+              "میکروفون",
+              "نویز",
+            ],
+            hint: "Settings",
+            icon: "voice",
+            onSelect: () => openSettings("voice"),
+          },
+          {
+            id: "settings-notifications",
+            label: "Notifications, Sounds & Toast Test",
+            description: "Configure desktop alerts, sound effects & test toast stacking",
+            keywords: [
+              "notifications",
+              "notify",
+              "toast",
+              "sound",
+              "alert",
+              "bell",
+              "test",
+              "نوتیف",
+              "نوتیفیکیشن",
+              "اعلان",
+              "صدای پیام",
+            ],
+            hint: "Settings",
+            icon: "notifications",
+            onSelect: () => openSettings("notifications"),
+          },
+          {
+            id: "settings-privacy",
+            label: "Privacy, Security & Password",
+            description: "Change password, session security & local cache controls",
+            keywords: [
+              "privacy",
+              "security",
+              "password",
+              "cache",
+              "reset",
+              "امنیت",
+              "رمز",
+              "حریم خصوصی",
+            ],
+            hint: "Settings",
+            icon: "privacy",
+            onSelect: () => openSettings("privacy"),
+          },
+          {
+            id: "friends-hub",
+            label: "Friends & Direct Messages",
+            description: "View online friends, pending requests & private chats",
+            keywords: ["friends", "dm", "home", "online", "دوستان", "پیام خصوصی", "خانه"],
+            hint: "Home",
+            icon: "friends",
+            onSelect: () => selectHomeFriends("online"),
+          },
+          {
+            id: "add-friend",
+            label: "Add a Friend",
+            description: "Send a friend request by username",
+            keywords: ["add friend", "request", "invite", "افزودن دوست", "دوست جدید"],
+            hint: "Friends",
+            icon: "add-friend",
+            onSelect: () => selectHomeFriends("add"),
+          },
+          {
+            id: "create-join-server",
+            label: "Create or Join a Server",
+            description: "Start a new server or join with an invite code",
+            keywords: ["create server", "join server", "new server", "ساخت سرور", "ورود به سرور"],
+            hint: "Server",
+            icon: "server",
+            onSelect: () => setServerCreateJoinOpen(true),
+          },
+          ...(activeServer
+            ? ([
+                {
+                  id: "server-settings",
+                  label: `Server Settings — ${activeServer.name}`,
+                  description: "Edit server name, icon, overview & members",
+                  keywords: ["server settings", "manage server", "تنظیمات سرور", activeServer.name],
+                  hint: activeServer.name,
+                  icon: "settings",
+                  onSelect: () => {
+                    setServerSettingsTab("overview");
+                    setServerSettingsOpen(true);
+                  },
+                },
+                {
+                  id: "server-roles",
+                  label: `Roles & Permissions — ${activeServer.name}`,
+                  description: "Configure server roles, colors & access permissions",
+                  keywords: ["roles", "permissions", "admin", "نقش", "دسترسی", activeServer.name],
+                  hint: activeServer.name,
+                  icon: "roles",
+                  onSelect: () => {
+                    setServerSettingsTab("roles");
+                    setServerSettingsOpen(true);
+                  },
+                },
+                ...(canCreateInvites
+                  ? ([
+                      {
+                        id: "server-invite",
+                        label: `Invite People to ${activeServer.name}`,
+                        description: "Generate or copy a server invite link",
+                        keywords: ["invite", "link", "code", "دعوت", "لینک دعوت"],
+                        hint: activeServer.name,
+                        icon: "invite",
+                        onSelect: () => openServerInvites(activeServer),
+                      },
+                    ] satisfies CommandQuickAction[])
+                  : []),
+                ...(canManageChannels
+                  ? ([
+                      {
+                        id: "create-channel",
+                        label: `Create Channel in ${activeServer.name}`,
+                        description: "Add a new text or voice channel",
+                        keywords: ["create channel", "new channel", "text", "voice", "ساخت کانال", "کانال جدید"],
+                        hint: activeServer.name,
+                        icon: "channel",
+                        onSelect: () => openCreateChannel("text", null),
+                      },
+                      {
+                        id: "create-category",
+                        label: `Create Category in ${activeServer.name}`,
+                        description: "Group server channels under a new category",
+                        keywords: ["create category", "new category", "گروه کانال", "دسته‌بندی"],
+                        hint: activeServer.name,
+                        icon: "category",
+                        onSelect: () => {
+                          setEditingCategory(null);
+                          setCategoryModalOpen(true);
+                        },
+                      },
+                    ] satisfies CommandQuickAction[])
+                  : []),
+              ] satisfies CommandQuickAction[])
+            : []),
+          ...(isVoiceConnected
+            ? ([
+                {
+                  id: "voice-toggle-mute",
+                  label: voice.isMuted ? "Unmute Microphone" : "Mute Microphone",
+                  description: `Active in ${voice.activeChannel?.name ?? "voice"}`,
+                  keywords: ["mute", "unmute", "mic", "میوت", "میکروفون"],
+                  hint: "Voice",
+                  icon: "mic",
+                  onSelect: () => void voice.toggleMute(),
+                },
+                {
+                  id: "voice-toggle-deafen",
+                  label: voice.isDeafened ? "Undeafen Audio" : "Deafen Audio",
+                  description: "Toggle incoming voice sound & microphone",
+                  keywords: ["deafen", "undeafen", "audio", "دیفن", "قطع صدا"],
+                  hint: "Voice",
+                  icon: "voice",
+                  onSelect: () => void voice.toggleDeafen(),
+                },
+                {
+                  id: "voice-screen-share",
+                  label: voice.isScreenSharing ? "Screen Share Options" : "Share Screen",
+                  description: "Configure stream resolution, FPS & audio",
+                  keywords: ["screen", "share", "stream", "live", "استریم", "اشتراک صفحه"],
+                  hint: "Voice",
+                  icon: "voice",
+                  onSelect: () => setScreenShareModalOpen(true),
+                },
+                {
+                  id: "voice-leave",
+                  label: "Disconnect from Voice",
+                  description: `Leave ${voice.activeChannel?.name ?? "current voice room"}`,
+                  keywords: ["leave", "disconnect", "hangup", "خروج از ویس", "قطع تماس"],
+                  hint: "Voice",
+                  icon: "voice",
+                  onSelect: () => handleLeaveVoiceChannel(),
+                },
+              ] satisfies CommandQuickAction[])
+            : []),
+        ] satisfies CommandQuickAction[]
+      }
+      onClose={closeHeaderPanel}
+      onStartDm={(uid) => void handleStartDm(uid)}
+      onSelectServer={(sid) => selectServer(sid)}
+      onSelectChannel={(sid, cid) => selectChannel(cid, sid)}
+      onJumpToMessage={(messageId) =>
+        setJumpTarget({ messageId, nonce: Date.now() })
+      }
+    />
+  );
+
+  return (
+    <div ref={workspaceRef} className="siq-workspace flex h-[100dvh] w-full overflow-hidden text-zinc-100 select-none">
+      {/* Mobile Backdrop */}
+      {(mobileMenuOpen || mobileMembersOpen) && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          className={`fixed inset-0 z-30 bg-black/65 ${mobileMembersOpen ? "lg:hidden" : "md:hidden"}`}
+          onClick={() => {
+            setMobileMenuOpen(false);
+            setMobileMembersOpen(false);
+          }}
+        />
+      )}
+
+      {/* Workspace edge tabs and the sidebar they connect to */}
       <div
-        className={`fixed inset-y-0 left-0 z-40 flex h-full shrink-0 transition-transform duration-200 md:static md:translate-x-0 ${
-          mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className="siq-workspace-navigation flex shrink-0"
+        id="workspace-navigation"
+        data-open={mobileMenuOpen}
       >
         <ServerRail
           servers={servers}
-          viewMode={viewMode}
+          activeTab={viewMode}
           activeServerId={activeServer?.id ?? null}
           homeBadgeCount={homeBadgeCount}
           unreadServerIds={unreadServerIds}
           onSelectHome={() => selectHomeFriends()}
           onSelectServer={(id) => selectServer(id)}
           onOpenCreateJoin={() => setServerCreateJoinOpen(true)}
+          onCloseNavigation={() => setMobileMenuOpen(false)}
           onServerContextMenu={handleServerRailContextMenu}
         />
 
         {/* Secondary Sidebar (DMs/Friends in Home mode, Server Channels in Server mode) */}
-        <aside className="flex w-[252px] shrink-0 flex-col border-r border-white/[0.07] bg-[#0E0F12]">
+        <aside className="siq-workspace-sidebar flex w-[252px] min-w-0 flex-col md:shrink-0">
           {viewMode === "home" ? (
             <>
               {/* Home Top Search Pill */}
@@ -2470,7 +2845,7 @@ function WorkspaceInner({
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={activeServer.bannerUrl}
-                      alt={activeServer.name}
+                      alt=""
                       className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
@@ -2484,11 +2859,6 @@ function WorkspaceInner({
                         >
                           {activeServer.name}
                         </span>
-                        {activeServer.tag && (
-                          <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs drop-shadow-sm">
-                            {activeServer.tag}
-                          </span>
-                        )}
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
@@ -2512,6 +2882,7 @@ function WorkspaceInner({
                 ) : (
                   <button
                     type="button"
+                    aria-expanded={serverDropdownOpen}
                     onClick={() => setServerDropdownOpen((v) => !v)}
                     className="flex h-12 w-full items-center justify-between border-b border-white/[0.07] px-3.5 text-left transition-colors hover:bg-white/[0.03]"
                   >
@@ -2522,11 +2893,6 @@ function WorkspaceInner({
                       >
                         {activeServer?.name ?? "siq"}
                       </span>
-                      {activeServer?.tag && (
-                        <span className="shrink-0 rounded border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs">
-                          {activeServer.tag}
-                        </span>
-                      )}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1">
@@ -2552,13 +2918,11 @@ function WorkspaceInner({
                 <AnimatePresence>
                   {serverDropdownOpen && activeServer && (
                     <motion.div
-                      initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
                       transition={{ duration: 0.14 }}
-                      className={`absolute left-2.5 right-2.5 z-50 rounded-xl border border-white/[0.11] bg-[#14151A]/95 p-1.5 shadow-2xl shadow-black/85 backdrop-blur-md ${
-                        activeServer?.bannerUrl ? "top-[52px]" : "top-[calc(100%+6px)]"
-                      }`}
+                      className="absolute inset-x-0 top-12 z-50 rounded-b-xl border-b border-white/[0.11] bg-[#14151A] p-1.5 shadow-xl"
                     >
                       {canCreateInvites && (
                         <button
@@ -2739,7 +3103,11 @@ function WorkspaceInner({
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <ConnectionStatusButton stats={voice.networkStats} />
+                    <ConnectionStatusButton
+                      stats={voice.networkStats}
+                      open={headerPanel === "voice"}
+                      onToggle={() => toggleHeaderPanel("voice")}
+                    />
 
                     <button
                       type="button"
@@ -2787,7 +3155,7 @@ function WorkspaceInner({
 
                   <AnimatedIconButton
                     icon={PhoneOffIcon}
-                    iconSize={16}
+                    iconSize={14}
                     onClick={handleLeaveVoiceChannel}
                     title="Disconnect"
                     className="inline-flex items-center justify-center rounded-lg p-1.5 text-rose-400 transition-colors hover:bg-rose-500/15"
@@ -2797,42 +3165,33 @@ function WorkspaceInner({
                 <div className="mt-2 grid grid-cols-3 gap-1.5">
                   <AnimatedIconButton
                     icon={voice.isMuted ? MicOffIcon : MicIcon}
-                    iconSize={14}
+                    iconSize={17}
                     onClick={() => void voice.toggleMute()}
                     title={voice.isMuted ? "Unmute" : "Mute"}
-                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                      voice.isMuted
-                        ? "bg-rose-500/15 text-rose-300"
-                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                    }`}
+                    aria-pressed={voice.isMuted}
+                    className="siq-voice-dock-button"
                   />
                   <button
                     type="button"
                     onClick={() => void voice.toggleDeafen()}
                     title={voice.isDeafened ? "Undeafen" : "Deafen"}
-                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                      voice.isDeafened
-                        ? "bg-rose-500/15 text-rose-300"
-                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                    }`}
+                    aria-pressed={voice.isDeafened}
+                    className="siq-voice-dock-button"
                   >
                     {voice.isDeafened ? (
-                      <VolumeX className="h-3.5 w-3.5" />
+                      <VolumeX className="size-[17px]" />
                     ) : (
-                      <Volume2 className="h-3.5 w-3.5" />
+                      <Volume2 className="size-[17px]" />
                     )}
                   </button>
                   <button
                     type="button"
                     onClick={() => setScreenShareModalOpen(true)}
                     title={voice.isScreenSharing ? "Stream options & stop" : "Share screen"}
-                    className={`flex items-center justify-center rounded-md py-1.5 text-xs transition-colors ${
-                      voice.isScreenSharing
-                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
-                        : "bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]"
-                    }`}
+                    aria-pressed={voice.isScreenSharing}
+                    className="siq-voice-dock-button"
                   >
-                    <Monitor className="h-3.5 w-3.5" />
+                    <Monitor className="size-[17px]" />
                   </button>
                 </div>
               </motion.div>
@@ -2840,13 +3199,13 @@ function WorkspaceInner({
           </AnimatePresence>
 
           {/* Persistent Bottom Profile Dock */}
-          <div className="border-t border-white/[0.07] bg-[#0B0C0E] p-3">
+          <div className="siq-profile-dock border-t border-white/[0.07] bg-[#0B0C0E] p-3">
             <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => setStatusPickerOpen((v) => !v)}
                 title="Set status & custom activity"
-                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-white/[0.05]"
+                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
               >
                 <Avatar
                   name={user.displayName}
@@ -2888,235 +3247,145 @@ function WorkspaceInner({
       </div>
 
       {/* Main Content Area */}
-      <div className="flex min-w-0 flex-1 flex-col bg-[#121316]">
-        {/* TOP BAR — Dynamic based on Home/Friends, Home/DM, or Server Channel */}
-        {viewMode === "home" && homeView === "friends" ? (
-          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-4 md:px-6">
-            <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen(true)}
-                aria-label="Open navigation menu"
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-
-              <div className="flex shrink-0 items-center gap-2 pr-2">
-                <Users className="h-4 w-4 text-emerald-400" />
-                <h1 className="text-sm font-semibold text-zinc-100">Friends</h1>
-              </div>
-
-              <span className="h-4 w-px shrink-0 bg-white/[0.1]" />
-
-              <div className="flex shrink-0 items-center gap-1">
-                {(
-                  [
-                    { id: "online", label: "Online" },
-                    { id: "all", label: "All" },
-                    { id: "pending", label: "Pending" },
-                  ] as const
-                ).map((t) => {
-                  const isTabActive = friendsTab === t.id;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setFriendsTab(t.id)}
-                      className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
-                        isTabActive ? "text-zinc-50" : "text-zinc-400 hover:text-zinc-200"
-                      }`}
-                    >
-                      {isTabActive && (
-                        <motion.span
-                          layoutId="friends-active-tab"
-                          transition={{ type: "spring", stiffness: 440, damping: 32 }}
-                          className="absolute inset-0 rounded-lg border border-white/[0.08] bg-white/[0.09]"
-                        />
-                      )}
-                      <span className="relative z-10">{t.label}</span>
-                      {t.id === "pending" && incomingRequestsCount > 0 && (
-                        <span className="relative z-10 rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-bold tabular-nums text-white">
-                          {incomingRequestsCount}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-
+      <div className="siq-workspace-content flex min-w-0 flex-1 flex-col">
+        <div className="siq-workspace-header">
+          {/* TOP BAR — Dynamic based on Home/Friends, Home/DM, or Server Channel */}
+          {viewMode === "home" && homeView === "friends" ? (
+            <header className="flex h-14 shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.07] px-2.5 md:gap-2 md:pl-6 md:pr-3">
+              <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
                 <button
                   type="button"
-                  onClick={() => setFriendsTab("add")}
-                  className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    friendsTab === "add"
-                      ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
-                      : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
-                  }`}
+                  onClick={() => setMobileMenuOpen(true)}
+                  aria-label="Open navigation menu"
+                  aria-expanded={mobileMenuOpen}
+                  aria-controls="workspace-navigation"
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
                 >
-                  Add Friend
+                  <Menu className="h-4 w-4" />
                 </button>
+
+                <div className="flex shrink-0 items-center gap-2 pr-2">
+                  <Users className="h-4 w-4 text-emerald-400" />
+                  <h1 className="text-sm font-semibold text-zinc-100">Friends</h1>
+                </div>
+
+                <span className="h-4 w-px shrink-0 bg-white/[0.1]" />
+
+                <div className="flex shrink-0 items-center gap-1">
+                  {(
+                    [
+                      { id: "online", label: "Online" },
+                      { id: "all", label: "All" },
+                      { id: "pending", label: "Pending" },
+                    ] as const
+                  ).map((t) => {
+                    const isTabActive = friendsTab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setFriendsTab(t.id)}
+                        className={`relative inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          isTabActive ? "text-zinc-50" : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        {isTabActive && (
+                          <motion.span
+                            layoutId="friends-active-tab"
+                            transition={{ type: "spring", stiffness: 440, damping: 32 }}
+                            className="absolute inset-0 rounded-lg border border-white/[0.08] bg-white/[0.09]"
+                          />
+                        )}
+                        <span className="relative z-10">{t.label}</span>
+                        {t.id === "pending" && incomingRequestsCount > 0 && (
+                          <span className="relative z-10 rounded-full bg-rose-500 px-1.5 py-0.2 text-[10px] font-bold tabular-nums text-white">
+                            {incomingRequestsCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => setFriendsTab("add")}
+                    className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      friendsTab === "add"
+                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+                        : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                    }`}
+                  >
+                    Add Friend
+                  </button>
+                </div>
               </div>
-            </div>
 
-            <div className="flex shrink-0 items-center gap-2">
-              {renderHeaderSmartSearch("Search friends, settings...")}
-              <NotificationBell
-                notifications={notifications}
-                onSelectChannel={(id) => selectChannel(id)}
-                onSelectNotification={handleOpenNotification}
-                onMarkItemRead={(id) =>
-                  setNotifications((prev) =>
-                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-                  )
-                }
-                onMarkAllRead={() =>
-                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-                }
-              />
-            </div>
-          </header>
-        ) : viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer ? (
-          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] px-4 md:px-6">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen(true)}
-                aria-label="Open navigation menu"
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-
-              <Avatar
-                name={activeDmPeer.displayName}
-                color={activeDmPeer.avatarColor}
-                avatarUrl={activeDmPeer.avatarUrl}
-                size="sm"
-                status={resolveDisplayStatus(
-                  onlineMemberIds.has(activeDmPeer.id),
-                  activeDmPeer.presenceStatus
-                )}
-                ringClassName="ring-[#121316]"
-              />
-              <div className="min-w-0">
-                <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
-                  {activeDmPeer.displayName}
-                </h1>
+              <div className="flex shrink-0 items-center gap-2">
+                {renderHeaderSmartSearch()}
+                {renderNotificationBell()}
               </div>
-              <span className="hidden truncate text-xs text-zinc-500 sm:inline">
-                @{activeDmPeer.username}
-              </span>
-            </div>
+            </header>
+          ) : viewMode === "home" && homeView === "dm" && activeDm && activeDmPeer ? (
+            <header className="flex h-14 shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.07] px-2.5 md:gap-2 md:pl-6 md:pr-3">
+              <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(true)}
+                  aria-label="Open navigation menu"
+                  aria-expanded={mobileMenuOpen}
+                  aria-controls="workspace-navigation"
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                >
+                  <Menu className="h-4 w-4" />
+                </button>
 
-            <div className="flex items-center gap-1.5">
-              <AnimatedIconButton
-                icon={PhoneIcon}
-                iconSize={16}
-                onClick={() => void handleStartDmCall(activeDmPeer.id, false)}
-                title="Start Voice Call"
-                aria-label="Start Voice Call"
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
-              />
-              <button
-                type="button"
-                onClick={() => void handleStartDmCall(activeDmPeer.id, true)}
-                title="Start Video Call"
-                aria-label="Start Video Call"
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
-              >
-                <Video className="h-4 w-4" />
-              </button>
-
-              <ChannelHeaderTools
-                channelId={activeDm.id}
-                channelName={activeDmPeer.displayName}
-                apiBasePath={`/api/dms/${activeDm.id}/messages`}
-                currentUser={user}
-                members={members}
-                onJumpToMessage={(messageId) =>
-                  setJumpTarget({ messageId, nonce: Date.now() })
-                }
-                onMessageUnpinned={(messageId) =>
-                  setUnpinnedEvent({ messageId, nonce: Date.now() })
-                }
-              />
-
-              <button
-                type="button"
-                onClick={() => setShowDmProfileSidebar((v) => !v)}
-                title={showDmProfileSidebar ? "Hide User Profile" : "Show User Profile"}
-                aria-label="Toggle user profile sidebar"
-                className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors lg:flex ${
-                  showDmProfileSidebar
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                    : "border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
-                }`}
-              >
-                <PanelRight className="h-4 w-4" />
-              </button>
-
-              {renderHeaderSmartSearch(`Search @${activeDmPeer.username}...`)}
-
-              <NotificationBell
-                notifications={notifications}
-                onSelectChannel={(id) => selectChannel(id)}
-                onSelectNotification={handleOpenNotification}
-                onMarkItemRead={(id) =>
-                  setNotifications((prev) =>
-                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-                  )
-                }
-                onMarkAllRead={() =>
-                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-                }
-              />
-            </div>
-          </header>
-        ) : (
-          <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] px-4 md:px-6">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen(true)}
-                aria-label="Open channels menu"
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
-              >
-                <Menu className="h-4 w-4" />
-              </button>
-
-              {activeChannel && (
-                <>
-                  {activeChannel.type === "text" ? (
-                    <Hash className="h-4 w-4 shrink-0 text-zinc-500" />
-                  ) : (
-                    <Volume2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                <Avatar
+                  name={activeDmPeer.displayName}
+                  color={activeDmPeer.avatarColor}
+                  avatarUrl={activeDmPeer.avatarUrl}
+                  size="sm"
+                  status={resolveDisplayStatus(
+                    onlineMemberIds.has(activeDmPeer.id),
+                    activeDmPeer.presenceStatus
                   )}
+                  ringClassName="ring-[#121316]"
+                />
+                <div className="min-w-0">
                   <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
-                    {activeChannel.name}
+                    {activeDmPeer.displayName}
                   </h1>
-                  {activeChannel.isPrivate && (
-                    <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
-                      <Lock className="h-2.5 w-2.5" />
-                      Private
-                    </span>
-                  )}
-                  {activeChannel.description && (
-                    <span
-                      dir="auto"
-                      className="hidden truncate border-l border-white/[0.08] pl-3 text-xs text-zinc-500 sm:inline"
-                    >
-                      {activeChannel.description}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+                </div>
+                <span className="hidden truncate text-xs text-zinc-500 sm:inline">
+                  @{activeDmPeer.username}
+                </span>
+              </div>
 
-            <div className="flex shrink-0 items-center gap-2">
-              {activeChannel && activeChannel.type === "text" && (
+              <div className="flex shrink-0 items-center gap-1 md:gap-1.5">
+                <AnimatedIconButton
+                  icon={PhoneIcon}
+                  iconSize={16}
+                  onClick={() => void handleStartDmCall(activeDmPeer.id, false)}
+                  title="Start Voice Call"
+                  aria-label="Start Voice Call"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleStartDmCall(activeDmPeer.id, true)}
+                  title="Start Video Call"
+                  aria-label="Start Video Call"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                >
+                  <Video className="h-4 w-4" />
+                </button>
+
                 <ChannelHeaderTools
-                  channelId={activeChannel.id}
-                  channelName={activeChannel.name}
+                  open={headerPanel === "pins"}
+                  onToggle={() => toggleHeaderPanel("pins")}
+                  onClose={closeHeaderPanel}
+                  channelId={activeDm.id}
+                  channelName={activeDmPeer.displayName}
+                  apiBasePath={`/api/dms/${activeDm.id}/messages`}
                   currentUser={user}
                   members={members}
                   onJumpToMessage={(messageId) =>
@@ -3126,44 +3395,131 @@ function WorkspaceInner({
                     setUnpinnedEvent({ messageId, nonce: Date.now() })
                   }
                 />
-              )}
 
-              {canCreateInvites && activeServer && (
                 <button
                   type="button"
-                  onClick={() => openServerInvites(activeServer)}
-                  className="hidden h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 sm:inline-flex"
+                  onClick={() => setShowDmProfileSidebar((v) => !v)}
+                  title={showDmProfileSidebar ? "Hide User Profile" : "Show User Profile"}
+                  aria-label="Toggle user profile sidebar"
+                  className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors lg:flex ${
+                    showDmProfileSidebar
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                      : "border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
+                  }`}
                 >
-                  <KeyRound className="h-3.5 w-3.5" />
-                  <span>Invite</span>
+                  <PanelRight className="h-4 w-4" />
                 </button>
-              )}
 
-              {renderHeaderSmartSearch(
-                activeChannel && activeChannel.type === "text"
-                  ? `Search #${activeChannel.name}...`
-                  : "Search channels, settings..."
-              )}
+                {renderHeaderSmartSearch()}
 
-              <NotificationBell
-                notifications={notifications}
-                onSelectChannel={(id) => selectChannel(id)}
-                onSelectNotification={handleOpenNotification}
-                onMarkItemRead={(id) =>
-                  setNotifications((prev) =>
-                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-                  )
-                }
-                onMarkAllRead={() =>
-                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-                }
-              />
-            </div>
-          </header>
-        )}
+                {renderNotificationBell()}
+              </div>
+            </header>
+          ) : (
+            <header className="flex h-14 shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.07] px-2.5 md:pl-6 md:pr-3">
+              <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen(true)}
+                  aria-label="Open channels menu"
+                  aria-expanded={mobileMenuOpen}
+                  aria-controls="workspace-navigation"
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                >
+                  <Menu className="h-4 w-4" />
+                </button>
+
+                {activeChannel && (
+                  <>
+                    {activeChannel.type === "text" ? (
+                      <Hash className="h-4 w-4 shrink-0 text-zinc-500" />
+                    ) : (
+                      <Volume2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                    )}
+                    <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
+                      {activeChannel.name}
+                    </h1>
+                    {activeChannel.isPrivate && (
+                      <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                        <Lock className="h-2.5 w-2.5" />
+                        Private
+                      </span>
+                    )}
+                    {activeChannel.description && (
+                      <span
+                        dir="auto"
+                        className="hidden truncate border-l border-white/[0.08] pl-3 text-xs text-zinc-500 sm:inline"
+                      >
+                        {activeChannel.description}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="flex shrink-0 items-center gap-1 md:gap-2">
+                {activeChannel && activeChannel.type === "text" && (
+                  <ChannelHeaderTools
+                    open={headerPanel === "pins"}
+                    onToggle={() => toggleHeaderPanel("pins")}
+                    onClose={closeHeaderPanel}
+                    channelId={activeChannel.id}
+                    channelName={activeChannel.name}
+                    currentUser={user}
+                    members={members}
+                    onJumpToMessage={(messageId) =>
+                      setJumpTarget({ messageId, nonce: Date.now() })
+                    }
+                    onMessageUnpinned={(messageId) =>
+                      setUnpinnedEvent({ messageId, nonce: Date.now() })
+                    }
+                  />
+                )}
+
+                {canCreateInvites && activeServer && (
+                    <div className="siq-header-slot" key={activeServer.id}>
+                      <button
+                        type="button"
+                        onClick={() => toggleHeaderPanel("invite")}
+                        aria-expanded={headerPanel === "invite"}
+                        aria-controls={headerPanel === "invite" ? "workspace-header-invite" : undefined}
+                        aria-haspopup="dialog"
+                        aria-label="Invite"
+                        data-header-trigger="invite"
+                        className="siq-header-trigger inline-flex size-8 items-center justify-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 md:w-auto md:px-3"
+                      >
+                        <KeyRound className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">Invite</span>
+                      </button>
+                      <ServerInvites
+                        presentation="panel"
+                        open={headerPanel === "invite"}
+                        serverId={activeServer.id}
+                        serverName={activeServer.name}
+                        onClose={() => {
+                          closeHeaderPanel();
+                          focusHeaderTrigger("invite");
+                        }}
+                      />
+                    </div>
+                )}
+
+                {renderHeaderSmartSearch()}
+
+                {showMembersRail && (
+                  <button type="button" aria-label="Show server members" aria-controls="server-members" aria-expanded={mobileMembersOpen} onClick={() => { closeHeaderPanel(); setMobileMembersOpen((open) => !open); }} className="grid size-8 place-items-center rounded-lg border border-white/[0.1] bg-[#18191e] text-zinc-300 lg:hidden">
+                    <Users className="size-4" />
+                  </button>
+                )}
+
+                {renderNotificationBell()}
+              </div>
+            </header>
+          )}
+        </div>
 
         {/* MAIN VIEWPORT */}
-        <div className="flex min-h-0 flex-1 select-text">
+        <div className="flex min-h-0 min-w-0 flex-1 select-text">
           {viewMode === "home" && homeView === "friends" ? (
             <>
               <FriendsHubView
@@ -3230,6 +3586,7 @@ function WorkspaceInner({
                 channel={activeChannel}
                 currentUser={user}
                 members={members}
+                mentionMembers={channelMentionMembers}
                 blobReady={capabilities.blobReady}
                 canSendMessages={
                   myServerPermissions.administrator || myServerPermissions.sendMessages
@@ -3289,15 +3646,16 @@ function WorkspaceInner({
 
           {/* Right Server Members Rail */}
           {showMembersRail && (
-            <aside className="hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
+            <aside id="server-members" data-open={mobileMembersOpen} className="siq-members-rail hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
                   <Users className="h-3.5 w-3.5" />
                   <span>Members</span>
                 </div>
-                <span className="text-[11px] font-medium tabular-nums text-zinc-500">
-                  {onlineServerMembers.length}/{activeServerMembers.length}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium tabular-nums text-zinc-500">{onlineServerMembers.length}/{activeServerMembers.length}</span>
+                  <button type="button" aria-label="Close members" onClick={() => setMobileMembersOpen(false)} className="rounded-lg p-1.5 text-zinc-400 lg:hidden"><X className="size-4" /></button>
+                </div>
               </div>
 
               <div className="flex-1 space-y-5 overflow-y-auto">
@@ -3441,7 +3799,7 @@ function WorkspaceInner({
       </div>
 
       {/* Modals, Popovers & Toast Stack */}
-      <InviteModal
+      <ServerInvites
         open={inviteOpen}
         serverId={inviteServer?.id ?? activeServer?.id ?? null}
         serverName={inviteServer?.name ?? activeServer?.name ?? null}
@@ -3506,293 +3864,6 @@ function WorkspaceInner({
         editingChannel={editingChannel}
         onClose={() => setChannelModalOpen(false)}
         onSaved={handleChannelSaved}
-      />
-
-      <VoiceDynamicIsland
-        visible={Boolean(
-          isVoiceConnected &&
-            voice.activeChannel &&
-            !(
-              viewMode === "server" &&
-              activeChannel?.type === "voice" &&
-              activeChannel.id === voice.activeChannel.id
-            ) &&
-            !(
-              viewMode === "home" &&
-              homeView === "dm" &&
-              voice.activeChannel.slug.startsWith("dm-") &&
-              activeDmId === voice.activeChannel.id
-            )
-        )}
-        onReturnToStage={() => {
-          if (!voice.activeChannel) return;
-          if (voice.activeChannel.slug.startsWith("dm-")) {
-            selectDmConversation(voice.activeChannel.id);
-          } else {
-            selectChannel(voice.activeChannel.id);
-          }
-        }}
-        onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
-        onLeaveVoice={handleLeaveVoiceChannel}
-      />
-
-      <FindConversationModal
-        open={findConvOpen}
-        initialCategory={findConvCategory}
-        currentUserId={user.id}
-        members={members}
-        onlineMemberIds={onlineMemberIds}
-        servers={servers}
-        activeChatContext={activeChatSearchContext}
-        quickActions={
-          [
-            {
-              id: "settings-appearance",
-              label: "Appearance, Themes & Local Fonts",
-              description: "Switch among 8 dark color themes, 4 local fonts, density & scale",
-              keywords: [
-                "theme",
-                "color",
-                "font",
-                "appearance",
-                "ui",
-                "dark",
-                "scale",
-                "density",
-                "تم",
-                "رنگ",
-                "فونت",
-                "ظاهر",
-                "استایل",
-              ],
-              hint: "Settings",
-              icon: "appearance",
-              onSelect: () => openSettings("appearance"),
-            },
-            {
-              id: "settings-account",
-              label: "Account, Profile & Avatar",
-              description: "Edit display name, bio, custom status, avatar & banner",
-              keywords: [
-                "account",
-                "profile",
-                "avatar",
-                "banner",
-                "bio",
-                "username",
-                "status",
-                "پروفایل",
-                "اکانت",
-                "حساب",
-                "آواتار",
-              ],
-              hint: "Settings",
-              icon: "settings",
-              onSelect: () => openSettings("account"),
-            },
-            {
-              id: "settings-voice",
-              label: "Voice, Audio & Noise Cancellation",
-              description: "Microphone, speakers, Krisp/RNNoise filter & push-to-talk",
-              keywords: [
-                "voice",
-                "audio",
-                "mic",
-                "microphone",
-                "speaker",
-                "noise",
-                "volume",
-                "sound",
-                "ویس",
-                "صدا",
-                "میکروفون",
-                "نویز",
-              ],
-              hint: "Settings",
-              icon: "voice",
-              onSelect: () => openSettings("voice"),
-            },
-            {
-              id: "settings-notifications",
-              label: "Notifications, Sounds & Toast Test",
-              description: "Configure desktop alerts, sound effects & test toast stacking",
-              keywords: [
-                "notifications",
-                "notify",
-                "toast",
-                "sound",
-                "alert",
-                "bell",
-                "test",
-                "نوتیف",
-                "نوتیفیکیشن",
-                "اعلان",
-                "صدای پیام",
-              ],
-              hint: "Settings",
-              icon: "notifications",
-              onSelect: () => openSettings("notifications"),
-            },
-            {
-              id: "settings-privacy",
-              label: "Privacy, Security & Password",
-              description: "Change password, session security & local cache controls",
-              keywords: [
-                "privacy",
-                "security",
-                "password",
-                "cache",
-                "reset",
-                "امنیت",
-                "رمز",
-                "حریم خصوصی",
-              ],
-              hint: "Settings",
-              icon: "privacy",
-              onSelect: () => openSettings("privacy"),
-            },
-            {
-              id: "friends-hub",
-              label: "Friends & Direct Messages",
-              description: "View online friends, pending requests & private chats",
-              keywords: ["friends", "dm", "home", "online", "دوستان", "پیام خصوصی", "خانه"],
-              hint: "Home",
-              icon: "friends",
-              onSelect: () => selectHomeFriends("online"),
-            },
-            {
-              id: "add-friend",
-              label: "Add a Friend",
-              description: "Send a friend request by username",
-              keywords: ["add friend", "request", "invite", "افزودن دوست", "دوست جدید"],
-              hint: "Friends",
-              icon: "add-friend",
-              onSelect: () => selectHomeFriends("add"),
-            },
-            {
-              id: "create-join-server",
-              label: "Create or Join a Server",
-              description: "Start a new server or join with an invite code",
-              keywords: ["create server", "join server", "new server", "ساخت سرور", "ورود به سرور"],
-              hint: "Server",
-              icon: "server",
-              onSelect: () => setServerCreateJoinOpen(true),
-            },
-            ...(activeServer
-              ? ([
-                  {
-                    id: "server-settings",
-                    label: `Server Settings — ${activeServer.name}`,
-                    description: "Edit server name, icon, overview & members",
-                    keywords: ["server settings", "manage server", "تنظیمات سرور", activeServer.name],
-                    hint: activeServer.name,
-                    icon: "settings",
-                    onSelect: () => {
-                      setServerSettingsTab("overview");
-                      setServerSettingsOpen(true);
-                    },
-                  },
-                  {
-                    id: "server-roles",
-                    label: `Roles & Permissions — ${activeServer.name}`,
-                    description: "Configure server roles, colors & access permissions",
-                    keywords: ["roles", "permissions", "admin", "نقش", "دسترسی", activeServer.name],
-                    hint: activeServer.name,
-                    icon: "roles",
-                    onSelect: () => {
-                      setServerSettingsTab("roles");
-                      setServerSettingsOpen(true);
-                    },
-                  },
-                  ...(canCreateInvites
-                    ? ([
-                        {
-                          id: "server-invite",
-                          label: `Invite People to ${activeServer.name}`,
-                          description: "Generate or copy a server invite link",
-                          keywords: ["invite", "link", "code", "دعوت", "لینک دعوت"],
-                          hint: activeServer.name,
-                          icon: "invite",
-                          onSelect: () => openServerInvites(activeServer),
-                        },
-                      ] satisfies CommandQuickAction[])
-                    : []),
-                  ...(canManageChannels
-                    ? ([
-                        {
-                          id: "create-channel",
-                          label: `Create Channel in ${activeServer.name}`,
-                          description: "Add a new text or voice channel",
-                          keywords: ["create channel", "new channel", "text", "voice", "ساخت کانال", "کانال جدید"],
-                          hint: activeServer.name,
-                          icon: "channel",
-                          onSelect: () => openCreateChannel("text", null),
-                        },
-                        {
-                          id: "create-category",
-                          label: `Create Category in ${activeServer.name}`,
-                          description: "Group server channels under a new category",
-                          keywords: ["create category", "new category", "گروه کانال", "دسته‌بندی"],
-                          hint: activeServer.name,
-                          icon: "category",
-                          onSelect: () => {
-                            setEditingCategory(null);
-                            setCategoryModalOpen(true);
-                          },
-                        },
-                      ] satisfies CommandQuickAction[])
-                    : []),
-                ] satisfies CommandQuickAction[])
-              : []),
-            ...(isVoiceConnected
-              ? ([
-                  {
-                    id: "voice-toggle-mute",
-                    label: voice.isMuted ? "Unmute Microphone" : "Mute Microphone",
-                    description: `Active in ${voice.activeChannel?.name ?? "voice"}`,
-                    keywords: ["mute", "unmute", "mic", "میوت", "میکروفون"],
-                    hint: "Voice",
-                    icon: "mic",
-                    onSelect: () => void voice.toggleMute(),
-                  },
-                  {
-                    id: "voice-toggle-deafen",
-                    label: voice.isDeafened ? "Undeafen Audio" : "Deafen Audio",
-                    description: "Toggle incoming voice sound & microphone",
-                    keywords: ["deafen", "undeafen", "audio", "دیفن", "قطع صدا"],
-                    hint: "Voice",
-                    icon: "voice",
-                    onSelect: () => void voice.toggleDeafen(),
-                  },
-                  {
-                    id: "voice-screen-share",
-                    label: voice.isScreenSharing ? "Screen Share Options" : "Share Screen",
-                    description: "Configure stream resolution, FPS & audio",
-                    keywords: ["screen", "share", "stream", "live", "استریم", "اشتراک صفحه"],
-                    hint: "Voice",
-                    icon: "voice",
-                    onSelect: () => setScreenShareModalOpen(true),
-                  },
-                  {
-                    id: "voice-leave",
-                    label: "Disconnect from Voice",
-                    description: `Leave ${voice.activeChannel?.name ?? "current voice room"}`,
-                    keywords: ["leave", "disconnect", "hangup", "خروج از ویس", "قطع تماس"],
-                    hint: "Voice",
-                    icon: "voice",
-                    onSelect: () => handleLeaveVoiceChannel(),
-                  },
-                ] satisfies CommandQuickAction[])
-              : []),
-          ] satisfies CommandQuickAction[]
-        }
-        onClose={() => setFindConvOpen(false)}
-        onStartDm={(uid) => void handleStartDm(uid)}
-        onSelectServer={(sid) => selectServer(sid)}
-        onSelectChannel={(sid, cid) => selectChannel(cid, sid)}
-        onJumpToMessage={(messageId) =>
-          setJumpTarget({ messageId, nonce: Date.now() })
-        }
       />
 
       <ScreenShareModal

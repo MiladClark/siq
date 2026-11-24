@@ -1,13 +1,17 @@
 "use client";
 
 import { Loader2, Pin, X } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence } from "motion/react";
+import { useEffect, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { HeaderPanel } from "@/components/ui/HeaderPanel";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { MessageItem, PublicUser } from "@/lib/types";
 
 interface ChannelHeaderToolsProps {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
   channelId: string;
   channelName: string;
   apiBasePath?: string;
@@ -26,6 +30,9 @@ function formatCompactDate(iso: string): string {
 }
 
 export function ChannelHeaderTools({
+  open,
+  onToggle,
+  onClose,
   channelId,
   channelName,
   apiBasePath,
@@ -37,65 +44,42 @@ export function ChannelHeaderTools({
   const baseUrl = apiBasePath ?? `/api/channels/${channelId}/messages`;
   const notify = useSystemNotify();
 
-  const [pinsOpen, setPinsOpen] = useState(false);
   const [pinsLoading, setPinsLoading] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState<MessageItem[]>([]);
 
-  const pinsRef = useRef<HTMLDivElement | null>(null);
-
-  // Reset panels on channel switch
   useEffect(() => {
-    setPinsOpen(false);
     setPinnedMessages([]);
-  }, [channelId]);
+  }, [baseUrl]);
 
-  // Close popover on outside click / Escape
   useEffect(() => {
-    if (!pinsOpen) return;
-    function handleDown(e: MouseEvent) {
-      if (pinsRef.current && !pinsRef.current.contains(e.target as Node)) {
-        setPinsOpen(false);
-      }
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setPinsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleDown);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleDown);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [pinsOpen]);
-
-  const loadPins = useCallback(async () => {
+    if (!open) return;
+    const controller = new AbortController();
+    const { signal } = controller;
     setPinsLoading(true);
-    try {
-      const res = await fetch(`${baseUrl}?pinned=true`, {
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      setPinnedMessages(data.messages ?? []);
-    } catch {
-      notify({
-        kind: "error",
-        title: "Pinned Messages",
-        message: "Failed to load pinned messages.",
-        source: channelName,
-      });
-    } finally {
-      setPinsLoading(false);
-    }
-  }, [baseUrl, channelName, notify]);
 
-  useEffect(() => {
-    if (pinsOpen) {
-      void loadPins();
+    async function loadPins() {
+      try {
+        const res = await fetch(`${baseUrl}?pinned=true`, { cache: "no-store", signal });
+        if (!res.ok) throw new Error("Could not load pinned messages.");
+        const data = await res.json();
+        if (!signal.aborted) setPinnedMessages(data.messages ?? []);
+      } catch {
+        if (!signal.aborted) {
+          notify({
+            kind: "error",
+            title: "Pinned Messages",
+            message: "Failed to load pinned messages.",
+            source: channelName,
+          });
+        }
+      } finally {
+        if (!signal.aborted) setPinsLoading(false);
+      }
     }
-  }, [pinsOpen, loadPins]);
+
+    void loadPins();
+    return () => controller.abort();
+  }, [open, baseUrl, channelName, notify]);
 
   async function handleUnpin(msg: MessageItem) {
     try {
@@ -136,30 +120,24 @@ export function ChannelHeaderTools({
   }
 
   return (
-    <div ref={pinsRef} className="relative">
+    <div className="siq-header-slot">
       <button
         type="button"
-        onClick={() => setPinsOpen((v) => !v)}
+        onClick={onToggle}
         title="Pinned messages"
         aria-label="Pinned messages"
-        className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-          pinsOpen
-            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-            : "border-white/[0.1] bg-[#16171D] text-zinc-300 hover:border-white/[0.18] hover:text-white"
-        }`}
+        aria-expanded={open}
+        aria-controls={open ? "workspace-header-pins" : undefined}
+        aria-haspopup="dialog"
+        data-header-trigger="pins"
+        className="siq-header-trigger flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#16171D] text-zinc-300 transition-colors hover:border-white/[0.18] hover:text-white"
       >
         <Pin className="h-4 w-4" />
       </button>
 
       <AnimatePresence>
-        {pinsOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -6, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.96 }}
-            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            className="siq-bezel absolute right-0 top-10 z-50 w-[340px] max-w-[calc(100vw-2rem)] origin-top-right overflow-hidden rounded-2xl border border-white/[0.11] bg-[#121319]/98 backdrop-blur-xl"
-          >
+        {open && (
+          <HeaderPanel kind="pins" label="Pinned Messages">
             <div className="flex items-center justify-between border-b border-white/[0.07] px-3.5 py-2.5">
               <div className="flex items-center gap-2">
                 <Pin className="h-3.5 w-3.5 text-emerald-400" />
@@ -172,7 +150,7 @@ export function ChannelHeaderTools({
               </span>
             </div>
 
-            <div className="max-h-[360px] divide-y divide-white/[0.05] overflow-y-auto">
+            <div className="min-h-0 max-h-[360px] divide-y divide-white/[0.05] overflow-y-auto">
               {pinsLoading ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-xs text-zinc-500">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -224,7 +202,7 @@ export function ChannelHeaderTools({
                             type="button"
                             onClick={() => {
                               onJumpToMessage(msg.id);
-                              setPinsOpen(false);
+                              onClose();
                             }}
                             className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
                           >
@@ -247,7 +225,7 @@ export function ChannelHeaderTools({
                 })
               )}
             </div>
-          </motion.div>
+          </HeaderPanel>
         )}
       </AnimatePresence>
     </div>

@@ -71,14 +71,14 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
   }
 }
 
-export async function setSessionCookie(token: string): Promise<void> {
+export async function setSessionCookie(token: string, rememberMe = true): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    ...(rememberMe ? { maxAge: SESSION_MAX_AGE_SECONDS } : {}),
   });
 }
 

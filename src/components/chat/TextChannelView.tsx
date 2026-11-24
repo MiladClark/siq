@@ -2,9 +2,6 @@
 
 import {
   ArrowDown,
-  Check,
-  Copy,
-  Download,
   ExternalLink,
   File,
   FileArchive,
@@ -16,11 +13,9 @@ import {
   Hash,
   Loader2,
   Maximize2,
-  Paperclip,
   Pencil,
   Pin,
   Reply,
-  Send,
   Share2,
   Smile,
   SmilePlus,
@@ -39,9 +34,15 @@ import {
   ReactNode,
   useCallback,
   useEffect,
+  useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { ChatCodeBlock } from "@/components/chat/ChatCodeBlock";
+import { MentionSuggestions } from "@/components/chat/MentionSuggestions";
+import { AnimatedIconButton } from "@/components/ui/AnimatedIcon";
+import { AttachFileIcon, CheckIcon, CopyIcon, DownloadIcon, SendIcon } from "@/components/ui/animated-icons";
 import { Avatar } from "@/components/ui/Avatar";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
 import {
@@ -52,6 +53,7 @@ import { SlidingNumber } from "@/components/ui/MotionPrimitives";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
 import { convertImageFileToWebP } from "@/lib/image-webp";
+import { getMentionDraft, splitMessageText } from "@/lib/mentions";
 import type { MessageDensity, TextScale } from "@/lib/preferences";
 import { playSound } from "@/lib/sounds";
 import type {
@@ -66,6 +68,7 @@ interface TextChannelViewProps {
   channel: ChannelItem;
   currentUser: PublicUser;
   members: PublicUser[];
+  mentionMembers: PublicUser[];
   blobReady: boolean;
   isDm?: boolean;
   canSendMessages?: boolean;
@@ -268,23 +271,39 @@ function triggerDirectDownload(att: MessageAttachment) {
   document.body.removeChild(link);
 }
 
-function renderLinkifiedText(text: string): ReactNode[] {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("http://") || part.startsWith("https://")) {
+function renderMessageText(text: string, memberHandles: Set<string>): ReactNode[] {
+  return splitMessageText(text).map((part, i) => {
+    if (part.kind === "code") {
+      return <ChatCodeBlock key={i} code={part.text} language={part.language} filename={part.filename} />;
+    }
+    if (part.kind === "inline-code") {
+      return (
+        <code key={i} dir="ltr" className="break-all rounded border border-white/[0.08] bg-black/30 px-1 py-px font-mono text-[0.9em] text-zinc-100">
+          {part.text}
+        </code>
+      );
+    }
+    if (part.kind === "link") {
       return (
         <a
           key={i}
-          href={part}
+          href={part.text}
           target="_blank"
           rel="noopener noreferrer"
           className="text-emerald-400 underline decoration-emerald-500/40 underline-offset-2 hover:text-emerald-300"
         >
-          {part}
+          {part.text}
         </a>
       );
     }
-    return <span key={i}>{part}</span>;
+    if (part.kind === "mention" && memberHandles.has(part.text.toLowerCase())) {
+      return (
+        <span key={i} className="rounded-sm bg-emerald-500/15 px-0.5 font-medium text-emerald-300">
+          {part.text}
+        </span>
+      );
+    }
+    return <Fragment key={i}>{part.text}</Fragment>;
   });
 }
 
@@ -292,6 +311,7 @@ export function TextChannelView({
   channel,
   currentUser,
   members,
+  mentionMembers,
   blobReady,
   isDm = false,
   canSendMessages = true,
@@ -327,6 +347,26 @@ export function TextChannelView({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [unseenBelowCount, setUnseenBelowCount] = useState(0);
   const [composerText, setComposerText] = useState("");
+  const mentionListId = useId();
+  const [mentionCaret, setMentionCaret] = useState<number | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionDraft = mentionCaret === null ? null : getMentionDraft(composerText, mentionCaret);
+  const mentionQuery = mentionDraft?.query;
+  const mentionOptions = useMemo(() => {
+    if (mentionQuery === undefined) return [];
+    return mentionMembers.filter((member) =>
+      member.id !== currentUser.id && (
+        member.username.toLowerCase().includes(mentionQuery) ||
+        member.displayName.toLowerCase().includes(mentionQuery)
+      )
+    );
+  }, [currentUser.id, mentionMembers, mentionQuery]);
+  const activeMentionIndex = Math.min(mentionIndex, mentionOptions.length - 1);
+  const activeMention = mentionOptions[activeMentionIndex];
+  const memberHandles = useMemo(
+    () => new Set(members.map((member) => `@${member.username.toLowerCase()}`)),
+    [members]
+  );
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [sending, setSending] = useState(false);
@@ -334,6 +374,7 @@ export function TextChannelView({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [emojiPicker, setEmojiPicker] = useState<{
     mode: "reaction" | "composer";
@@ -354,6 +395,12 @@ export function TextChannelView({
   useEffect(() => {
     setLightboxZoom(1);
   }, [lightboxImage]);
+
+  useEffect(() => {
+    if (!copiedMessageId) return;
+    const timer = window.setTimeout(() => setCopiedMessageId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copiedMessageId]);
 
   const setError = useCallback(
     (msg: string | null) => {
@@ -417,6 +464,7 @@ export function TextChannelView({
     const cached = channelMessageCache.get(targetChannelId);
 
     setReplyingTo(null);
+    setMentionCaret(null);
     setError(null);
     setUnseenBelowCount(0);
     setLoadingOlder(false);
@@ -813,6 +861,7 @@ export function TextChannelView({
 
         if (targetChannelId === activeChannelIdRef.current) {
           setComposerText("");
+          setMentionCaret(null);
           if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
           }
@@ -860,7 +909,48 @@ export function TextChannelView({
     }
   }
 
+  function updateMentionCaret(textarea: HTMLTextAreaElement) {
+    const { selectionStart, selectionEnd } = textarea;
+    setMentionCaret(selectionStart === selectionEnd ? selectionEnd : null);
+    setMentionIndex(0);
+  }
+
+  function insertMention(member: PublicUser) {
+    if (!mentionDraft) return;
+    const { start, end } = mentionDraft;
+    const suffix = composerText.slice(end);
+    const mention = `@${member.username}${suffix.startsWith(" ") ? "" : " "}`;
+    setComposerText(composerText.slice(0, start) + mention + suffix);
+    setMentionCaret(null);
+    const nextCaret = start + mention.length + (suffix.startsWith(" ") ? 1 : 0);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.nativeEvent.isComposing) return;
+    if (mentionDraft && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setMentionCaret(null);
+      return;
+    }
+    if (activeMention && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (activeMentionIndex + step + mentionOptions.length) % mentionOptions.length;
+      setMentionIndex(nextIndex);
+      document.getElementById(`${mentionListId}-${mentionOptions[nextIndex].id}`)?.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (activeMention && !e.shiftKey && (e.key === "Enter" || e.key === "Tab")) {
+      e.preventDefault();
+      insertMention(activeMention);
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
@@ -1153,7 +1243,7 @@ export function TextChannelView({
         type: "item",
         id: "copy-text",
         label: "Copy Text",
-        icon: <Copy className="h-3.5 w-3.5" />,
+        icon: <CopyIcon size={14} />,
         onSelect: () => {
           void navigator.clipboard.writeText(msg.content);
           playSound("copy");
@@ -1206,14 +1296,14 @@ export function TextChannelView({
         type: "item",
         id: "img-download",
         label: "Download Image",
-        icon: <Download className="h-3.5 w-3.5" />,
+        icon: <DownloadIcon size={14} />,
         onSelect: () => triggerDirectDownload(att),
       },
       {
         type: "item",
         id: "img-copy-link",
         label: "Copy Image Link",
-        icon: <Copy className="h-3.5 w-3.5" />,
+        icon: <CopyIcon size={14} />,
         onSelect: () => {
           const fullUrl = att.url.startsWith("/")
             ? `${window.location.origin}${att.url}`
@@ -1250,7 +1340,7 @@ export function TextChannelView({
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 flex-col bg-[#121316]"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#121316]"
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -1463,17 +1553,22 @@ export function TextChannelView({
                       </button>
                     )}
                     {msg.content && (
-                      <button
+                      <AnimatedIconButton
                         type="button"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(msg.content);
-                          playSound("copy");
+                        icon={copiedMessageId === msg.id ? CheckIcon : CopyIcon}
+                        iconSize={14}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(msg.content);
+                            setCopiedMessageId(msg.id);
+                            playSound("copy");
+                          } catch {
+                            setError("Clipboard access denied.");
+                          }
                         }}
-                        title="Copy text"
+                        title={copiedMessageId === msg.id ? "Copied" : "Copy text"}
                         className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
+                      />
                     )}
                     {canDelete && (
                       <button
@@ -1563,15 +1658,16 @@ export function TextChannelView({
                         />
                         <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                           <span>Press Enter to save · Esc to cancel</span>
-                          <button
+                          <AnimatedIconButton
                             type="button"
+                            icon={CheckIcon}
+                            iconSize={12}
                             disabled={savingEdit}
                             onClick={() => void handleSaveEdit(msg.id)}
                             className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
                           >
-                            <Check className="h-3 w-3" />
                             <span>Save</span>
-                          </button>
+                          </AnimatedIconButton>
                           <button
                             type="button"
                             onClick={() => {
@@ -1586,11 +1682,11 @@ export function TextChannelView({
                       </div>
                     ) : (
                       msg.content && (
-                        <p
+                        <div
                           dir="auto"
                           className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
                         >
-                          {renderLinkifiedText(msg.content)}
+                          {renderMessageText(msg.content, memberHandles)}
                           {msg.editedAt && (
                             <span
                               title={`Edited ${formatTime(msg.editedAt)}`}
@@ -1599,7 +1695,7 @@ export function TextChannelView({
                               (edited)
                             </span>
                           )}
-                        </p>
+                        </div>
                       )
                     )}
 
@@ -1629,17 +1725,16 @@ export function TextChannelView({
                                 </button>
 
                                 {/* Direct download pill on image hover */}
-                                <button
+                                <AnimatedIconButton
                                   type="button"
+                                  icon={DownloadIcon}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     triggerDirectDownload(att);
                                   }}
                                   title="Download image"
                                   className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.15] bg-black/70 text-zinc-200 opacity-0 backdrop-blur-sm transition-all hover:bg-black hover:text-emerald-300 group-hover/img:opacity-100"
-                                >
-                                  <Download className="h-4 w-4" />
-                                </button>
+                                />
                               </div>
                             );
                           }
@@ -1666,14 +1761,13 @@ export function TextChannelView({
                                   <span>{formatBytes(att.size)}</span>
                                 </div>
                               </div>
-                              <button
+                              <AnimatedIconButton
                                 type="button"
+                                icon={DownloadIcon}
                                 onClick={() => triggerDirectDownload(att)}
                                 title={`Download ${att.name}`}
                                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#18191E] text-zinc-300 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
-                              >
-                                <Download className="h-4 w-4" />
-                              </button>
+                              />
                             </div>
                           );
                         })}
@@ -1749,7 +1843,7 @@ export function TextChannelView({
       </AnimatePresence>
 
       {/* Studio Floating Composer Area */}
-      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-4 pb-3.5 pt-2 md:px-6">
+      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-2.5 pb-2.5 pt-2 md:px-6 md:pb-3.5">
         <AnimatePresence>
           {replyingTo && (
             <motion.div
@@ -1821,8 +1915,18 @@ export function TextChannelView({
 
         <form
           onSubmit={(e) => void handleSend(e)}
-          className="siq-bezel flex items-end gap-2 rounded-2xl border border-white/[0.1] bg-[#16171E] px-3 py-2 transition-all focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12"
+          className="siq-bezel relative flex items-end gap-1 rounded-2xl border border-white/[0.1] bg-[#16171E] px-1.5 py-1.5 transition-all focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12 md:gap-2 md:px-3 md:py-2"
         >
+          <AnimatePresence>
+            {mentionDraft && (
+              <MentionSuggestions
+                id={mentionListId}
+                members={mentionOptions}
+                activeIndex={activeMentionIndex}
+                onSelect={insertMention}
+              />
+            )}
+          </AnimatePresence>
           <input
             ref={fileInputRef}
             type="file"
@@ -1836,8 +1940,9 @@ export function TextChannelView({
             }}
           />
 
-          <button
+          <AnimatedIconButton
             type="button"
+            icon={AttachFileIcon}
             disabled={uploadingCount > 0}
             onClick={() => {
               if (!blobReady) {
@@ -1850,18 +1955,22 @@ export function TextChannelView({
             }}
             title={blobReady ? "Attach image or file" : "Blob storage not configured"}
             className="mb-0.5 rounded-xl p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
-          >
-            <Paperclip className="h-4 w-4" />
-          </button>
+          />
 
           <textarea
             ref={textareaRef}
             rows={1}
             dir="auto"
             value={composerText}
+            aria-autocomplete="list"
+            aria-controls={mentionDraft ? mentionListId : undefined}
+            aria-activedescendant={activeMention ? `${mentionListId}-${activeMention.id}` : undefined}
+            onBlur={() => setMentionCaret(null)}
+            onSelect={(e) => updateMentionCaret(e.currentTarget)}
             onChange={(e) => {
               setComposerText(e.target.value);
               const el = e.currentTarget;
+              updateMentionCaret(el);
               el.style.height = "auto";
               el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
             }}
@@ -1872,10 +1981,10 @@ export function TextChannelView({
                 ? `You do not have permission to send messages in ${channelLabel}`
                 : uploadingCount > 0
                   ? "Uploading attachment..."
-                  : `Message ${channelLabel} (Enter to send, paste screenshot)`
+                  : `Message ${channelLabel}`
             }
             disabled={!canSendMessages}
-            className="max-h-36 flex-1 resize-none bg-transparent py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+            className="max-h-36 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
           />
 
           <button
@@ -1888,8 +1997,8 @@ export function TextChannelView({
             <Smile className="h-4 w-4" />
           </button>
 
-          <motion.button
-            whileTap={{ scale: 0.92 }}
+          <AnimatedIconButton
+            icon={SendIcon}
             type="submit"
             disabled={
               sending ||
@@ -1897,10 +2006,8 @@ export function TextChannelView({
               (!composerText.trim() && pendingAttachments.length === 0)
             }
             aria-label="Send message"
-            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
-          >
-            <Send className="h-4 w-4" />
-          </motion.button>
+            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
+          />
         </form>
       </div>
 
@@ -1983,14 +2090,15 @@ export function TextChannelView({
                     </button>
                   </div>
 
-                  <button
+                  <AnimatedIconButton
                     type="button"
+                    icon={DownloadIcon}
+                    iconSize={14}
                     onClick={() => triggerDirectDownload(lightboxImage)}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-95"
                   >
-                    <Download className="h-3.5 w-3.5" />
                     <span>Download</span>
-                  </button>
+                  </AnimatedIconButton>
                   <a
                     href={lightboxImage.url}
                     target="_blank"

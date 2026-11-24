@@ -137,7 +137,7 @@ export function DmConversationView({
   };
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Incoming / Waiting 1-on-1 Call Banner */}
         {peerWaitingInCall && (
@@ -183,7 +183,7 @@ export function DmConversationView({
 
         {/* Active 1-on-1 DM Call Stage */}
         {isInThisDmCall && (
-          <div className="shrink-0 border-b border-white/[0.08] bg-[#0B0C0F] px-5 py-4">
+          <div className="max-h-[38dvh] shrink-0 overflow-y-auto border-b border-white/[0.08] bg-[#0B0C0F] px-3 py-2.5 md:max-h-none md:px-5 md:py-4">
             <div className="flex flex-wrap items-center justify-center gap-4">
               {voice.participants.map((p) => {
                 const m = members.find((item) => item.id === p.identity);
@@ -311,6 +311,7 @@ export function DmConversationView({
           channel={syntheticDmChannel}
           currentUser={currentUser}
           members={members}
+          mentionMembers={[livePeer]}
           blobReady={blobReady}
           isDm
           density={density}

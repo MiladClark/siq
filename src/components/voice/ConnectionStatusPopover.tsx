@@ -2,11 +2,15 @@
 
 import { Lock, ShieldCheck, Wifi } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { HeaderPanel } from "@/components/ui/HeaderPanel";
 import type { VoiceNetworkStats } from "@/lib/types";
 
 interface ConnectionStatusButtonProps {
   stats: VoiceNetworkStats;
+  open: boolean;
+  onToggle: () => void;
 }
 
 function getSignalStyle(pingMs: number | null) {
@@ -41,29 +45,26 @@ function formatTickTime(ts: number): string {
   });
 }
 
-export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
-  const [open, setOpen] = useState(false);
+export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStatusButtonProps) {
   const [hovered, setHovered] = useState(false);
   const [tab, setTab] = useState<"connection" | "privacy">("connection");
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
 
   const signal = getSignalStyle(stats.lastPingMs);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    function handleOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    function updateAnchor() {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setAnchor({ left: rect.left, top: rect.top, width: rect.width });
     }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown", handleKey);
+    updateAnchor();
+    window.addEventListener("resize", updateAnchor);
+    window.addEventListener("scroll", updateAnchor, true);
     return () => {
-      document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("resize", updateAnchor);
+      window.removeEventListener("scroll", updateAnchor, true);
     };
   }, [open]);
 
@@ -86,7 +87,7 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
   const lastTs = samples[samples.length - 1]?.timestamp;
 
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       {/* Hover Ping Tooltip (matches Discord-style ms pill above icon) */}
       <AnimatePresence>
         {hovered && !open && (
@@ -104,169 +105,190 @@ export function ConnectionStatusButton({ stats }: ConnectionStatusButtonProps) {
 
       {/* Signal Icon Button */}
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         aria-label="Voice connection details"
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-all active:scale-95 ${signal.box}`}
+        aria-expanded={open}
+        aria-controls={open ? "workspace-header-voice" : undefined}
+        aria-haspopup="dialog"
+        data-header-trigger="voice"
+        className={`siq-voice-trigger flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${signal.box}`}
       >
-        <Wifi className="h-4 w-4" />
+        <Wifi className="size-[18px]" />
       </button>
 
       {/* Detailed Network Popover */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.96 }}
-            transition={{ duration: 0.17, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-[132px] left-3 z-[85] w-[306px] origin-bottom-left overflow-hidden rounded-xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/80"
-          >
-            {/* Tabs */}
-            <div className="flex items-center gap-5 border-b border-white/[0.07] px-4 pt-3">
-              <button
-                type="button"
-                onClick={() => setTab("connection")}
-                className={`relative pb-2.5 text-xs font-semibold transition-colors ${
-                  tab === "connection" ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                Connection
-                {tab === "connection" && (
-                  <motion.span
-                    layoutId="conn-tab-indicator"
-                    className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-emerald-400"
-                  />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab("privacy")}
-                className={`relative pb-2.5 text-xs font-semibold transition-colors ${
-                  tab === "privacy" ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                Privacy
-                {tab === "privacy" && (
-                  <motion.span
-                    layoutId="conn-tab-indicator"
-                    className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-emerald-400"
-                  />
-                )}
-              </button>
-            </div>
+      {anchor && createPortal(
+        <AnimatePresence>
+          {open && (
+            <HeaderPanel
+              kind="voice"
+              label="Voice connection details"
+              style={{
+                "--voice-anchor-left": `${anchor.left}px`,
+                "--voice-anchor-top": `${anchor.top}px`,
+                "--voice-anchor-width": `${anchor.width}px`,
+              } as CSSProperties}
+            >
+              {/* Tabs */}
+              <div className="flex shrink-0 items-center gap-5 border-b border-white/[0.07] px-4 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setTab("connection")}
+                  aria-pressed={tab === "connection"}
+                  className={`relative pb-2.5 text-xs font-semibold transition-colors ${
+                    tab === "connection" ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  Connection
+                  {tab === "connection" && (
+                    <motion.span
+                      layoutId="conn-tab-indicator"
+                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-emerald-400"
+                    />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("privacy")}
+                  aria-pressed={tab === "privacy"}
+                  className={`relative pb-2.5 text-xs font-semibold transition-colors ${
+                    tab === "privacy" ? "text-emerald-400" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  Privacy
+                  {tab === "privacy" && (
+                    <motion.span
+                      layoutId="conn-tab-indicator"
+                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-emerald-400"
+                    />
+                  )}
+                </button>
+              </div>
 
-            {tab === "connection" ? (
-              <div className="space-y-3.5 p-4">
-                {/* Live Ping Graph */}
-                <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-[#0B0C0F] p-2.5">
-                  <div className="relative h-[84px] w-full">
-                    {/* Horizontal Grid Lines + Y-Axis labels */}
-                    <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[10px] font-medium tabular-nums text-zinc-500">
-                      <div className="flex items-center justify-end border-b border-white/[0.05] pb-0.5">
-                        {Math.round(maxY)}
+              {tab === "connection" ? (
+                <div className="min-h-0 space-y-3.5 overflow-y-auto p-4">
+                  {/* Live Ping Graph */}
+                  <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-[#0B0C0F] p-2.5">
+                    <div className="relative h-[84px] w-full">
+                      {/* Horizontal Grid Lines + Y-Axis labels */}
+                      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[10px] font-medium tabular-nums text-zinc-500">
+                        <div className="flex items-center justify-end border-b border-white/[0.05] pb-0.5">
+                          {Math.round(maxY)}
+                        </div>
+                        <div className="flex items-center justify-end border-b border-white/[0.05] pb-0.5">
+                          {Math.round(maxY / 2)}
+                        </div>
+                        <div className="flex items-center justify-end">0</div>
                       </div>
-                      <div className="flex items-center justify-end border-b border-white/[0.05] pb-0.5">
-                        {Math.round(maxY / 2)}
-                      </div>
-                      <div className="flex items-center justify-end">0</div>
+
+                      <svg
+                        viewBox={`0 0 ${width} ${height}`}
+                        className="h-full w-full overflow-visible"
+                        preserveAspectRatio="none"
+                      >
+                        {samples.length > 1 ? (
+                          <polyline
+                            fill="none"
+                            stroke={signal.stroke}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            points={points}
+                          />
+                        ) : (
+                          <line
+                            x1="0"
+                            y1={height / 2}
+                            x2={width}
+                            y2={height / 2}
+                            stroke="#3f3f46"
+                            strokeDasharray="4 4"
+                            strokeWidth="1.5"
+                          />
+                        )}
+                      </svg>
                     </div>
 
-                    <svg
-                      viewBox={`0 0 ${width} ${height}`}
-                      className="h-full w-full overflow-visible"
-                      preserveAspectRatio="none"
-                    >
-                      {samples.length > 1 ? (
-                        <polyline
-                          fill="none"
-                          stroke={signal.stroke}
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          points={points}
-                        />
-                      ) : (
-                        <line
-                          x1="0"
-                          y1={height / 2}
-                          x2={width}
-                          y2={height / 2}
-                          stroke="#3f3f46"
-                          strokeDasharray="4 4"
-                          strokeWidth="1.5"
-                        />
+                    {/* X-Axis Timestamps */}
+                    <div className="mt-1.5 flex items-center justify-between text-[10px] font-medium tabular-nums text-zinc-500">
+                      <span>{firstTs ? formatTickTime(firstTs) : "—"}</span>
+                      <span>{midTs ? formatTickTime(midTs) : ""}</span>
+                      <span>{lastTs ? formatTickTime(lastTs) : "Now"}</span>
+                    </div>
+                  </div>
+
+                  {/* Server & Live Metrics */}
+                  <div className="space-y-1.5">
+                    <p className="truncate text-xs font-semibold text-zinc-100">
+                      {stats.serverHost || "LiveKit"}
+                    </p>
+                    <div className="space-y-0.5 text-xs text-zinc-400">
+                      <p>
+                        Average voice ping{" "}
+                        <span className="font-semibold tabular-nums text-zinc-100">
+                          {stats.avgPingMs !== null ? `${stats.avgPingMs} ms` : "—"}
+                        </span>
+                      </p>
+                      <p>
+                        Latest voice ping{" "}
+                        <span className="font-semibold tabular-nums text-zinc-100">
+                          {stats.lastPingMs !== null ? `${stats.lastPingMs} ms` : "—"}
+                        </span>
+                      </p>
+                      <p>
+                        Outbound audio loss{" "}
+                        <span className="font-semibold tabular-nums text-zinc-100">
+                          {stats.packetLossPct !== null ? `${stats.packetLossPct.toFixed(1)}%` : "—"}
+                        </span>
+                      </p>
+                      <p>
+                        Transport{" "}
+                        <span className="font-semibold text-zinc-100">{stats.transport ?? "—"}</span>
+                      </p>
+                      {stats.joinTiming && (
+                        <p className="tabular-nums">
+                          Token {stats.joinTiming.tokenMs} ms · Voice setup {stats.joinTiming.connectMs} ms
+                        </p>
                       )}
-                    </svg>
+                    </div>
                   </div>
 
-                  {/* X-Axis Timestamps */}
-                  <div className="mt-1.5 flex items-center justify-between text-[10px] font-medium tabular-nums text-zinc-500">
-                    <span>{firstTs ? formatTickTime(firstTs) : "—"}</span>
-                    <span>{midTs ? formatTickTime(midTs) : ""}</span>
-                    <span>{lastTs ? formatTickTime(lastTs) : "Now"}</span>
-                  </div>
-                </div>
-
-                {/* Server & Live Metrics */}
-                <div className="space-y-1.5">
-                  <p className="truncate text-xs font-semibold text-zinc-100">
-                    {stats.serverHost || "livekit-edge"}
+                  <p className="text-[11px] leading-relaxed text-zinc-500">
+                    You may notice delayed audio at 250 ms or higher, or robotic audio if
+                    packet loss exceeds 10%.
                   </p>
-                  <div className="space-y-0.5 text-xs text-zinc-400">
-                    <p>
-                      Average ping:{" "}
-                      <span className="font-semibold tabular-nums text-zinc-100">
-                        {stats.avgPingMs !== null ? `${stats.avgPingMs} ms` : "—"}
-                      </span>
-                    </p>
-                    <p>
-                      Last ping:{" "}
-                      <span className="font-semibold tabular-nums text-zinc-100">
-                        {stats.lastPingMs !== null ? `${stats.lastPingMs} ms` : "—"}
-                      </span>
-                    </p>
-                    <p>
-                      Outbound packet loss rate:{" "}
-                      <span className="font-semibold tabular-nums text-zinc-100">
-                        {stats.packetLossPct.toFixed(1)}%
-                      </span>
-                    </p>
+
+                  {/* Encryption Badge */}
+                  <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.08] px-3 py-2 text-xs font-medium text-emerald-300">
+                    <Lock className="h-3.5 w-3.5 shrink-0" />
+                    <span>DTLS-SRTP Encrypted</span>
                   </div>
                 </div>
-
-                <p className="text-[11px] leading-relaxed text-zinc-500">
-                  You may notice delayed audio at 250 ms or higher, or robotic audio if
-                  packet loss exceeds 10%.
-                </p>
-
-                {/* Encryption Badge */}
-                <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.08] px-3 py-2 text-xs font-medium text-emerald-300">
-                  <Lock className="h-3.5 w-3.5 shrink-0" />
-                  <span>DTLS-SRTP Encrypted</span>
+              ) : (
+                <div className="min-h-0 space-y-3 overflow-y-auto p-4 text-xs leading-relaxed text-zinc-400">
+                  <div className="flex items-center gap-2 text-emerald-300">
+                    <ShieldCheck className="h-4 w-4 shrink-0" />
+                    <span className="font-semibold">Transport Security Active</span>
+                  </div>
+                  <p>
+                    All voice, webcam, and screen share media streams are encrypted in
+                    transit with WebRTC DTLS-SRTP between your browser and LiveKit.
+                  </p>
+                  <p>
+                    Room access tokens are short-lived, signed server-side, and scoped only
+                    to invited members of this private instance.
+                  </p>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-3 p-4 text-xs leading-relaxed text-zinc-400">
-                <div className="flex items-center gap-2 text-emerald-300">
-                  <ShieldCheck className="h-4 w-4 shrink-0" />
-                  <span className="font-semibold">Transport Security Active</span>
-                </div>
-                <p>
-                  All voice, webcam, and screen share media streams are encrypted in
-                  transit with WebRTC DTLS-SRTP between your browser and LiveKit.
-                </p>
-                <p>
-                  Room access tokens are short-lived, signed server-side, and scoped only
-                  to invited members of this private instance.
-                </p>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+              )}
+            </HeaderPanel>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   );
 }

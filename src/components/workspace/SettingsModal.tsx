@@ -26,6 +26,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/Avatar";
+import { ColorPicker } from "@/components/ui/ColorPicker";
 import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { SelectDropdown } from "@/components/ui/SelectDropdown";
@@ -173,9 +174,11 @@ export function SettingsModal({
 
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const bannerInputRef = useRef<HTMLInputElement | null>(null);
+  const accountDraftRef = useRef<{ userId: string; initialTab: SettingsTab } | null>(null);
 
   useEffect(() => {
     if (!open) {
+      accountDraftRef.current = null;
       micTestCleanupRef.current?.();
       micTestCleanupRef.current = null;
       setMicTesting(false);
@@ -183,6 +186,13 @@ export function SettingsModal({
       setCropRequest(null);
       return;
     }
+    if (
+      accountDraftRef.current?.userId === user.id &&
+      accountDraftRef.current.initialTab === initialTab
+    ) {
+      return;
+    }
+    accountDraftRef.current = { userId: user.id, initialTab };
     setTab(initialTab);
     setDisplayName(user.displayName);
     setEmail(user.email ?? "");
@@ -281,87 +291,79 @@ export function SettingsModal({
     setCropRequest({ file, mode });
   }
 
-  /** Instantly apply cropped WebP preview (0ms), then upload & persist cleanly */
-  async function handleCroppedImage(
-    mode: CropMode,
-    result: { file: File; previewUrl: string }
-  ) {
+  async function persistProfileMedia(mode: CropMode, url: string | null) {
+    const patch = mode === "avatar" ? { avatarUrl: url } : { bannerUrl: url };
+    const response = await fetch("/api/auth/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.user) {
+      throw new Error(data.error ?? "Could not save the profile image.");
+    }
+
+    const updated: PrivateUser = data.user;
+    if (mode === "avatar") setAvatarUrl(updated.avatarUrl);
+    else setBannerUrl(updated.bannerUrl);
+    onUserUpdated(updated);
+  }
+
+  async function handleCroppedImage(mode: CropMode, file: File) {
     setCropRequest(null);
+    if (uploadingMedia || savingAccount) return;
     setUploadingMedia(mode);
     setAccountMsg(null);
 
-    // 1. Instant optimistic UI update across the entire workspace
-    if (mode === "avatar") {
-      setAvatarUrl(result.previewUrl);
-      onUserUpdated({ ...user, avatarUrl: result.previewUrl, displayName, avatarColor, bannerUrl });
-    } else {
-      setBannerUrl(result.previewUrl);
-      onUserUpdated({ ...user, bannerUrl: result.previewUrl, displayName, avatarColor, avatarUrl });
-    }
+    const setMediaUrl = mode === "avatar" ? setAvatarUrl : setBannerUrl;
+    const previousUrl = mode === "avatar" ? avatarUrl : bannerUrl;
+    const previewUrl = URL.createObjectURL(file);
+    setMediaUrl(previewUrl);
 
     try {
       const formData = new FormData();
-      formData.append("file", result.file);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
-      const uploadData = await uploadRes.json();
-      if (!uploadRes.ok || !uploadData.attachment?.url) {
-        setAccountMsg({ type: "err", text: uploadData.error ?? "Upload failed." });
-        return;
+      formData.append("file", file);
+      const response = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok || !data.attachment?.url) {
+        throw new Error(data.error ?? "Upload failed.");
       }
 
-      const persistedUrl: string = uploadData.attachment.url;
-      const patchBody =
-        mode === "avatar" ? { avatarUrl: persistedUrl } : { bannerUrl: persistedUrl };
-
-      const saveRes = await fetch("/api/auth/me", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patchBody),
+      await persistProfileMedia(mode, data.attachment.url);
+      setAccountMsg({
+        type: "ok",
+        text: mode === "avatar" ? "Profile photo updated." : "Banner updated.",
       });
-      const saveData = await saveRes.json();
-      if (saveRes.ok && saveData.user) {
-        if (mode === "avatar") setAvatarUrl(saveData.user.avatarUrl);
-        else setBannerUrl(saveData.user.bannerUrl);
-        onUserUpdated(saveData.user);
-        setAccountMsg({
-          type: "ok",
-          text: mode === "avatar" ? "Profile photo updated (WebP)." : "Banner updated (WebP).",
-        });
-      }
-    } catch {
-      setAccountMsg({ type: "err", text: "Network error uploading image." });
+    } catch (error) {
+      setMediaUrl((current) => current === previewUrl ? previousUrl : current);
+      setAccountMsg({
+        type: "err",
+        text: error instanceof Error ? error.message : "Network error uploading image.",
+      });
     } finally {
+      URL.revokeObjectURL(previewUrl);
       setUploadingMedia(null);
     }
   }
 
   async function handleRemoveMedia(mode: CropMode) {
-    const patchBody = mode === "avatar" ? { avatarUrl: null } : { bannerUrl: null };
-    if (mode === "avatar") {
-      setAvatarUrl(null);
-      onUserUpdated({ ...user, avatarUrl: null, displayName, avatarColor, bannerUrl });
-    } else {
-      setBannerUrl(null);
-      onUserUpdated({ ...user, bannerUrl: null, displayName, avatarColor, avatarUrl });
-    }
-
+    if (uploadingMedia || savingAccount) return;
+    setUploadingMedia(mode);
     try {
-      const res = await fetch("/api/auth/me", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patchBody),
+      await persistProfileMedia(mode, null);
+    } catch (error) {
+      setAccountMsg({
+        type: "err",
+        text: error instanceof Error ? error.message : "Could not remove the profile image.",
       });
-      const data = await res.json();
-      if (res.ok && data.user) {
-        onUserUpdated(data.user);
-      }
-    } catch {
-      // ignore
+    } finally {
+      setUploadingMedia(null);
     }
   }
 
   async function handleSaveAccount(e: FormEvent) {
     e.preventDefault();
+    if (savingAccount || uploadingMedia) return;
     setSavingAccount(true);
     setAccountMsg(null);
     try {
@@ -457,7 +459,7 @@ export function SettingsModal({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           onClick={onClose}
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-3 backdrop-blur-xs sm:p-6"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-xs md:p-6"
           role="dialog"
           aria-modal="true"
           aria-label="Application settings"
@@ -468,24 +470,26 @@ export function SettingsModal({
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
-            className="flex h-[min(84dvh,700px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-white/[0.11] bg-[#121316] shadow-2xl shadow-black/80 md:flex-row"
+            className="siq-settings-dialog flex h-full w-full max-w-4xl flex-col overflow-hidden bg-[#121316] md:h-[min(84dvh,700px)] md:flex-row md:rounded-2xl md:border md:border-white/[0.11] md:shadow-2xl md:shadow-black/80"
           >
             {/* Left Settings Sidebar */}
             <aside className="flex shrink-0 flex-col justify-between border-b border-white/[0.07] bg-[#0E0F12] p-3 md:w-[228px] md:border-b-0 md:border-r md:p-4">
-              <div className="space-y-5 overflow-x-auto md:overflow-visible">
-                <div className="flex items-center justify-between px-2 md:hidden">
+              <div>
+                <div className="mb-1.5 flex items-center justify-between pl-2 md:hidden">
                   <span className="text-xs font-semibold text-zinc-200">Settings</span>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-lg p-1 text-zinc-400 hover:bg-white/[0.06] hover:text-white"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => { onClose(); onSignOut(); }} className="rounded-lg p-2 text-xs font-medium text-rose-300 hover:bg-rose-500/15">
+                      Log Out
+                    </button>
+                    <button type="button" onClick={onClose} aria-label="Close settings" className="rounded-lg p-2 text-zinc-400 hover:bg-white/[0.06] hover:text-white">
+                      <X className="size-4" />
+                    </button>
+                  </div>
                 </div>
 
+                <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin] md:block md:space-y-5 md:overflow-visible">
                 {navGroups.map((group) => (
-                  <div key={group.title} className="space-y-1">
+                  <div key={group.title} className="shrink-0 space-y-1">
                     <p className="hidden px-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 md:block">
                       {group.title}
                     </p>
@@ -513,6 +517,7 @@ export function SettingsModal({
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
 
               {/* Bottom Pinned Log Out */}
@@ -558,7 +563,7 @@ export function SettingsModal({
               </div>
 
               {/* Scrollable Tab Body */}
-              <div className="flex-1 overflow-y-auto p-5 md:p-6">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3.5 md:p-6">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={tab}
@@ -608,7 +613,7 @@ export function SettingsModal({
                               <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  disabled={uploadingMedia !== null || !blobReady}
+                                  disabled={uploadingMedia !== null || savingAccount || !blobReady}
                                   onClick={() => bannerInputRef.current?.click()}
                                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.15] bg-black/65 px-2.5 py-1.5 text-[11px] font-medium text-zinc-100 backdrop-blur-sm transition-colors hover:border-emerald-500/50 hover:bg-black/85 hover:text-emerald-300 disabled:opacity-40"
                                 >
@@ -624,6 +629,7 @@ export function SettingsModal({
                                 {bannerUrl && (
                                   <button
                                     type="button"
+                                    disabled={uploadingMedia !== null || savingAccount}
                                     onClick={() => void handleRemoveMedia("banner")}
                                     title="Remove banner"
                                     className="rounded-lg border border-white/[0.15] bg-black/65 p-1.5 text-zinc-300 backdrop-blur-sm hover:border-rose-500/50 hover:text-rose-400"
@@ -678,7 +684,7 @@ export function SettingsModal({
                                 />
                                 <button
                                   type="button"
-                                  disabled={uploadingMedia !== null || !blobReady}
+                                  disabled={uploadingMedia !== null || savingAccount || !blobReady}
                                   onClick={() => avatarInputRef.current?.click()}
                                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-40"
                                 >
@@ -692,6 +698,7 @@ export function SettingsModal({
                                 {avatarUrl && (
                                   <button
                                     type="button"
+                                    disabled={uploadingMedia !== null || savingAccount}
                                     onClick={() => void handleRemoveMedia("avatar")}
                                     title="Remove photo"
                                     className="rounded-lg border border-white/[0.1] bg-[#18191E] p-1.5 text-zinc-400 hover:border-rose-500/40 hover:text-rose-400"
@@ -1366,21 +1373,22 @@ export function SettingsModal({
                               </p>
                             </div>
                             <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300">
-                              {APP_THEME_PRESETS.find((t) => t.id === appPrefs.theme)?.name ??
-                                "Obsidian Emerald"}
+                              {appPrefs.customAccentHex
+                                ? "Custom accent"
+                                : APP_THEME_PRESETS.find((t) => t.id === appPrefs.theme)?.name ?? "Obsidian Emerald"}
                             </span>
                           </div>
 
                           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                             {APP_THEME_PRESETS.map((themeItem) => {
-                              const active = appPrefs.theme === themeItem.id;
+                              const active = !appPrefs.customAccentHex && appPrefs.theme === themeItem.id;
                               return (
                                 <motion.button
                                   key={themeItem.id}
                                   type="button"
                                   whileHover={{ y: -1 }}
                                   whileTap={{ scale: 0.97 }}
-                                  onClick={() => onUpdatePrefs({ theme: themeItem.id })}
+                                  onClick={() => onUpdatePrefs({ theme: themeItem.id, customAccentHex: null })}
                                   className={`group relative flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all ${
                                     active
                                       ? "border-emerald-500/60 bg-emerald-500/[0.1] ring-1 ring-emerald-500/25"
@@ -1421,6 +1429,23 @@ export function SettingsModal({
                                 </motion.button>
                               );
                             })}
+                          </div>
+                          <div className="space-y-2.5 border-t border-white/[0.07] pt-3">
+                            <ColorPicker
+                              label="Custom app accent"
+                              value={appPrefs.customAccentHex ?? APP_THEME_PRESETS.find((theme) => theme.id === appPrefs.theme)?.primary ?? "#10B981"}
+                              onChange={(customAccentHex) => onUpdatePrefs({ customAccentHex })}
+                              presets={AVATAR_PALETTE}
+                            />
+                            {appPrefs.customAccentHex && (
+                              <button
+                                type="button"
+                                onClick={() => onUpdatePrefs({ customAccentHex: null })}
+                                className="rounded-lg border border-white/[0.1] px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:text-zinc-100"
+                              >
+                                Reset to preset
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -1596,9 +1621,9 @@ export function SettingsModal({
             file={cropRequest?.file ?? null}
             mode={cropRequest?.mode ?? "avatar"}
             onCancel={() => setCropRequest(null)}
-            onCropped={(res) => {
+            onCropped={(file) => {
               if (cropRequest) {
-                void handleCroppedImage(cropRequest.mode, res);
+                void handleCroppedImage(cropRequest.mode, file);
               }
             }}
           />
