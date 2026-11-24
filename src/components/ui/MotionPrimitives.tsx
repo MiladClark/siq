@@ -86,8 +86,7 @@ export function SpotlightCard({
   const spotlightBg = useMotionTemplate`radial-gradient(240px circle at ${mouseX}px ${mouseY}px, ${spotlightColor}, transparent 75%)`;
 
   return (
-    <motion.div
-      layout
+    <div
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onContextMenu={onContextMenu}
@@ -106,7 +105,7 @@ export function SpotlightCard({
         />
       )}
       {children}
-    </motion.div>
+    </div>
   );
 }
 

@@ -10,7 +10,8 @@ interface RemoteAudioStats extends RTCStats {
 }
 
 function secondsToMs(seconds: number | undefined): number | null {
-  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0
+  // Filter out 0s placeholders reported by browsers before the first STUN response arrives
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
     ? Math.round(seconds * 1000)
     : null;
 }
@@ -32,7 +33,10 @@ function readSelectedPath(report: RTCStatsReport) {
       ? (relayProtocol ? `TURN/${relayProtocol}` : "TURN")
       : (local?.protocol ?? remote?.protocol)?.toUpperCase() ?? null;
 
-    return { pingMs: secondsToMs(pair.currentRoundTripTime), transport };
+    return {
+      pingMs: secondsToMs(pair.currentRoundTripTime),
+      transport,
+    };
   }
 
   return null;
@@ -50,8 +54,8 @@ export function summarizeVoiceNetwork(reports: RTCStatsReport[]) {
     if (selectedPingMs === null && selected?.pingMs != null) {
       selectedPingMs = selected.pingMs;
       transport = selected.transport;
-    } else if (selectedPingMs === null) {
-      transport ??= selected?.transport ?? null;
+    } else if (transport === null && selected?.transport) {
+      transport = selected.transport;
     }
 
     for (const stat of report.values()) {
@@ -76,6 +80,7 @@ export function summarizeVoiceNetwork(reports: RTCStatsReport[]) {
 
   return {
     pingMs: selectedPingMs ?? audioPingMs,
+    hasIcePing: selectedPingMs !== null,
     transport,
     packetLossPct: packetsSent > 0 ? Math.min(100, (packetsLost / packetsSent) * 100) : null,
   };
