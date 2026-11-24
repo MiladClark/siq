@@ -2360,58 +2360,91 @@ function WorkspaceInner({
             <>
               {/* Server Header + Optional Banner + Dropdown Menu */}
               <div ref={serverDropdownRef} className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setServerDropdownOpen((v) => !v)}
-                  className={`relative flex w-full items-start justify-between overflow-hidden border-b border-white/[0.07] px-3.5 text-left transition-colors ${
-                    activeServer?.bannerUrl
-                      ? "h-28 pt-3"
-                      : "h-14 items-center hover:bg-white/[0.03]"
-                  }`}
-                >
-                  {activeServer?.bannerUrl && (
-                    <>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={activeServer.bannerUrl}
-                        alt={activeServer.name}
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/35 to-[#0E0F12]/90" />
-                    </>
-                  )}
-
-                  <div className="relative z-10 flex min-w-0 items-center gap-2">
-                    <span
-                      dir="auto"
-                      className="truncate text-sm font-bold tracking-tight text-zinc-100 drop-shadow-xs"
-                    >
-                      {activeServer?.name ?? "siq"}
-                    </span>
-                    {activeServer?.tag && (
-                      <span className="shrink-0 rounded border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs">
-                        {activeServer.tag}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="relative z-10 flex shrink-0 items-center gap-1">
-                    <ChevronDown
-                      className={`h-4 w-4 text-zinc-300 transition-transform ${
-                        serverDropdownOpen ? "rotate-180" : ""
-                      }`}
+                {activeServer?.bannerUrl ? (
+                  <div
+                    onClick={() => setServerDropdownOpen((v) => !v)}
+                    className="group relative h-36 w-full cursor-pointer overflow-hidden border-b border-white/[0.08]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={activeServer.bannerUrl}
+                      alt={activeServer.name}
+                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMobileMenuOpen(false);
-                      }}
-                      className="rounded-lg p-1 text-zinc-300 hover:bg-white/[0.1] md:hidden"
-                    >
-                      <X className="h-4 w-4" />
-                    </span>
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/50 to-transparent" />
+
+                    <div className="relative z-10 flex h-12 w-full items-center justify-between px-3.5 text-left">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          dir="auto"
+                          className="truncate text-sm font-bold tracking-tight text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
+                        >
+                          {activeServer.name}
+                        </span>
+                        {activeServer.tag && (
+                          <span className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs drop-shadow-sm">
+                            {activeServer.tag}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        <ChevronDown
+                          className={`h-4 w-4 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-transform ${
+                            serverDropdownOpen ? "rotate-180" : ""
+                          }`}
+                        />
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMobileMenuOpen(false);
+                          }}
+                          className="rounded-lg p-1 text-white hover:bg-white/[0.1] md:hidden"
+                        >
+                          <X className="h-4 w-4" />
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setServerDropdownOpen((v) => !v)}
+                    className="flex h-12 w-full items-center justify-between border-b border-white/[0.07] px-3.5 text-left transition-colors hover:bg-white/[0.03]"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        dir="auto"
+                        className="truncate text-sm font-bold tracking-tight text-zinc-100"
+                      >
+                        {activeServer?.name ?? "siq"}
+                      </span>
+                      {activeServer?.tag && (
+                        <span className="shrink-0 rounded border border-emerald-500/35 bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-xs">
+                          {activeServer.tag}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-1">
+                      <ChevronDown
+                        className={`h-4 w-4 text-zinc-300 transition-transform ${
+                          serverDropdownOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setMobileMenuOpen(false);
+                        }}
+                        className="rounded-lg p-1 text-zinc-300 hover:bg-white/[0.1] md:hidden"
+                      >
+                        <X className="h-4 w-4" />
+                      </span>
+                    </div>
+                  </button>
+                )}
 
                 {/* Server Dropdown Menu */}
                 <AnimatePresence>
@@ -2421,7 +2454,9 @@ function WorkspaceInner({
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -4, scale: 0.96 }}
                       transition={{ duration: 0.14 }}
-                      className="absolute left-2.5 right-2.5 top-[calc(100%+6px)] z-50 rounded-xl border border-white/[0.11] bg-[#14151A] p-1.5 shadow-2xl shadow-black/85"
+                      className={`absolute left-2.5 right-2.5 z-50 rounded-xl border border-white/[0.11] bg-[#14151A]/95 p-1.5 shadow-2xl shadow-black/85 backdrop-blur-md ${
+                        activeServer?.bannerUrl ? "top-[52px]" : "top-[calc(100%+6px)]"
+                      }`}
                     >
                       {canCreateInvites && (
                         <button
