@@ -37,7 +37,7 @@ import {
   saveAppPreferences,
   type ScreenShareConfig,
 } from "@/lib/preferences";
-import { playSound } from "@/lib/sounds";
+import { playCallDeclinedSound, playSound } from "@/lib/sounds";
 import {
   pickAvatarColor,
   type ChannelItem,
@@ -117,7 +117,7 @@ interface VoiceContextValue {
   watchTargetIdentity: string | null;
   setWatchTargetIdentity: (identity: string | null) => void;
   joinVoiceChannel: (channel: ChannelItem, options?: JoinVoiceOptions) => Promise<void>;
-  leaveVoiceChannel: () => Promise<void>;
+  leaveVoiceChannel: (options?: { silent?: boolean }) => Promise<void>;
   toggleMute: () => Promise<void>;
   toggleDeafen: () => Promise<void>;
   toggleCamera: () => Promise<void>;
@@ -179,7 +179,8 @@ function buildParticipantView(
 
   const isMuted = !micPub || micPub.isMuted || !micPub.track;
   const isCameraOn = Boolean(camPub && !camPub.isMuted && camPub.track);
-  const isScreenSharing = Boolean(screenPub && !screenPub.isMuted && screenPub.track);
+  // For remote participants, screenPub exists as soon as they publish (even before on-demand subscribe)
+  const isScreenSharing = Boolean(screenPub && !screenPub.isMuted && (isLocal ? screenPub.track : true));
 
   return {
     identity: p.identity,
@@ -283,6 +284,11 @@ export function VoiceProvider({
   const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
   const [networkStats, setNetworkStats] = useState<VoiceNetworkStats>(EMPTY_NETWORK_STATS);
   const [watchTargetIdentity, setWatchTargetIdentity] = useState<string | null>(null);
+  const watchTargetIdentityRef = useRef<string | null>(null);
+  watchTargetIdentityRef.current = watchTargetIdentity;
+  const leaveVoiceChannelRef = useRef<(options?: { silent?: boolean }) => Promise<void>>(
+    async () => {}
+  );
 
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
@@ -330,6 +336,65 @@ export function VoiceProvider({
   const activeSpeakerIdsRef = useRef<Set<string>>(activeSpeakerIds);
   activeSpeakerIdsRef.current = activeSpeakerIds;
 
+  /** On-demand screen share subscription: always subscribe to Mic & Camera,
+   *  and only subscribe to remote ScreenShare video/audio in server voice channels
+   *  when the user explicitly watches that stream (eliminating idle 4-10 Mbps downlink). */
+  const syncTrackSubscriptions = useCallback(
+    (room: Room | null, watchIdentity: string | null) => {
+      if (!room || room.state !== ConnectionState.Connected) return;
+      const isDmRoom = Boolean(room.name?.startsWith("dm-"));
+
+      room.remoteParticipants.forEach((rp: RemoteParticipant) => {
+        rp.trackPublications.forEach((pub) => {
+          const remotePub = pub as RemoteTrackPublication;
+          const isScreen =
+            remotePub.source === Track.Source.ScreenShare ||
+            remotePub.source === Track.Source.ScreenShareAudio;
+
+          if (isScreen && !isDmRoom) {
+            const shouldSubscribe = watchIdentity === rp.identity;
+            if (remotePub.isSubscribed !== shouldSubscribe) {
+              remotePub.setSubscribed(shouldSubscribe);
+            }
+            if (
+              shouldSubscribe &&
+              remotePub.isSubscribed &&
+              remotePub.source === Track.Source.ScreenShare
+            ) {
+              try {
+                remotePub.setVideoQuality(VideoQuality.HIGH);
+              } catch {
+                // ignore if track isn't simulcast
+              }
+            }
+          } else {
+            if (!remotePub.isSubscribed) {
+              remotePub.setSubscribed(true);
+            }
+            if (
+              isScreen &&
+              remotePub.isSubscribed &&
+              remotePub.source === Track.Source.ScreenShare
+            ) {
+              try {
+                remotePub.setVideoQuality(VideoQuality.HIGH);
+              } catch {
+                // ignore if track isn't simulcast
+              }
+            }
+          }
+        });
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (connectionState === ConnectionState.Connected) {
+      syncTrackSubscriptions(roomRef.current, watchTargetIdentity);
+    }
+  }, [connectionState, syncTrackSubscriptions, watchTargetIdentity]);
+
   const syncParticipants = useCallback(() => {
     const room = roomRef.current;
     // Never wipe optimistic/seeded participants while a new room is still connecting.
@@ -358,17 +423,6 @@ export function VoiceProvider({
     );
 
     room.remoteParticipants.forEach((rp: RemoteParticipant) => {
-      // Ensure remote screen share tracks always subscribe at HIGH quality
-      const screenPub = rp.getTrackPublication(
-        Track.Source.ScreenShare
-      ) as RemoteTrackPublication | undefined;
-      if (screenPub && screenPub.isSubscribed) {
-        try {
-          screenPub.setVideoQuality(VideoQuality.HIGH);
-        } catch {
-          // ignore if track isn't simulcast
-        }
-      }
       liveMap.set(rp.identity, buildParticipantView(rp, false, speakers));
     });
 
@@ -772,30 +826,36 @@ export function VoiceProvider({
     if (!room || connectionState !== ConnectionState.Connected) return;
 
     let cancelled = false;
+    let seenIcePing = false;
     let timer: ReturnType<typeof setTimeout>;
     const sample = async () => {
-      const { pingMs, packetLossPct, transport } = await readLiveKitStats(room).catch(() =>
-        summarizeVoiceNetwork([])
+      const { pingMs, hasIcePing, packetLossPct, transport } = await readLiveKitStats(room).catch(
+        () => summarizeVoiceNetwork([])
       );
       if (cancelled || roomRef.current !== room || room.state !== ConnectionState.Connected) {
         return;
       }
 
+      if (hasIcePing) seenIcePing = true;
+      // Once ICE STUN RTT is established, don't let a transient fallback to noisy RTCP RTT spike the chart
+      const effectivePing = !seenIcePing || hasIcePing ? pingMs : null;
+
       const timestamp = Date.now();
       const serverHost = serverHostRef.current;
       setNetworkStats((prev) => {
-        const history = pingMs === null
-          ? prev.history
-          : [...prev.history.slice(-39), { timestamp, pingMs }];
+        const history =
+          effectivePing === null
+            ? prev.history
+            : [...prev.history.slice(-39), { timestamp, pingMs: effectivePing }];
         const sum = history.reduce((total, entry) => total + entry.pingMs, 0);
         return {
           ...prev,
-          lastPingMs: pingMs,
+          lastPingMs: effectivePing ?? prev.lastPingMs,
           avgPingMs: history.length ? Math.round(sum / history.length) : null,
           packetLossPct,
           history,
           serverHost,
-          transport,
+          transport: transport ?? prev.transport,
         };
       });
       timer = setTimeout(() => void sample(), 2000);
@@ -820,28 +880,33 @@ export function VoiceProvider({
     return closing;
   }, []);
 
-  const leaveVoiceChannel = useCallback(async () => {
-    joinAttemptIdRef.current += 1;
-    joinRequestRef.current?.controller.abort();
-    joinRequestRef.current = null;
-    switchingRef.current = false;
-    const hadRoom = Boolean(roomRef.current);
-    const disconnect = disconnectCurrentRoom();
-    setActiveChannel(null);
-    setConnectionState(ConnectionState.Disconnected);
-    setParticipants([]);
-    setActiveSpeakerIds(new Set());
-    setNetworkStats(EMPTY_NETWORK_STATS);
-    setWatchTargetIdentity(null);
-    setIsMuted(false);
-    setIsDeafened(false);
-    setIsCameraOn(false);
-    setIsScreenSharing(false);
-    await disconnect?.catch(() => {});
-    if (hadRoom) playSound("leave");
-    onOccupancyChanged?.();
-    setTimeout(() => onOccupancyChanged?.(), 500);
-  }, [disconnectCurrentRoom, onOccupancyChanged]);
+  const leaveVoiceChannel = useCallback(
+    async (options?: { silent?: boolean }) => {
+      joinAttemptIdRef.current += 1;
+      joinRequestRef.current?.controller.abort();
+      joinRequestRef.current = null;
+      switchingRef.current = false;
+      const hadRoom = Boolean(roomRef.current);
+      const disconnect = disconnectCurrentRoom();
+      setActiveChannel(null);
+      setConnectionState(ConnectionState.Disconnected);
+      setParticipants([]);
+      setActiveSpeakerIds(new Set());
+      setNetworkStats(EMPTY_NETWORK_STATS);
+      setWatchTargetIdentity(null);
+      setIsMuted(false);
+      setIsDeafened(false);
+      setIsCameraOn(false);
+      setIsScreenSharing(false);
+      await disconnect?.catch(() => {});
+      if (hadRoom && !options?.silent) playSound("leave");
+      onOccupancyChanged?.();
+      setTimeout(() => onOccupancyChanged?.(), 500);
+    },
+    [disconnectCurrentRoom, onOccupancyChanged]
+  );
+
+  leaveVoiceChannelRef.current = leaveVoiceChannel;
 
   const joinVoiceChannel = useCallback(
     async (channel: ChannelItem, options?: JoinVoiceOptions) => {
@@ -985,12 +1050,14 @@ export function VoiceProvider({
             setConnectionState(state);
             if (state === ConnectionState.Connected) {
               switchingRef.current = false;
+              syncTrackSubscriptions(room, watchTargetIdentityRef.current);
               syncParticipants();
             }
           })
           .on(RoomEvent.ParticipantConnected, () => {
             if (roomRef.current !== room) return;
             playSound("peer-join");
+            syncTrackSubscriptions(room, watchTargetIdentityRef.current);
             syncParticipants();
             onOccupancyChanged?.();
           })
@@ -1000,12 +1067,42 @@ export function VoiceProvider({
             syncParticipants();
             onOccupancyChanged?.();
           })
+          .on(RoomEvent.TrackPublished, () => {
+            if (roomRef.current !== room) return;
+            syncTrackSubscriptions(room, watchTargetIdentityRef.current);
+            syncParticipants();
+          })
+          .on(RoomEvent.TrackUnpublished, handleRoomUpdate)
           .on(RoomEvent.TrackSubscribed, handleRoomUpdate)
           .on(RoomEvent.TrackUnsubscribed, handleRoomUpdate)
           .on(RoomEvent.TrackMuted, handleRoomUpdate)
           .on(RoomEvent.TrackUnmuted, handleRoomUpdate)
           .on(RoomEvent.LocalTrackPublished, handleRoomUpdate)
           .on(RoomEvent.LocalTrackUnpublished, handleRoomUpdate)
+          .on(RoomEvent.DataReceived, (payload: Uint8Array) => {
+            if (roomRef.current !== room) return;
+            try {
+              const decoded = new TextDecoder().decode(payload);
+              const msg = JSON.parse(decoded) as {
+                type?: string;
+                byDisplayName?: string;
+              };
+              if (msg.type === "dm-call-declined") {
+                playCallDeclinedSound();
+                notify({
+                  kind: "warning",
+                  title: "Call Declined",
+                  message: msg.byDisplayName
+                    ? `${msg.byDisplayName} declined your call.`
+                    : "The call was declined.",
+                  source: "Direct Call",
+                });
+                void leaveVoiceChannelRef.current({ silent: true });
+              }
+            } catch {
+              // ignore non-JSON data packets
+            }
+          })
           .on(RoomEvent.Disconnected, () => {
             if (roomRef.current === room && !switchingRef.current) {
               roomRef.current = null;
@@ -1022,8 +1119,9 @@ export function VoiceProvider({
           });
 
         const connectStartedAt = performance.now();
-        await room.connect(data.url, data.token);
+        await room.connect(data.url, data.token, { autoSubscribe: false });
         if (attemptId !== joinAttemptIdRef.current) return;
+        syncTrackSubscriptions(room, watchTargetIdentityRef.current);
         const connectMs = Math.round(performance.now() - connectStartedAt);
         const serverHost = serverHostRef.current;
         setNetworkStats((prev) => ({
@@ -1093,11 +1191,13 @@ export function VoiceProvider({
       disconnectCurrentRoom,
       echoCancellation,
       noiseMode,
+      notify,
       onOccupancyChanged,
       refreshDevices,
       selectedAudioInput,
       selectedVideoInput,
       syncParticipants,
+      syncTrackSubscriptions,
     ]
   );
 

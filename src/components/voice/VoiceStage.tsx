@@ -146,7 +146,7 @@ export function VoiceStage({
     activeChannel?.id === channel.id &&
     connectionState === ConnectionState.Connecting;
 
-  const screenSharers = participants.filter((p) => p.isScreenSharing && p.screenTrack);
+  const screenSharers = participants.filter((p) => p.isScreenSharing);
 
   // Never auto-jump into someone's stream. Only clear watch target if the watched stream ends.
   useEffect(() => {
@@ -521,7 +521,7 @@ export function VoiceStage({
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-5">
         {/* Focused Screen Share Theater (only shown when user explicitly clicks Watch Stream) */}
         <AnimatePresence>
-          {focusedSharer && focusedSharer.screenTrack && (
+          {focusedSharer && (
             <motion.div
               ref={stageVideoContainerRef}
               initial={{ opacity: 0, scale: 0.98 }}
@@ -534,13 +534,26 @@ export function VoiceStage({
             >
               {/* Video Surface */}
               <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black">
-                <VideoTrackCanvas
-                  track={focusedSharer.screenTrack}
-                  videoRefExternal={focusedVideoElRef}
-                  className={`h-full w-full ${
-                    isStageMaximized ? "max-h-[78dvh]" : "max-h-[64dvh]"
-                  } ${streamFit === "cover" ? "object-cover" : "object-contain"}`}
-                />
+                {focusedSharer.screenTrack ? (
+                  <VideoTrackCanvas
+                    track={focusedSharer.screenTrack}
+                    videoRefExternal={focusedVideoElRef}
+                    className={`h-full w-full ${
+                      isStageMaximized ? "max-h-[78dvh]" : "max-h-[64dvh]"
+                    } ${streamFit === "cover" ? "object-cover" : "object-contain"}`}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+                    <BarVisualizer state="connecting" barCount={7} size="sm" />
+                    <p className="text-xs font-medium text-zinc-400">
+                      Connecting to{" "}
+                      <span dir="auto" className="text-zinc-200">
+                        {resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}
+                      </span>
+                      &apos;s stream…
+                    </p>
+                  </div>
+                )}
 
                 {/* Top Floating HUD */}
                 <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 py-3 opacity-100 transition-opacity duration-200 md:opacity-0 md:group-hover/theater:opacity-100">

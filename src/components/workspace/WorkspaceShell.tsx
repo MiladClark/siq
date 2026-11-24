@@ -49,6 +49,7 @@ import {
   type SearchCategory,
 } from "@/components/dm/FindConversationPanel";
 import { FriendsHubView, type FriendsTab } from "@/components/dm/FriendsHubView";
+import { IncomingCallPopup } from "@/components/dm/IncomingCallPopup";
 import { AnimatedIconButton } from "@/components/ui/AnimatedIcon";
 import type { HeaderPanelKind } from "@/components/ui/HeaderPanel";
 import {
@@ -114,12 +115,17 @@ import {
   loadAppPreferences,
   saveAppPreferences,
 } from "@/lib/preferences";
-import { playSound } from "@/lib/sounds";
+import {
+  playSound,
+  startIncomingRingtone,
+  stopIncomingRingtone,
+} from "@/lib/sounds";
 import type {
   CategoryItem,
   ChannelItem,
   DmConversationItem,
   FriendItem,
+  IncomingCallItem,
   NotificationItem,
   PrivateUser,
   PublicUser,
@@ -153,6 +159,17 @@ function formatVoiceTimer(elapsedMs: number): string {
   return hrs > 0
     ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}`
     : `${pad(mins)}:${pad(secs)}`;
+}
+
+/** Isolated 1s timer leaf so WorkspaceShell never re-renders every second during voice calls */
+function VoiceElapsedTimer({ startedAtMs }: { startedAtMs: number }) {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAtMs]);
+  return <>{formatVoiceTimer(now - startedAtMs)}</>;
 }
 
 function isMemberOnline(
@@ -216,7 +233,9 @@ function WorkspaceInner({
   );
   const [capabilities, setCapabilities] = useState(initialCapabilities);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [timerNowMs, setTimerNowMs] = useState<number>(() => Date.now());
+  const [incomingCalls, setIncomingCalls] = useState<IncomingCallItem[]>([]);
+  const [callActionBusy, setCallActionBusy] = useState(false);
+  const dismissedCallKeysRef = useRef<Set<string>>(new Set());
   const [appPrefs, setAppPrefs] = useState<AppPreferences>(DEFAULT_APP_PREFERENCES);
 
   const appPrefsRef = useRef(appPrefs);
@@ -618,6 +637,7 @@ function WorkspaceInner({
       if (data.dmConversations) setDmConversations(data.dmConversations);
       if (data.voiceOccupancy) applyVoiceOccupancy(data.voiceOccupancy);
       if (data.voiceRoomCreatedAt) setVoiceRoomCreatedAt(data.voiceRoomCreatedAt);
+      if (Array.isArray(data.incomingCalls)) setIncomingCalls(data.incomingCalls);
       if (data.capabilities) setCapabilities(data.capabilities);
       if (data.serverTime) {
         lastNotifyCheckRef.current = data.serverTime;
@@ -700,6 +720,7 @@ function WorkspaceInner({
       const data = await res.json();
       applyVoiceOccupancy(data.voiceOccupancy);
       if (data.voiceRoomCreatedAt) setVoiceRoomCreatedAt(data.voiceRoomCreatedAt);
+      if (Array.isArray(data.incomingCalls)) setIncomingCalls(data.incomingCalls);
     } catch {
       // ignore transient poll error
     }
@@ -755,7 +776,7 @@ function WorkspaceInner({
     void syncPresence();
   };
 
-  // Fast 3s live voice occupancy refresh
+  // Fast 3s live voice occupancy & incoming call refresh
   useEffect(() => {
     const timer = setInterval(() => {
       void syncVoiceOccupancyOnly();
@@ -763,17 +784,33 @@ function WorkspaceInner({
     return () => clearInterval(timer);
   }, [syncVoiceOccupancyOnly]);
 
-  // 1s ticker for live voice channel session durations
-  const hasAnyVoiceActivity =
-    Object.values(voiceOccupancy).some((list) => list.length > 0) ||
-    voice.participants.length > 0;
+  // Active incoming DM call (not already joined and not dismissed)
+  const activeIncomingCall = useMemo(() => {
+    return (
+      incomingCalls.find((call) => {
+        if (
+          voice.activeChannel?.slug === call.roomName &&
+          voice.connectionState !== ConnectionState.Disconnected
+        ) {
+          return false;
+        }
+        const key = `${call.dmConversationId}:${call.startedAtMs}`;
+        return !dismissedCallKeysRef.current.has(key);
+      }) ?? null
+    );
+  }, [incomingCalls, voice.activeChannel?.slug, voice.connectionState]);
 
+  // Play gentle looping ringtone while an incoming call popup is visible (muted in DND)
   useEffect(() => {
-    if (!hasAnyVoiceActivity) return;
-    setTimerNowMs(Date.now());
-    const t = setInterval(() => setTimerNowMs(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [hasAnyVoiceActivity]);
+    if (activeIncomingCall && user.presenceStatus !== "dnd") {
+      startIncomingRingtone();
+    } else {
+      stopIncomingRingtone();
+    }
+    return () => {
+      stopIncomingRingtone();
+    };
+  }, [activeIncomingCall, user.presenceStatus]);
 
   const scheduleHideStreamPreview = useCallback(() => {
     if (streamPreviewTimerRef.current) clearTimeout(streamPreviewTimerRef.current);
@@ -1079,6 +1116,73 @@ function WorkspaceInner({
       seedOccupants,
       currentUser: user,
     });
+  }
+
+  function handleAcceptIncomingCall(call: IncomingCallItem, withVideo: boolean) {
+    stopIncomingRingtone();
+    const callKey = `${call.dmConversationId}:${call.startedAtMs}`;
+    dismissedCallKeysRef.current.add(callKey);
+    setIncomingCalls((prev) =>
+      prev.filter((c) => `${c.dmConversationId}:${c.startedAtMs}` !== callKey)
+    );
+
+    // Ensure conversation is immediately present in local DM list so chat opens right away
+    setDmConversations((prev) => {
+      if (prev.some((c) => c.id === call.dmConversationId)) return prev;
+      const nowIso = new Date().toISOString();
+      return [
+        {
+          id: call.dmConversationId,
+          peer: call.caller,
+          lastMessageAt: nowIso,
+          lastMessagePreview: null,
+          lastMessageAuthorId: null,
+          createdAt: nowIso,
+        },
+        ...prev,
+      ];
+    });
+
+    selectDmConversation(call.dmConversationId);
+
+    const syntheticVoice: ChannelItem = {
+      id: call.dmConversationId,
+      name: call.caller.displayName,
+      slug: call.roomName,
+      type: "voice",
+      description: "Direct Call",
+      position: 0,
+    };
+
+    const seedOccupants = (voiceOccupancy[call.roomName] ?? []).filter(
+      (o) => o.identity !== user.id
+    );
+
+    void voice.joinVoiceChannel(syntheticVoice, {
+      dmConversationId: call.dmConversationId,
+      startWithVideo: withVideo,
+      seedOccupants,
+      currentUser: user,
+    });
+  }
+
+  async function handleRejectIncomingCall(call: IncomingCallItem) {
+    stopIncomingRingtone();
+    const callKey = `${call.dmConversationId}:${call.startedAtMs}`;
+    dismissedCallKeysRef.current.add(callKey);
+    setIncomingCalls((prev) =>
+      prev.filter((c) => `${c.dmConversationId}:${c.startedAtMs}` !== callKey)
+    );
+    setCallActionBusy(true);
+    try {
+      await fetch(`/api/dms/${call.dmConversationId}/call-decline`, {
+        method: "POST",
+      });
+    } catch {
+      // ignore network error; already dismissed locally
+    } finally {
+      setCallActionBusy(false);
+    }
   }
 
   const handleLeaveVoiceChannel = useCallback(() => {
@@ -2079,9 +2183,11 @@ function WorkspaceInner({
                   roomStartedAt ? "text-emerald-400/90" : "text-zinc-500"
                 }`}
               >
-                {roomStartedAt
-                  ? formatVoiceTimer(timerNowMs - roomStartedAt)
-                  : occupants.length}
+                {roomStartedAt ? (
+                  <VoiceElapsedTimer startedAtMs={roomStartedAt} />
+                ) : (
+                  occupants.length
+                )}
               </span>
             )}
           </button>
@@ -3917,6 +4023,13 @@ function WorkspaceInner({
           />
         )}
       </AnimatePresence>
+
+      <IncomingCallPopup
+        call={activeIncomingCall}
+        busy={callActionBusy}
+        onAccept={handleAcceptIncomingCall}
+        onReject={(call) => void handleRejectIncomingCall(call)}
+      />
 
       <NotificationToasts
         toasts={toasts}
