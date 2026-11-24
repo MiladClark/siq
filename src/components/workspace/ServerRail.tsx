@@ -79,7 +79,7 @@ export function ServerRail({
       <div className="my-2.5 h-px w-8 rounded-full bg-white/[0.09]" />
 
       {/* Server Icons */}
-      <div className="flex flex-1 flex-col items-center gap-2 overflow-y-auto overflow-x-visible py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex w-full flex-1 flex-col items-center gap-2 overflow-y-auto overflow-x-visible py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {servers.map((server) => {
           const isActive = viewMode === "server" && activeServerId === server.id;
           const isHovered = hoveredId === server.id;
