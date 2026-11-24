@@ -140,3 +140,133 @@ export function playSound(name: SoundEffectName): void {
     playSoftSynthFallback(name, prefs.volume);
   }
 }
+
+/* ============================================================================
+ * Incoming Direct Call Ringtone & Call Declined Tone (Clean Web Audio Synth)
+ * ============================================================================ */
+
+let ringtoneTimer: ReturnType<typeof setInterval> | null = null;
+let ringtoneCtx: AudioContext | null = null;
+
+function playRingtonePulse() {
+  if (typeof window === "undefined") return;
+  const prefs = getSoundPrefs();
+  if (!prefs.enabled || prefs.volume <= 0) return;
+
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    if (!ringtoneCtx || ringtoneCtx.state === "closed") {
+      ringtoneCtx = new AudioCtx();
+    }
+    if (ringtoneCtx.state === "suspended") {
+      void ringtoneCtx.resume().catch(() => {});
+    }
+
+    const ctx = ringtoneCtx;
+    const now = ctx.currentTime;
+    const peak = Math.max(0.02, Math.min(0.28, prefs.volume * 0.34));
+
+    // Warm 3-note rising studio bell motif (D5 -> F#5 -> A5, soft double cadence)
+    const notes: Array<{ freq: number; start: number; dur: number }> = [
+      { freq: 587.33, start: 0.0, dur: 0.18 },
+      { freq: 739.99, start: 0.14, dur: 0.18 },
+      { freq: 880.0, start: 0.28, dur: 0.34 },
+      { freq: 739.99, start: 0.68, dur: 0.16 },
+      { freq: 880.0, start: 0.82, dur: 0.36 },
+    ];
+
+    for (const note of notes) {
+      const osc = ctx.createOscillator();
+      const overtone = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const overtoneGain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(note.freq, now + note.start);
+
+      overtone.type = "triangle";
+      overtone.frequency.setValueAtTime(note.freq * 2, now + note.start);
+      overtoneGain.gain.setValueAtTime(0.12, now + note.start);
+
+      gain.gain.setValueAtTime(0.0001, now + note.start);
+      gain.gain.exponentialRampToValueAtTime(peak, now + note.start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + note.start + note.dur);
+
+      osc.connect(gain);
+      overtone.connect(overtoneGain);
+      overtoneGain.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + note.start);
+      osc.stop(now + note.start + note.dur + 0.02);
+      overtone.start(now + note.start);
+      overtone.stop(now + note.start + note.dur + 0.02);
+    }
+  } catch {
+    // ignore autoplay restriction
+  }
+}
+
+export function startIncomingRingtone(): void {
+  if (typeof window === "undefined") return;
+  if (ringtoneTimer !== null) return; // already ringing
+  playRingtonePulse();
+  ringtoneTimer = setInterval(playRingtonePulse, 2600);
+}
+
+export function stopIncomingRingtone(): void {
+  if (ringtoneTimer !== null) {
+    clearInterval(ringtoneTimer);
+    ringtoneTimer = null;
+  }
+  if (ringtoneCtx && ringtoneCtx.state !== "closed") {
+    const ctxToClose = ringtoneCtx;
+    ringtoneCtx = null;
+    void ctxToClose.close().catch(() => {});
+  }
+}
+
+/** Soft descending 2-tone chime played when a direct call is declined */
+export function playCallDeclinedSound(): void {
+  if (typeof window === "undefined") return;
+  const prefs = getSoundPrefs();
+  if (!prefs.enabled || prefs.volume <= 0) return;
+
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const peak = Math.max(0.02, Math.min(0.24, prefs.volume * 0.3));
+
+    const tones: Array<{ freq: number; start: number; dur: number }> = [
+      { freq: 440, start: 0, dur: 0.16 },
+      { freq: 311.13, start: 0.16, dur: 0.28 },
+    ];
+
+    for (const tone of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(tone.freq, now + tone.start);
+      gain.gain.setValueAtTime(0.0001, now + tone.start);
+      gain.gain.exponentialRampToValueAtTime(peak, now + tone.start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + tone.start + tone.dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + tone.start);
+      osc.stop(now + tone.start + tone.dur + 0.02);
+    }
+
+    setTimeout(() => void ctx.close().catch(() => {}), 600);
+  } catch {
+    // ignore
+  }
+}

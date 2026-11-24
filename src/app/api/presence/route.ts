@@ -143,6 +143,27 @@ export async function GET(request: Request) {
       })),
     ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
+    const incomingCalls = voiceSnap
+      ? dms.flatMap((dm) => {
+          const roomName = `dm-${dm.id}`;
+          const occupants = voiceSnap.occupancy[roomName] ?? [];
+          if (occupants.length === 0) return [];
+          if (occupants.some((o) => o.identity === user.id)) return [];
+          const callerOcc = occupants.find((o) => o.identity === dm.peer.id);
+          if (!callerOcc) return [];
+          return [
+            {
+              dmConversationId: dm.id,
+              roomName,
+              caller: dm.peer,
+              withVideo: Boolean(callerOcc.isCameraOn),
+              startedAtMs:
+                voiceSnap.roomCreatedAt[roomName] ?? callerOcc.joinedAt ?? now.getTime(),
+            },
+          ];
+        })
+      : [];
+
     return NextResponse.json(
       {
         serverTime: now.toISOString(),
@@ -152,6 +173,7 @@ export async function GET(request: Request) {
         dmConversations: dms,
         voiceOccupancy: voiceSnap ? voiceSnap.occupancy : null,
         voiceRoomCreatedAt: voiceSnap ? voiceSnap.roomCreatedAt : null,
+        incomingCalls,
         recentNotifications: combinedNotifications,
         capabilities: {
           livekitReady: isLiveKitConfigured(),

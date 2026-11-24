@@ -109,6 +109,9 @@ export async function fetchVoiceOccupancySnapshot(): Promise<VoiceOccupancySnaps
               // ignore malformed metadata
             }
           }
+          const isCameraOn = (p.tracks ?? []).some(
+            (t) => t.source === 1 && !t.muted // TrackSource.CAMERA = 1
+          );
           const isScreenSharing = (p.tracks ?? []).some(
             (t) => t.source === 3 && !t.muted // TrackSource.SCREEN_SHARE = 3
           );
@@ -120,6 +123,7 @@ export async function fetchVoiceOccupancySnapshot(): Promise<VoiceOccupancySnaps
             avatarColor,
             avatarUrl,
             isScreenSharing,
+            isCameraOn,
             joinedAt: joinedSec > 0 ? joinedSec * 1000 : null,
           };
         });

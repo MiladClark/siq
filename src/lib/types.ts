@@ -156,7 +156,16 @@ export interface VoiceParticipantSummary {
   avatarUrl?: string | null;
   bannerUrl?: string | null;
   isScreenSharing?: boolean;
+  isCameraOn?: boolean;
   joinedAt?: number | null;
+}
+
+export interface IncomingCallItem {
+  dmConversationId: string;
+  roomName: string;
+  caller: PublicUser;
+  withVideo: boolean;
+  startedAtMs: number;
 }
 
 export type VoiceOccupancyMap = Record<string, VoiceParticipantSummary[]>;
