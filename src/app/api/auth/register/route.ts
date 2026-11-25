@@ -17,11 +17,10 @@ import {
   users,
 } from "@/db/schema";
 import {
-  createSessionToken,
+  createSignInResponse,
   hashPassword,
   pickAvatarColor,
   serializePrivateUser,
-  setSessionCookie,
 } from "@/lib/auth";
 import { registerSchema } from "@/lib/validators";
 
@@ -240,14 +239,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const token = await createSessionToken({
-      sub: createdUser.id,
-      username: createdUser.username,
-      role: createdUser.role,
-    });
-    await setSessionCookie(token);
-
-    return NextResponse.json({ user: serializePrivateUser(createdUser) }, { status: 201 });
+    return await createSignInResponse(request, serializePrivateUser(createdUser), true, 201);
   } catch (error) {
     console.error("[auth/register]", error);
     return NextResponse.json(

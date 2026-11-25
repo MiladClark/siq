@@ -4,9 +4,8 @@ import { getDb, isDatabaseConfigured } from "@/db";
 import { ensureAppSchema } from "@/db/ensure-schema";
 import { users } from "@/db/schema";
 import {
-  createSessionToken,
+  createSignInResponse,
   serializePrivateUser,
-  setSessionCookie,
   verifyPassword,
 } from "@/lib/auth";
 import { loginSchema } from "@/lib/validators";
@@ -61,14 +60,7 @@ export async function POST(request: Request) {
       .where(eq(users.id, user.id))
       .returning();
 
-    const token = await createSessionToken({
-      sub: updated.id,
-      username: updated.username,
-      role: updated.role,
-    });
-    await setSessionCookie(token, rememberMe);
-
-    return NextResponse.json({ user: serializePrivateUser(updated) });
+    return await createSignInResponse(request, serializePrivateUser(updated), rememberMe);
   } catch (error) {
     console.error("[auth/login]", error);
     return NextResponse.json(
