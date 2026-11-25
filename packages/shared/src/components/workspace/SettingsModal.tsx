@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Avatar } from "@siq/shared/components/ui/Avatar";
 import { ColorPicker } from "@siq/shared/components/ui/ColorPicker";
 import { type CropMode, ImageCropModal } from "@siq/shared/components/ui/ImageCropModal";
@@ -37,6 +37,7 @@ import type { NoiseCancellationMode } from "@siq/shared/lib/noise-processor";
 import {
   APP_FONT_PRESETS,
   APP_THEME_PRESETS,
+  DEFAULT_APP_THEME,
   type AppPreferences,
   clearLocalWorkspaceData,
   type MessageDensity,
@@ -58,6 +59,7 @@ interface SettingsModalProps {
   user: PrivateUser;
   blobReady: boolean;
   appPrefs: AppPreferences;
+  desktopSettings?: ReactNode;
   onUpdatePrefs: (patch: Partial<AppPreferences>) => void;
   onResetPrefs: () => void;
   onClose: () => void;
@@ -109,6 +111,7 @@ export function SettingsModal({
   user,
   blobReady,
   appPrefs,
+  desktopSettings,
   onUpdatePrefs,
   onResetPrefs,
   onClose,
@@ -117,6 +120,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const voice = useVoice();
   const notify = useSystemNotify();
+  const themePreset = APP_THEME_PRESETS.find((preset) => preset.id === appPrefs.theme)
+    ?? APP_THEME_PRESETS.find((preset) => preset.id === DEFAULT_APP_THEME);
 
   const [tab, setTab] = useState<SettingsTab>(initialTab);
 
@@ -1279,6 +1284,7 @@ export function SettingsModal({
                     {/* APPEARANCE TAB */}
                     {tab === "appearance" && (
                       <div className="space-y-5">
+                        {desktopSettings}
                         {/* 8-Color Theme Studio */}
                         <div className="siq-bezel-sm space-y-3.5 rounded-2xl border border-white/[0.08] bg-[#0D0E12] p-4">
                           <div className="flex items-center justify-between gap-2">
@@ -1293,7 +1299,7 @@ export function SettingsModal({
                             <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300">
                               {appPrefs.customAccentHex
                                 ? "Custom accent"
-                                : APP_THEME_PRESETS.find((t) => t.id === appPrefs.theme)?.name ?? "Obsidian Emerald"}
+                                : themePreset?.name}
                             </span>
                           </div>
 
@@ -1351,7 +1357,7 @@ export function SettingsModal({
                           <div className="space-y-2.5 border-t border-white/[0.07] pt-3">
                             <ColorPicker
                               label="Custom app accent"
-                              value={appPrefs.customAccentHex ?? APP_THEME_PRESETS.find((theme) => theme.id === appPrefs.theme)?.primary ?? "#10B981"}
+                              value={appPrefs.customAccentHex ?? themePreset?.primary ?? "#9D7BFA"}
                               onChange={(customAccentHex) => onUpdatePrefs({ customAccentHex })}
                               presets={AVATAR_PALETTE}
                             />

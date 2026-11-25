@@ -5,6 +5,7 @@ import { MessageCircle, X } from "lucide-react";
 import { motion, Reorder } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatedIconButton } from "@siq/shared/components/ui/AnimatedIcon";
+import { SiqMark } from "@siq/shared/components/ui/SiqMark";
 import { PlusIcon } from "@siq/shared/components/ui/animated-icons/plus";
 import { loadServerTabOrder, saveServerTabOrder } from "@siq/shared/lib/server-folders";
 import type { ServerDetail } from "@siq/shared/lib/types";
@@ -19,6 +20,7 @@ interface ServerRailProps {
   onSelectServer: (serverId: string) => void;
   onOpenCreateJoin: () => void;
   onCloseNavigation: () => void;
+  windowDrag?: boolean;
   onServerContextMenu?: (e: React.MouseEvent<HTMLElement>, server: ServerDetail) => void;
 }
 
@@ -51,6 +53,7 @@ export function ServerRail({
   onSelectServer,
   onOpenCreateJoin,
   onCloseNavigation,
+  windowDrag,
   onServerContextMenu,
 }: ServerRailProps) {
   const [savedOrder, setSavedOrder] = useState<string[]>([]);
@@ -139,7 +142,9 @@ export function ServerRail({
   }
 
   return (
-    <nav ref={railRef} aria-label="Workspace tabs" className="siq-workspace-tabs">
+    <nav ref={railRef} aria-label="Workspace tabs" className="siq-workspace-tabs"
+      data-tauri-drag-region={windowDrag ? "deep" : undefined}
+    >
       {activeEdge && (
         <span
           aria-hidden="true"
@@ -152,10 +157,8 @@ export function ServerRail({
           }}
         />
       )}
-      <div aria-hidden="true" className="hidden h-12 w-full shrink-0 place-items-center pr-px md:grid">
-        <span className="grid size-8 place-items-center rounded-[10px] border border-white/[0.1] bg-[#15161A] text-sm font-bold leading-none text-zinc-100">
-          L
-        </span>
+      <div className="grid h-9 w-full shrink-0 place-items-center pr-px md:h-12">
+        <SiqMark className="text-[19px]" />
       </div>
       <button type="button" aria-label="Close navigation" onClick={onCloseNavigation} className="siq-workspace-tab siq-close-navigation">
         <X aria-hidden="true" className="size-5" />
@@ -202,6 +205,7 @@ export function ServerRail({
                 key={server.id}
                 value={server.id}
                 tabIndex={-1}
+                data-tauri-drag-region={windowDrag ? "false" : undefined}
                 layout="position"
                 drag={canDrag ? "y" : false}
                 dragConstraints={reorderAreaRef}

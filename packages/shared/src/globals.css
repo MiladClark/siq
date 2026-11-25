@@ -39,7 +39,6 @@ html[data-font="rubik"] {
 /* ============================================================================
  * 8 Curated Obsidian Studio Themes (Dynamically remap accent token palette)
  * ============================================================================ */
-:root,
 html[data-theme="emerald"] {
   color-scheme: dark;
   --siq-accent-rgb: 16 185 129;
@@ -77,13 +76,20 @@ html[data-theme="indigo"] {
   --color-emerald-600: #6366f1;
 }
 
+:root,
 html[data-theme="violet"] {
+  color-scheme: dark;
   --siq-accent-rgb: 167 139 250;
   --color-emerald-200: #ddd6fe;
   --color-emerald-300: #c4b5fd;
   --color-emerald-400: #a78bfa;
   --color-emerald-500: #9d7bfa;
   --color-emerald-600: #7c3aed;
+}
+
+:root {
+  --siq-shell-radius: 18px;
+  --siq-shell-surface: color-mix(in srgb, var(--color-emerald-500) 9%, #0c0c11);
 }
 
 html[data-theme="coral"] {
@@ -124,6 +130,155 @@ body {
   scroll-behavior: smooth;
 }
 
+.siq-mark {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: .105em;
+  color: #f5f3ff;
+  height: .9em;
+}
+
+.siq-mark > span {
+  display: block;
+  height: .78em;
+  flex: none;
+}
+
+.siq-mark-s {
+  width: .59em;
+  background: currentColor;
+  clip-path: polygon(22% 0, 100% 0, 100% 19%, 31% 19%, 23% 25%, 23% 40%, 80% 40%, 100% 55%, 100% 81%, 78% 100%, 0 100%, 0 81%, 69% 81%, 77% 75%, 77% 60%, 20% 60%, 0 44%, 0 19%);
+}
+
+.siq-mark-i {
+  width: .2em;
+  background: currentColor;
+  clip-path: polygon(0 16%, 100% 0, 100% 84%, 0 100%);
+}
+
+.siq-mark-q {
+  position: relative;
+  width: .64em;
+  color: var(--color-emerald-400);
+}
+
+.siq-mark-q::before,
+.siq-mark-q::after {
+  position: absolute;
+  background: currentColor;
+  content: "";
+}
+
+.siq-mark-q::before {
+  inset: 0;
+  clip-path: polygon(evenodd, 21% 0, 79% 0, 100% 18%, 100% 81%, 79% 100%, 21% 100%, 0 81%, 0 18%, 21% 0, 31% 20%, 22% 27%, 22% 73%, 31% 80%, 69% 80%, 78% 73%, 78% 27%, 69% 20%, 31% 20%);
+}
+
+.siq-mark-q::after {
+  inset: 61% -8% -14% 58%;
+  clip-path: polygon(23% 0, 100% 72%, 100% 100%, 66% 100%, 0 30%);
+}
+
+.siq-auth {
+  display: grid;
+  min-height: 100dvh;
+  background: #0a0a0f;
+}
+
+.siq-auth-brand {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  border-bottom: 1px solid rgb(255 255 255 / .08);
+  background: radial-gradient(ellipse at 15% 100%, rgb(var(--siq-accent-rgb) / .14), transparent 64%), #101017;
+  padding: clamp(1.75rem, 5vw, 4.5rem);
+}
+
+.siq-auth-brand::before,
+.siq-auth-brand::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.siq-auth-brand::before {
+  background: linear-gradient(128deg, rgb(var(--siq-accent-rgb) / .3), transparent 66%);
+  clip-path: polygon(58% 0, 100% 0, 100% 41%, 57% 100%, 42% 100%, 92% 26%, 73% 26%, 14% 100%, 4% 100%);
+  opacity: .44;
+}
+
+.siq-auth-brand::after {
+  background: rgb(var(--siq-accent-rgb) / .26);
+  clip-path: polygon(76% 0, 76.4% 0, 32.4% 100%, 32% 100%);
+}
+
+.siq-auth-wordmark {
+  font-size: clamp(2.8rem, 9vw, 7.5rem);
+}
+
+.siq-auth-form {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.5rem, 5vw, 4rem);
+}
+
+.siq-switch-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  border-radius: 999px;
+  background: #4a4857;
+}
+
+.siq-switch-track::before {
+  position: absolute;
+  inset: 3px auto auto 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fafafa;
+  content: "";
+}
+
+.siq-switch[aria-checked="true"] > .siq-switch-track {
+  background: var(--color-emerald-500);
+}
+
+.siq-switch[aria-checked="true"] > .siq-switch-track::before {
+  translate: 14px 0;
+}
+
+@media (width < 30rem) {
+  .siq-auth-brand,
+  .siq-auth-form {
+    padding-block: 1rem;
+  }
+
+  .siq-auth-wordmark {
+    font-size: 2.4rem;
+  }
+}
+
+@media (width >= 52rem) {
+  .siq-auth {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+
+  .siq-auth-brand {
+    border-right: 1px solid rgb(255 255 255 / .08);
+    border-bottom: 0;
+  }
+}
+
 .siq-workspace,
 .siq-header-panel[data-header-panel="voice"] {
   --workspace-outline: rgb(255 255 255 / 0.09);
@@ -131,18 +286,15 @@ body {
 }
 
 .siq-workspace {
-  --workspace-gap: 10px;
-  --workspace-radius: 18px;
+  --workspace-radius: var(--siq-shell-radius);
   --workspace-tab-width: 52px;
   --workspace-sidebar: #0e0f12;
-  padding: var(--workspace-gap);
-  background: #08080a;
+  border-radius: var(--workspace-radius);
+  background: var(--siq-shell-surface);
 }
 
 .siq-workspace[data-stage-maximized="true"] {
-  --workspace-gap: 0px;
   --workspace-radius: 0px;
-  padding: 0;
 }
 
 .siq-workspace[data-stage-maximized="true"] .siq-workspace-content {
@@ -469,10 +621,6 @@ body {
 }
 
 @media (width < 48rem) {
-  .siq-workspace {
-    padding: 0;
-  }
-
   .siq-workspace-content {
     border: 0;
     border-radius: 0;
@@ -527,7 +675,7 @@ body {
     padding-bottom: max(12px, env(safe-area-inset-bottom));
     padding-left: env(safe-area-inset-left);
     border-right: 1px solid var(--workspace-outline);
-    background: #070709;
+    background: var(--siq-shell-surface);
     gap: 8px;
   }
 
@@ -572,14 +720,6 @@ body {
 
   .siq-settings-dialog {
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-
-  .siq-auth-intro {
-    padding-top: max(20px, env(safe-area-inset-top));
-  }
-
-  .siq-auth-form {
-    padding-bottom: max(28px, env(safe-area-inset-bottom));
   }
 
   .siq-auth-form :is(input, textarea) {

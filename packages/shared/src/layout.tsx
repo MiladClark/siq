@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { DEFAULT_APP_THEME } from "./lib/preferences";
 import "./globals.css";
 
 /* 100% Local Self-Hosted Fonts — Zero External API Requests */
@@ -132,7 +133,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-font="geist"
-      data-theme="emerald"
+      data-theme={DEFAULT_APP_THEME}
       suppressHydrationWarning
       className={`${ALL_FONT_VARS} dark`}
     >

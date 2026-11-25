@@ -174,6 +174,8 @@ export const DEFAULT_SCREEN_SHARE_CONFIG: ScreenShareConfig = {
   shareAudio: true,
 };
 
+export const DEFAULT_APP_THEME: AppThemeId = "violet";
+
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   noiseMode: "krisp",
   echoCancellation: true,
@@ -183,7 +185,7 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   messageDensity: "comfortable",
   textScale: "md",
   fontPreset: "geist",
-  theme: "emerald",
+  theme: DEFAULT_APP_THEME,
   customAccentHex: null,
   showMembersSidebar: true,
   screenShareConfig: DEFAULT_SCREEN_SHARE_CONFIG,
@@ -219,7 +221,7 @@ export function applyAppearancePreferences(
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.dataset.font = prefs.fontPreset || "geist";
-  root.dataset.theme = prefs.theme || "emerald";
+  root.dataset.theme = prefs.theme || DEFAULT_APP_THEME;
 
   const rgb = prefs.customAccentHex ? parseHexToRgb(prefs.customAccentHex) : null;
   if (rgb) {
