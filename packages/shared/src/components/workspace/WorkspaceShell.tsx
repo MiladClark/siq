@@ -38,7 +38,7 @@ import {
 import { ConnectionState } from "livekit-client";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChannelHeaderTools } from "@siq/shared/components/chat/ChannelHeaderTools";
 import { TextChannelView } from "@siq/shared/components/chat/TextChannelView";
 import { ActiveNowRail } from "@siq/shared/components/dm/ActiveNowRail";
@@ -138,6 +138,7 @@ import type {
 
 interface WorkspaceShellProps {
   onSignedOut?: () => Promise<void>;
+  desktopChrome?: { controls: ReactNode; settings: ReactNode };
   initialUser: PrivateUser;
   initialServers: ServerDetail[];
   initialFriends: FriendItem[];
@@ -214,6 +215,7 @@ function WorkspaceInner({
   initialVoiceRoomCreatedAt,
   initialCapabilities,
   onSignedOut,
+  desktopChrome,
   onPresenceRef,
   onNotifyRef,
 }: WorkspaceShellProps & {
@@ -2757,7 +2759,7 @@ function WorkspaceInner({
     <div
       ref={workspaceRef}
       data-stage-maximized={isStageMaximized}
-      className="siq-workspace flex h-[calc(100dvh-var(--siq-titlebar-height,0px))] w-full overflow-hidden text-zinc-100 select-none"
+      className="siq-workspace flex h-dvh w-full overflow-hidden text-zinc-100 select-none"
     >
       {/* Mobile Backdrop */}
       <AnimatePresence>
@@ -2798,6 +2800,7 @@ function WorkspaceInner({
           }}
           onCloseNavigation={() => setMobileMenuOpen(false)}
           onServerContextMenu={handleServerRailContextMenu}
+          windowDrag={Boolean(desktopChrome)}
         />
 
         {/* Secondary Sidebar (DMs/Friends in Home mode, Server Channels in Server mode) */}
@@ -3455,8 +3458,17 @@ function WorkspaceInner({
       </div>
 
       {/* Main Content Area */}
+      {desktopChrome && !isStageMaximized && (
+        <>
+          <div aria-hidden="true" className="siq-desktop-compact-drag" data-tauri-drag-region="deep" />
+          {desktopChrome.controls}
+        </>
+      )}
       <div className="siq-workspace-content flex min-w-0 flex-1 flex-col">
-        <div className={`siq-workspace-header ${isStageMaximized ? "hidden" : ""}`}>
+        <div
+          className={`siq-workspace-header ${isStageMaximized ? "hidden" : ""}`}
+          data-tauri-drag-region={desktopChrome && !isStageMaximized ? "deep" : undefined}
+        >
           {/* TOP BAR — Dynamic based on Home/Friends, Home/DM, or Server Channel */}
           {viewMode === "home" && homeView === "friends" ? (
             <header className="flex h-14 shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.07] px-2.5 md:gap-2 md:pl-6 md:pr-3">
@@ -4005,6 +4017,7 @@ function WorkspaceInner({
         user={user}
         blobReady={capabilities.blobReady}
         appPrefs={appPrefs}
+        desktopSettings={desktopChrome?.settings}
         onUpdatePrefs={updateAppPrefs}
         onResetPrefs={() => setAppPrefs(DEFAULT_APP_PREFERENCES)}
         onClose={() => setSettingsOpen(false)}

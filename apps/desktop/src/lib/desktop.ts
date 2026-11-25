@@ -7,16 +7,6 @@ export function isTauriDesktop(): boolean {
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 }
 
-export async function startDesktopWindowDrag(): Promise<void> {
-  if (!isTauriDesktop()) return;
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().startDragging();
-  } catch {
-    // ignore outside desktop window context
-  }
-}
-
 export async function minimizeDesktopWindow(): Promise<void> {
   if (!isTauriDesktop()) return;
   try {
@@ -49,14 +39,14 @@ export async function isDesktopWindowMaximized(): Promise<boolean> {
   }
 }
 
-export async function closeDesktopWindowToTray(): Promise<void> {
-  if (!isTauriDesktop()) return;
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
-  } catch {
-    // ignore
-  }
+export async function hideDesktopWindow(): Promise<void> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().hide();
+}
+
+export async function quitDesktopApp(): Promise<void> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("desktop_quit");
 }
 
 const syncDesktopVoiceState: VoiceControls["syncState"] = async (payload) => {

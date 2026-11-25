@@ -165,11 +165,10 @@ pub fn run() {
       Ok(())
     })
     .on_window_event(|window, event| {
-      // Minimize to System Tray on close (Discord-style) so voice calls keep running in background
       if window.label() == "main" {
         if let WindowEvent::CloseRequested { api, .. } = event {
           api.prevent_close();
-          let _ = window.hide();
+          let _ = window.emit("siq://close-requested", ());
         }
       }
     })

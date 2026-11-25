@@ -20,6 +20,7 @@ export function HeaderPanel({
     <motion.section
       id={`workspace-header-${kind}`}
       data-header-panel={kind}
+      data-tauri-drag-region="false"
       role="dialog"
       aria-label={label}
       initial={{ opacity: 0 }}
