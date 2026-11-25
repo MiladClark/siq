@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, siteUrl } from "@/lib/client-api";
 import { Check, Clock, Copy, KeyRound, Link2, Plus, Trash2, Users, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
@@ -49,7 +50,7 @@ export function ServerInvites({
       const url = serverId
         ? `/api/invites?serverId=${encodeURIComponent(serverId)}`
         : "/api/invites";
-      const res = await fetch(url, { cache: "no-store", signal });
+      const res = await apiFetch(url, { cache: "no-store", signal });
       const data = await res.json();
       if (signal.aborted) return;
       if (!res.ok) {
@@ -85,7 +86,7 @@ export function ServerInvites({
   async function handleCreate() {
     setCreating(true);
     try {
-      const res = await fetch("/api/invites", {
+      const res = await apiFetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -119,7 +120,7 @@ export function ServerInvites({
 
   async function handleRevoke(id: string) {
     try {
-      const res = await fetch(`/api/invites/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/invites/${id}`, { method: "DELETE" });
       if (res.ok) {
         setInvites((prev) =>
           prev.map((inv) => (inv.id === id ? { ...inv, revoked: true } : inv))
@@ -257,7 +258,7 @@ export function ServerInvites({
                 const inactive = inv.revoked || expired || exhausted;
                 const joinUrl =
                   typeof window !== "undefined"
-                    ? `${window.location.origin}/join/${inv.code}`
+                    ? siteUrl(`/join/${inv.code}`)
                     : `/join/${inv.code}`;
 
                 return (

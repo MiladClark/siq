@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import { Folder, Hash, Lock, Volume2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
@@ -94,7 +95,7 @@ export function ChannelModal({
             allowedRoleIds: isPrivate ? allowedRoleIds : [],
           };
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

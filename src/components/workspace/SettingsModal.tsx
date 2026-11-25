@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, mediaUrl } from "@/lib/client-api";
 import {
   Bell,
   Camera,
@@ -31,6 +32,7 @@ import { type CropMode, ImageCropModal } from "@/components/ui/ImageCropModal";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { SelectDropdown } from "@/components/ui/SelectDropdown";
 import { useVoice } from "@/components/voice/VoiceProvider";
+import { LiveMicWaveform } from "@/components/workspace/LiveMicWaveform";
 import type { NoiseCancellationMode } from "@/lib/noise-processor";
 import {
   APP_FONT_PRESETS,
@@ -167,11 +169,6 @@ export function SettingsModal({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(0.45);
 
-  // Mic test state
-  const [micTesting, setMicTesting] = useState(false);
-  const [micLevel, setMicLevel] = useState(0);
-  const micTestCleanupRef = useRef<(() => void) | null>(null);
-
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const bannerInputRef = useRef<HTMLInputElement | null>(null);
   const accountDraftRef = useRef<{ userId: string; initialTab: SettingsTab } | null>(null);
@@ -179,10 +176,6 @@ export function SettingsModal({
   useEffect(() => {
     if (!open) {
       accountDraftRef.current = null;
-      micTestCleanupRef.current?.();
-      micTestCleanupRef.current = null;
-      setMicTesting(false);
-      setMicLevel(0);
       setCropRequest(null);
       return;
     }
@@ -221,67 +214,6 @@ export function SettingsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  async function toggleMicTest() {
-    if (micTesting) {
-      micTestCleanupRef.current?.();
-      micTestCleanupRef.current = null;
-      setMicTesting(false);
-      setMicLevel(0);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: voice.selectedAudioInput || undefined,
-          echoCancellation: voice.echoCancellation,
-          autoGainControl: voice.autoGainControl,
-          noiseSuppression: voice.noiseMode !== "off",
-        },
-      });
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      src.connect(analyser);
-
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      let rafId = 0;
-
-      const loop = () => {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const norm = (data[i] - 128) / 128;
-          sum += norm * norm;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        setMicLevel(Math.min(100, Math.round(rms * 380)));
-        rafId = requestAnimationFrame(loop);
-      };
-      rafId = requestAnimationFrame(loop);
-
-      micTestCleanupRef.current = () => {
-        cancelAnimationFrame(rafId);
-        src.disconnect();
-        stream.getTracks().forEach((t) => t.stop());
-        void ctx.close().catch(() => {});
-      };
-      setMicTesting(true);
-    } catch {
-      setMicTesting(false);
-      notify({
-        kind: "error",
-        title: "Microphone Error",
-        message: "Could not access microphone for test.",
-        source: "Settings",
-      });
-    }
-  }
-
   function handlePickImage(file: File, mode: CropMode) {
     if (!file.type.startsWith("image/")) {
       setAccountMsg({ type: "err", text: "Please select an image file." });
@@ -293,7 +225,7 @@ export function SettingsModal({
 
   async function persistProfileMedia(mode: CropMode, url: string | null) {
     const patch = mode === "avatar" ? { avatarUrl: url } : { bannerUrl: url };
-    const response = await fetch("/api/auth/me", {
+    const response = await apiFetch("/api/auth/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -323,7 +255,7 @@ export function SettingsModal({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const response = await fetch("/api/upload", { method: "POST", body: formData });
+      const response = await apiFetch("/api/upload", { method: "POST", body: formData });
       const data = await response.json();
       if (!response.ok || !data.attachment?.url) {
         throw new Error(data.error ?? "Upload failed.");
@@ -381,7 +313,7 @@ export function SettingsModal({
       }
       if (email.trim()) body.email = email.trim();
 
-      const res = await fetch("/api/auth/me", {
+      const res = await apiFetch("/api/auth/me", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -405,7 +337,7 @@ export function SettingsModal({
     setChangingPassword(true);
     setPasswordMsg(null);
     try {
-      const res = await fetch("/api/auth/password", {
+      const res = await apiFetch("/api/auth/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ currentPassword, newPassword }),
@@ -592,7 +524,7 @@ export function SettingsModal({
                               {bannerUrl && (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img
-                                  src={bannerUrl}
+                                  src={mediaUrl(bannerUrl)}
                                   alt="Profile banner"
                                   className="h-full w-full object-cover"
                                 />
@@ -968,26 +900,12 @@ export function SettingsModal({
                           </div>
 
                           {/* Live Mic Test */}
-                          <div className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3">
-                            <button
-                              type="button"
-                              onClick={() => void toggleMicTest()}
-                              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
-                                micTesting
-                                  ? "bg-rose-500/20 text-rose-300 hover:bg-rose-500/30"
-                                  : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
-                              }`}
-                            >
-                              <Mic className="h-3.5 w-3.5" />
-                              <span>{micTesting ? "Stop Test" : "Mic Test"}</span>
-                            </button>
-                            <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                              <div
-                                className="h-full rounded-full bg-emerald-400 transition-all duration-75"
-                                style={{ width: `${micLevel}%` }}
-                              />
-                            </div>
-                          </div>
+                          <LiveMicWaveform
+                            deviceId={voice.selectedAudioInput}
+                            echoCancellation={voice.echoCancellation}
+                            autoGainControl={voice.autoGainControl}
+                            noiseMode={voice.noiseMode}
+                          />
                         </div>
 
                         {/* AI Noise Cancellation Selector */}

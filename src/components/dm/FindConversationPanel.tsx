@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, mediaUrl } from "@/lib/client-api";
 import {
   Bell,
   CornerDownLeft,
@@ -201,7 +202,7 @@ export function FindConversationPanel({
     setMsgLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `${activeApiBasePath}?q=${encodeURIComponent(trimmed)}`,
           { cache: "no-store", signal: controller.signal }
         );
@@ -683,7 +684,7 @@ export function FindConversationPanel({
                             >
                               {srv.iconUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element
-                                <img src={srv.iconUrl} alt={srv.name} className="h-full w-full object-cover" />
+                                <img src={mediaUrl(srv.iconUrl)} alt={srv.name} className="h-full w-full object-cover" />
                               ) : (
                                 srv.name.slice(0, 2).toUpperCase()
                               )}

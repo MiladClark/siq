@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import { FolderPlus, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
@@ -41,7 +42,7 @@ export function CategoryModal({
         : `/api/servers/${serverId}/categories`;
       const method = isEdit ? "PATCH" : "POST";
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim() }),

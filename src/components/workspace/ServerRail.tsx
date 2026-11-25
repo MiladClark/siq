@@ -1,5 +1,6 @@
 "use client";
 
+import { mediaUrl } from "@/lib/client-api";
 import { MessageCircle, X } from "lucide-react";
 import { motion, Reorder } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -223,7 +224,7 @@ export function ServerRail({
                 >
                   <span
                     aria-hidden="true"
-                    className="flex size-8 items-center justify-center overflow-hidden rounded-[9px] text-xs font-bold tracking-tight"
+                    className="flex size-9 items-center justify-center overflow-hidden rounded-[11px] text-xs font-bold tracking-tight md:size-8 md:rounded-[9px]"
                     style={server.iconUrl ? undefined : {
                       backgroundColor: `${server.accentColor}24`,
                       color: server.accentColor,
@@ -231,7 +232,7 @@ export function ServerRail({
                   >
                     {server.iconUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={server.iconUrl} alt="" draggable={false} className="size-full object-cover" />
+                      <img src={mediaUrl(server.iconUrl)} alt="" draggable={false} className="size-full object-cover" />
                     ) : (
                       getInitials(server.name)
                     )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, downloadFile, mediaUrl, siteUrl } from "@/lib/client-api";
 import {
   ArrowDown,
   ExternalLink,
@@ -35,10 +36,12 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { AudioWaveformPlayer } from "@/components/chat/AudioWaveformPlayer";
 import { ChatCodeBlock } from "@/components/chat/ChatCodeBlock";
 import { MentionSuggestions } from "@/components/chat/MentionSuggestions";
 import { AnimatedIconButton } from "@/components/ui/AnimatedIcon";
@@ -92,7 +95,14 @@ interface ChannelCacheEntry {
 }
 
 /** Persistent in-memory cache across channel switches — zero skeleton flash, race-safe */
-const channelMessageCache = new Map<string, ChannelCacheEntry>();
+const messageCaches = new Map<string, Map<string, ChannelCacheEntry>>();
+
+function getMessageCache(userId: string) {
+  const cache = messageCaches.get(userId) ?? new Map<string, ChannelCacheEntry>();
+  messageCaches.set(userId, cache);
+  return cache;
+}
+const COMPOSER_MAX_HEIGHT = 132;
 
 function sortMessagesChronologically(items: MessageItem[]): MessageItem[] {
   const byId = new Map<string, MessageItem>();
@@ -262,13 +272,8 @@ function getDownloadHref(att: MessageAttachment): string {
   return `/api/download?url=${encodeURIComponent(att.url)}&name=${encodeURIComponent(att.name)}`;
 }
 
-function triggerDirectDownload(att: MessageAttachment) {
-  const link = document.createElement("a");
-  link.href = getDownloadHref(att);
-  link.download = att.name;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+function downloadAttachment(att: MessageAttachment) {
+  return downloadFile(getDownloadHref(att), att.name);
 }
 
 function renderMessageText(text: string, memberHandles: Set<string>): ReactNode[] {
@@ -325,6 +330,13 @@ export function TextChannelView({
 }: TextChannelViewProps) {
   const { openMenu } = useContextMenu();
   const notify = useSystemNotify();
+  const channelMessageCache = getMessageCache(currentUser.id);
+
+  function triggerDirectDownload(att: MessageAttachment) {
+    void downloadAttachment(att).catch(() => {
+      notify({ kind: "error", title: "Download failed", message: "Could not download the attachment." });
+    });
+  }
   const getMessagesBaseUrl = useCallback(
     (id: string) =>
       isDm ? `/api/dms/${id}/messages` : `/api/channels/${id}/messages`,
@@ -456,6 +468,30 @@ export function TextChannelView({
     setUnseenBelowCount(0);
   }, []);
 
+  const syncComposerHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (!el.value) {
+      el.style.overflowY = "hidden";
+      return;
+    }
+    const contentHeight = el.scrollHeight;
+    const nextHeight = Math.min(contentHeight, COMPOSER_MAX_HEIGHT);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  }, []);
+
+  useLayoutEffect(() => {
+    syncComposerHeight();
+  }, [composerText, syncComposerHeight]);
+
+  useEffect(() => {
+    const onResize = () => syncComposerHeight();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [syncComposerHeight]);
+
   // Load & reconcile channel messages when switching channels (race-free with AbortController)
   useEffect(() => {
     const targetChannelId = channel.id;
@@ -484,7 +520,7 @@ export function TextChannelView({
 
     async function syncChannel() {
       try {
-        const res = await fetch(getMessagesBaseUrl(targetChannelId), {
+        const res = await apiFetch(getMessagesBaseUrl(targetChannelId), {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -555,7 +591,7 @@ export function TextChannelView({
       active = false;
       controller.abort();
     };
-  }, [channel.id, reportSeenIfVisible, scrollToBottom]);
+  }, [channel.id, channelMessageCache, reportSeenIfVisible, scrollToBottom]);
 
   // Incremental background poll every 2.2s + periodic full-tail reconciliation for reactions/edits/pins
   useEffect(() => {
@@ -584,7 +620,7 @@ export function TextChannelView({
       inFlightController = controller;
 
       try {
-        const res = await fetch(url, {
+        const res = await apiFetch(url, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -662,7 +698,7 @@ export function TextChannelView({
       inFlightController?.abort();
       clearInterval(interval);
     };
-  }, [channel.id, isNearBottom, reportSeenIfVisible, scrollToBottom]);
+  }, [channel.id, channelMessageCache, isNearBottom, reportSeenIfVisible, scrollToBottom]);
 
   // Smooth jump-to-message from Pinned drawer or In-Channel Search
   useEffect(() => {
@@ -698,7 +734,7 @@ export function TextChannelView({
     );
     channelMessageCache.set(targetId, { ...entry, messages: updated });
     setMessages(updated);
-  }, [unpinnedEvent]);
+  }, [channelMessageCache, unpinnedEvent]);
 
   // Mark messages as seen when user returns to browser tab while on this channel
   useEffect(() => {
@@ -712,7 +748,7 @@ export function TextChannelView({
     }
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [reportSeenIfVisible]);
+  }, [channelMessageCache, reportSeenIfVisible]);
 
   // Load older messages pagination (preserves exact scroll position)
   const loadOlderMessages = useCallback(async () => {
@@ -728,7 +764,7 @@ export function TextChannelView({
     const prevScrollHeight = el?.scrollHeight ?? 0;
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${getMessagesBaseUrl(targetChannelId)}?before=${encodeURIComponent(oldest.createdAt)}`,
         { cache: "no-store" }
       );
@@ -764,7 +800,7 @@ export function TextChannelView({
         setLoadingOlder(false);
       }
     }
-  }, [loadingOlder]);
+  }, [channelMessageCache, loadingOlder]);
 
   // Handle scroll events (auto-load older near top + clear unseen badge at bottom)
   function handleFeedScroll() {
@@ -802,7 +838,7 @@ export function TextChannelView({
         const formData = new FormData();
         formData.append("file", file);
 
-        const res = await fetch("/api/upload", {
+        const res = await apiFetch("/api/upload", {
           method: "POST",
           body: formData,
         });
@@ -838,7 +874,7 @@ export function TextChannelView({
     };
 
     try {
-      const res = await fetch(getMessagesBaseUrl(targetChannelId), {
+      const res = await apiFetch(getMessagesBaseUrl(targetChannelId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -864,6 +900,7 @@ export function TextChannelView({
           setMentionCaret(null);
           if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
+            textareaRef.current.style.overflowY = "hidden";
           }
           setPendingAttachments([]);
           setReplyingTo(null);
@@ -884,7 +921,7 @@ export function TextChannelView({
   async function handleDeleteMessage(messageId: string) {
     const targetChannelId = channel.id;
     try {
-      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
+      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -1033,7 +1070,7 @@ export function TextChannelView({
     setMessages(optimistic);
 
     try {
-      const res = await fetch(`/api/messages/${messageId}/reactions`, {
+      const res = await apiFetch(`/api/messages/${messageId}/reactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emoji }),
@@ -1070,7 +1107,7 @@ export function TextChannelView({
     setSavingEdit(true);
 
     try {
-      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
+      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: trimmed }),
@@ -1110,7 +1147,7 @@ export function TextChannelView({
     const targetChannelId = activeChannelIdRef.current;
     const nextPinned = !msg.pinned;
     try {
-      const res = await fetch(`${getMessagesBaseUrl(targetChannelId)}/${msg.id}`, {
+      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${msg.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pinned: nextPinned }),
@@ -1305,9 +1342,7 @@ export function TextChannelView({
         label: "Copy Image Link",
         icon: <CopyIcon size={14} />,
         onSelect: () => {
-          const fullUrl = att.url.startsWith("/")
-            ? `${window.location.origin}${att.url}`
-            : att.url;
+          const fullUrl = att.url.startsWith("/") ? siteUrl(att.url) : att.url;
           void navigator.clipboard.writeText(fullUrl);
           playSound("copy");
         },
@@ -1499,7 +1534,7 @@ export function TextChannelView({
                   }`}
                 >
                   {/* Hover Action Bar (Quick Reactions + Picker + Reply + Edit + Pin + Copy + Delete) */}
-                  <div className="absolute -top-3.5 right-2 z-10 hidden items-center gap-0.5 rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 group-hover:flex">
+                  <div className="absolute -top-3.5 right-2 z-10 hidden max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 [scrollbar-width:none] group-hover:flex">
                     {QUICK_REACTION_EMOJIS.map((emoji) => (
                       <button
                         key={emoji}
@@ -1717,7 +1752,7 @@ export function TextChannelView({
                                 >
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
-                                    src={att.url}
+                                    src={mediaUrl(att.url)}
                                     alt={att.name}
                                     loading="lazy"
                                     className="max-h-72 max-w-xs object-contain transition-transform duration-200 group-hover/img:scale-[1.01] sm:max-w-sm"
@@ -1736,6 +1771,20 @@ export function TextChannelView({
                                   className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.15] bg-black/70 text-zinc-200 opacity-0 backdrop-blur-sm transition-all hover:bg-black hover:text-emerald-300 group-hover/img:opacity-100"
                                 />
                               </div>
+                            );
+                          }
+
+                          const isAudio =
+                            att.contentType.toLowerCase().startsWith("audio/") ||
+                            /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i.test(att.name);
+                          if (isAudio) {
+                            return (
+                              <AudioWaveformPlayer
+                                key={`${att.url}-${i}`}
+                                src={mediaUrl(att.url)}
+                                name={att.name}
+                                onDownload={() => triggerDirectDownload(att)}
+                              />
                             );
                           }
 
@@ -1843,7 +1892,7 @@ export function TextChannelView({
       </AnimatePresence>
 
       {/* Studio Floating Composer Area */}
-      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-2.5 pb-2.5 pt-2 md:px-6 md:pb-3.5">
+      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-1.5 md:px-6 md:pb-3.5 md:pt-2">
         <AnimatePresence>
           {replyingTo && (
             <motion.div
@@ -1855,8 +1904,8 @@ export function TextChannelView({
             >
               <div className="flex min-w-0 items-center gap-2">
                 <Reply className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                <span className="text-zinc-400">Replying to</span>
-                <span dir="auto" className="font-semibold text-zinc-100">
+                <span className="shrink-0 text-zinc-400">Replying to</span>
+                <span dir="auto" className="shrink-0 font-semibold text-zinc-100">
                   {replyingTo.author.displayName}
                 </span>
                 <span dir="auto" className="truncate text-zinc-500">
@@ -1866,7 +1915,7 @@ export function TextChannelView({
               <button
                 type="button"
                 onClick={() => setReplyingTo(null)}
-                className="rounded-md p-0.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
+                className="shrink-0 rounded-md p-1 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -1890,7 +1939,7 @@ export function TextChannelView({
                   {att.contentType.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={att.url}
+                      src={mediaUrl(att.url)}
                       alt={att.name}
                       className="h-6 w-6 rounded-md object-cover"
                     />
@@ -1915,7 +1964,7 @@ export function TextChannelView({
 
         <form
           onSubmit={(e) => void handleSend(e)}
-          className="siq-bezel relative flex items-end gap-1 rounded-2xl border border-white/[0.1] bg-[#16171E] px-1.5 py-1.5 transition-all focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12 md:gap-2 md:px-3 md:py-2"
+          className="siq-bezel relative flex items-end gap-1 rounded-2xl border border-white/[0.1] bg-[#15161C] p-1.5 transition-colors focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12 md:gap-1.5 md:px-2.5 md:py-2"
         >
           <AnimatePresence>
             {mentionDraft && (
@@ -1943,6 +1992,7 @@ export function TextChannelView({
           <AnimatedIconButton
             type="button"
             icon={AttachFileIcon}
+            iconSize={18}
             disabled={uploadingCount > 0}
             onClick={() => {
               if (!blobReady) {
@@ -1954,7 +2004,7 @@ export function TextChannelView({
               fileInputRef.current?.click();
             }}
             title={blobReady ? "Attach image or file" : "Blob storage not configured"}
-            className="mb-0.5 rounded-xl p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
           />
 
           <textarea
@@ -1969,10 +2019,7 @@ export function TextChannelView({
             onSelect={(e) => updateMentionCaret(e.currentTarget)}
             onChange={(e) => {
               setComposerText(e.target.value);
-              const el = e.currentTarget;
-              updateMentionCaret(el);
-              el.style.height = "auto";
-              el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+              updateMentionCaret(e.currentTarget);
             }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
@@ -1984,7 +2031,7 @@ export function TextChannelView({
                   : `Message ${channelLabel}`
             }
             disabled={!canSendMessages}
-            className="max-h-36 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+            className="min-h-[36px] max-h-[132px] min-w-0 flex-1 resize-none overflow-y-hidden bg-transparent px-1 py-1.5 text-base leading-6 text-zinc-100 placeholder:text-zinc-500 focus:outline-none md:text-sm md:leading-6"
           />
 
           <button
@@ -1992,13 +2039,14 @@ export function TextChannelView({
             onClick={openComposerEmojiPicker}
             title="Insert emoji"
             aria-label="Insert emoji"
-            className="mb-0.5 rounded-xl p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
           >
-            <Smile className="h-4 w-4" />
+            <Smile className="h-[18px] w-[18px]" />
           </button>
 
           <AnimatedIconButton
             icon={SendIcon}
+            iconSize={16}
             type="submit"
             disabled={
               sending ||
@@ -2006,7 +2054,7 @@ export function TextChannelView({
               (!composerText.trim() && pendingAttachments.length === 0)
             }
             aria-label="Send message"
-            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
           />
         </form>
       </div>
@@ -2100,7 +2148,7 @@ export function TextChannelView({
                     <span>Download</span>
                   </AnimatedIconButton>
                   <a
-                    href={lightboxImage.url}
+                    href={mediaUrl(lightboxImage.url)}
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Open in new tab"
@@ -2121,7 +2169,7 @@ export function TextChannelView({
 
               <div className="flex items-center justify-center overflow-hidden rounded-2xl border border-white/[0.08] bg-black/40">
                 <motion.img
-                  src={lightboxImage.url}
+                  src={mediaUrl(lightboxImage.url)}
                   alt={lightboxImage.name}
                   animate={{ scale: lightboxZoom }}
                   transition={{ type: "spring", stiffness: 320, damping: 28 }}

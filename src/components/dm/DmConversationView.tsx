@@ -1,20 +1,29 @@
 "use client";
 
+import { mediaUrl } from "@/lib/client-api";
 import {
   Calendar,
+  Expand,
+  Fullscreen,
   Gamepad2,
+  Maximize2,
   Mic,
   MicOff,
+  Minimize,
+  Minimize2,
   Monitor,
+  MonitorOff,
   Phone,
   PhoneOff,
+  Shrink,
+  SwitchCamera,
   Video,
   VideoOff,
   Volume2,
   VolumeX,
 } from "lucide-react";
 import { ConnectionState, type Track } from "livekit-client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TextChannelView } from "@/components/chat/TextChannelView";
 import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
 import type { ProfilePopoverTarget } from "@/components/ui/UserProfilePopover";
@@ -36,6 +45,8 @@ interface DmConversationViewProps {
   voiceOccupancy: VoiceOccupancyMap;
   blobReady: boolean;
   showProfileSidebar: boolean;
+  isStageMaximized?: boolean;
+  onToggleMaximize?: () => void;
   density: MessageDensity;
   textScale: TextScale;
   jumpTarget: { messageId: string; nonce: number } | null;
@@ -55,9 +66,11 @@ interface DmConversationViewProps {
 function CallVideoCanvas({
   track,
   mirror = false,
+  fit = "cover",
 }: {
   track: Track;
   mirror?: boolean;
+  fit?: "contain" | "cover";
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
@@ -74,7 +87,9 @@ function CallVideoCanvas({
       autoPlay
       playsInline
       muted
-      className={`h-full w-full object-cover ${mirror ? "-scale-x-100" : ""}`}
+      className={`h-full w-full ${fit === "contain" ? "object-contain" : "object-cover"} ${
+        mirror ? "-scale-x-100" : ""
+      }`}
     />
   );
 }
@@ -98,6 +113,8 @@ export function DmConversationView({
   voiceOccupancy,
   blobReady,
   showProfileSidebar,
+  isStageMaximized = false,
+  onToggleMaximize,
   density,
   textScale,
   jumpTarget,
@@ -110,6 +127,16 @@ export function DmConversationView({
   onMessagesSeen,
 }: DmConversationViewProps) {
   const voice = useVoice();
+  const dmCallStageRef = useRef<HTMLDivElement | null>(null);
+  const [dmStreamFit, setDmStreamFit] = useState<"contain" | "cover">("contain");
+  const [isDmFullscreen, setIsDmFullscreen] = useState(false);
+  const prevDmStreamVolRef = useRef<number>(1);
+
+  useEffect(() => {
+    const onFs = () => setIsDmFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   const livePeer =
     members.find((m) => m.id === conversation.peer.id) ?? conversation.peer;
@@ -141,8 +168,8 @@ export function DmConversationView({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Incoming / Waiting 1-on-1 Call Banner */}
         {peerWaitingInCall && (
-          <div className="flex items-center justify-between gap-3 border-b border-emerald-500/25 bg-emerald-500/10 px-5 py-3">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-2.5 border-b border-emerald-500/25 bg-emerald-500/10 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="flex min-w-0 items-center gap-3">
               <Avatar
                 name={livePeer.displayName}
                 color={livePeer.avatarColor}
@@ -151,20 +178,20 @@ export function DmConversationView({
                 speaking
                 speakingOffsetClassName="ring-offset-[#121316]"
               />
-              <div>
-                <p className="text-xs font-semibold text-emerald-200">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-emerald-200">
                   {livePeer.displayName} started a call
                 </p>
-                <p className="text-[11px] text-emerald-300/75">
+                <p className="truncate text-[11px] text-emerald-300/75">
                   Join voice or video call right here in this DM
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => onStartCall(false)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-zinc-950 transition-colors hover:bg-emerald-400"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition-colors hover:bg-emerald-400 sm:flex-none sm:py-1.5"
               >
                 <Phone className="h-3.5 w-3.5" />
                 <span>Join Call</span>
@@ -172,7 +199,7 @@ export function DmConversationView({
               <button
                 type="button"
                 onClick={() => onStartCall(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/25"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/35 bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/25 sm:flex-none sm:py-1.5"
               >
                 <Video className="h-3.5 w-3.5" />
                 <span>Video</span>
@@ -182,131 +209,366 @@ export function DmConversationView({
         )}
 
         {/* Active 1-on-1 DM Call Stage */}
-        {isInThisDmCall && (
-          <div className="max-h-[38dvh] shrink-0 overflow-y-auto border-b border-white/[0.08] bg-[#0B0C0F] px-3 py-2.5 md:max-h-none md:px-5 md:py-4">
-            <div className="flex flex-wrap items-center justify-center gap-4">
-              {voice.participants.map((p) => {
-                const m = members.find((item) => item.id === p.identity);
-                const name = m?.displayName ?? p.name;
-                const avatarColor = m?.avatarColor ?? p.avatarColor;
-                const avatarUrl = m ? m.avatarUrl : p.avatarUrl;
-                const activeVideo = p.screenTrack ?? (p.isCameraOn ? p.cameraTrack : null);
-                return (
+        {isInThisDmCall && (() => {
+          const activeDmScreenSharer =
+            voice.participants.find((p) => !p.isLocal && p.isScreenSharing && p.screenTrack) ??
+            voice.participants.find((p) => p.isScreenSharing && p.screenTrack) ??
+            null;
+          const dmStreamAudioKey = activeDmScreenSharer
+            ? `${activeDmScreenSharer.identity}:screen`
+            : "";
+          const dmStreamVol = dmStreamAudioKey
+            ? (voice.userVolumes[dmStreamAudioKey] ?? 1)
+            : 1;
+
+          return (
+            <div
+              ref={dmCallStageRef}
+              className={`flex flex-col border-b border-white/[0.08] bg-[#0B0C0F] ${
+                isStageMaximized || isDmFullscreen
+                  ? "min-h-0 flex-1 border-b-0 p-2 sm:p-4"
+                  : activeDmScreenSharer
+                    ? "max-h-[62dvh] shrink-0 overflow-y-auto px-3 py-3 md:px-5"
+                    : "max-h-[44dvh] shrink-0 overflow-y-auto px-3 py-2.5 md:max-h-none md:px-5 md:py-4"
+              }`}
+            >
+              {/* Full DM Screen Share Theater when either participant shares screen */}
+              {activeDmScreenSharer && activeDmScreenSharer.screenTrack && (
+                <div
+                  className={`mb-3 flex flex-col overflow-hidden rounded-xl border border-white/[0.1] bg-black ${
+                    isStageMaximized || isDmFullscreen
+                      ? "min-h-0 flex-1"
+                      : "h-[34dvh] min-h-[220px] sm:h-[40dvh]"
+                  }`}
+                >
                   <div
-                    key={p.identity}
-                    className={`relative flex flex-col items-center justify-center overflow-hidden rounded-xl border bg-[#14151A] ${
-                      activeVideo ? "h-44 w-72" : "h-32 w-48"
-                    } ${
-                      p.isSpeaking
-                        ? "border-emerald-500/75 ring-1 ring-emerald-500/35"
-                        : "border-white/[0.08]"
-                    }`}
+                    onDoubleClick={() => {
+                      const el = dmCallStageRef.current;
+                      if (!el) return;
+                      if (document.fullscreenElement) {
+                        void document.exitFullscreen().catch(() => {});
+                      } else {
+                        void el.requestFullscreen?.().catch(() => {});
+                      }
+                    }}
+                    className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050507]"
                   >
-                    {activeVideo ? (
-                      <CallVideoCanvas
-                        track={activeVideo}
-                        mirror={p.isLocal && !p.screenTrack}
-                      />
-                    ) : (
-                      <Avatar
-                        name={name}
-                        color={avatarColor}
-                        avatarUrl={avatarUrl}
-                        size="lg"
-                        speaking={p.isSpeaking}
-                        speakingOffsetClassName="ring-offset-[#14151A]"
-                      />
-                    )}
-                    <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between">
-                      <span
-                        dir="auto"
-                        className="truncate rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-medium text-zinc-100 backdrop-blur-xs"
-                      >
-                        {name}
+                    <CallVideoCanvas
+                      track={activeDmScreenSharer.screenTrack}
+                      fit={dmStreamFit}
+                    />
+                    <div className="pointer-events-none absolute left-3 top-2.5 inline-flex items-center gap-2 rounded-lg border border-white/[0.12] bg-black/75 px-2.5 py-1 text-xs font-medium text-white">
+                      <span className="inline-flex items-center gap-1 rounded bg-rose-500/25 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
+                        LIVE
                       </span>
-                      {p.isMuted && (
-                        <span className="rounded-md bg-rose-500/80 p-1 text-white">
-                          <MicOff className="h-3 w-3" />
-                        </span>
-                      )}
+                      <span dir="auto">
+                        {activeDmScreenSharer.isLocal
+                          ? "Your Screen"
+                          : `${livePeer.displayName}'s Screen`}
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-            </div>
 
-            {/* Compact DM Call Control Bar */}
-            <div className="mt-3.5 flex items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => void voice.toggleMute()}
-                title={voice.isMuted ? "Unmute" : "Mute"}
-                className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
-                  voice.isMuted
-                    ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
-                    : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
-                }`}
-              >
-                {voice.isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => void voice.toggleDeafen()}
-                title={voice.isDeafened ? "Undeafen" : "Deafen"}
-                className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
-                  voice.isDeafened
-                    ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
-                    : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
-                }`}
-              >
-                {voice.isDeafened ? (
-                  <VolumeX className="h-4 w-4" />
-                ) : (
-                  <Volume2 className="h-4 w-4" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => void voice.toggleCamera()}
-                title={voice.isCameraOn ? "Turn off camera" : "Turn on camera"}
-                className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
-                  voice.isCameraOn
-                    ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
-                    : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
-                }`}
-              >
-                {voice.isCameraOn ? (
-                  <Video className="h-4 w-4" />
-                ) : (
-                  <VideoOff className="h-4 w-4" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={onOpenScreenShareModal}
-                title={voice.isScreenSharing ? "Stream options" : "Share screen"}
-                className={`flex h-9 w-9 items-center justify-center rounded-full border transition-colors ${
-                  voice.isScreenSharing
-                    ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
-                    : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
-                }`}
-              >
-                <Monitor className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onLeaveCall}
-                title="End call"
-                className="flex h-9 items-center gap-1.5 rounded-full bg-rose-500 px-3.5 text-xs font-semibold text-white transition-colors hover:bg-rose-400"
-              >
-                <PhoneOff className="h-3.5 w-3.5" />
-                <span>Leave</span>
-              </button>
-            </div>
-          </div>
-        )}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-[#0E0F13] px-3 py-1.5">
+                    <div className="flex items-center gap-2">
+                      {activeDmScreenSharer.isLocal ? (
+                        <button
+                          type="button"
+                          onClick={() => void voice.stopScreenShare()}
+                          className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 text-[11px] font-semibold text-rose-300 transition-colors hover:bg-rose-500 hover:text-white"
+                        >
+                          <MonitorOff className="h-3.5 w-3.5" />
+                          <span>Stop Sharing</span>
+                        </button>
+                      ) : activeDmScreenSharer.screenAudioTrack ? (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (dmStreamVol > 0) {
+                                prevDmStreamVolRef.current = dmStreamVol;
+                                voice.setUserVolume(dmStreamAudioKey, 0);
+                              } else {
+                                voice.setUserVolume(
+                                  dmStreamAudioKey,
+                                  prevDmStreamVolRef.current || 1
+                                );
+                              }
+                            }}
+                            className="rounded-md p-1 text-zinc-300 hover:bg-white/[0.08] hover:text-white"
+                          >
+                            {dmStreamVol === 0 ? (
+                              <VolumeX className="h-3.5 w-3.5 text-rose-400" />
+                            ) : (
+                              <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
+                            )}
+                          </button>
+                          <input
+                            type="range"
+                            min={0}
+                            max={2}
+                            step={0.05}
+                            value={dmStreamVol}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (v > 0) prevDmStreamVolRef.current = v;
+                              voice.setUserVolume(dmStreamAudioKey, v);
+                            }}
+                            className="h-1.5 w-24 cursor-pointer accent-emerald-500"
+                          />
+                          <span className="font-mono text-[11px] tabular-nums text-zinc-400">
+                            {Math.round(dmStreamVol * 100)}%
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-zinc-500">Video stream</span>
+                      )}
+                    </div>
 
-        {/* Unified Direct Message Chat Feed */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDmStreamFit((f) => (f === "contain" ? "cover" : "contain"))
+                        }
+                        title={dmStreamFit === "contain" ? "Fill frame" : "Fit frame"}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
+                      >
+                        {dmStreamFit === "contain" ? (
+                          <Expand className="h-3.5 w-3.5" />
+                        ) : (
+                          <Shrink className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+
+                      {onToggleMaximize && !isDmFullscreen && (
+                        <button
+                          type="button"
+                          onClick={onToggleMaximize}
+                          title={isStageMaximized ? "Exit Full Width" : "Full App Width"}
+                          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors ${
+                            isStageMaximized
+                              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                              : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:text-white"
+                          }`}
+                        >
+                          {isStageMaximized ? (
+                            <Minimize2 className="h-3.5 w-3.5" />
+                          ) : (
+                            <Maximize2 className="h-3.5 w-3.5" />
+                          )}
+                          <span className="hidden sm:inline">
+                            {isStageMaximized ? "Exit Wide" : "Full Width"}
+                          </span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const el = dmCallStageRef.current;
+                          if (!el) return;
+                          if (document.fullscreenElement) {
+                            void document.exitFullscreen().catch(() => {});
+                          } else {
+                            void el.requestFullscreen?.().catch(() => {});
+                          }
+                        }}
+                        title="Fullscreen"
+                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-white/[0.1] bg-[#18191E] px-2 text-[11px] font-medium text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-300"
+                      >
+                        {isDmFullscreen ? (
+                          <Minimize className="h-3.5 w-3.5" />
+                        ) : (
+                          <Fullscreen className="h-3.5 w-3.5" />
+                        )}
+                        <span className="hidden sm:inline">
+                          {isDmFullscreen ? "Exit" : "Fullscreen"}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex shrink-0 flex-wrap items-center justify-center gap-2.5 sm:gap-4">
+                {voice.participants.map((p) => {
+                  const m = members.find((item) => item.id === p.identity);
+                  const name = m?.displayName ?? p.name;
+                  const avatarColor = m?.avatarColor ?? p.avatarColor;
+                  const avatarUrl = m ? m.avatarUrl : p.avatarUrl;
+                  const cameraVideo = p.isCameraOn ? p.cameraTrack : null;
+                  return (
+                    <div
+                      key={p.identity}
+                      className={`relative flex flex-col items-center justify-center overflow-hidden rounded-xl border bg-[#14151A] ${
+                        activeDmScreenSharer
+                          ? "h-20 w-36 sm:h-24 sm:w-44"
+                          : cameraVideo
+                            ? "h-44 w-full max-w-[320px] sm:w-72"
+                            : "h-28 w-[calc(50%-0.375rem)] sm:h-32 sm:w-48"
+                      } ${
+                        p.isSpeaking
+                          ? "border-emerald-500/75 ring-1 ring-emerald-500/35"
+                          : "border-white/[0.08]"
+                      }`}
+                    >
+                      {cameraVideo ? (
+                        <CallVideoCanvas
+                          track={cameraVideo}
+                          mirror={p.isLocal && voice.cameraFacingMode === "user"}
+                        />
+                      ) : (
+                        <Avatar
+                          name={name}
+                          color={avatarColor}
+                          avatarUrl={avatarUrl}
+                          size={activeDmScreenSharer ? "md" : "lg"}
+                          speaking={p.isSpeaking}
+                          speakingOffsetClassName="ring-offset-[#14151A]"
+                        />
+                      )}
+                      {p.isLocal && p.isCameraOn && voice.canSwitchCamera && (
+                        <button
+                          type="button"
+                          disabled={voice.isSwitchingCamera}
+                          onClick={() => void voice.switchCameraFacingMode()}
+                          title={
+                            voice.cameraFacingMode === "user"
+                              ? "Switch to rear camera"
+                              : "Switch to front camera"
+                          }
+                          aria-label={
+                            voice.cameraFacingMode === "user"
+                              ? "Switch to rear camera"
+                              : "Switch to front camera"
+                          }
+                          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-white/[0.15] bg-black/75 text-zinc-100 transition-colors hover:border-emerald-500/50 hover:text-emerald-300 active:scale-95 disabled:opacity-50"
+                        >
+                          <SwitchCamera
+                            className={`h-3.5 w-3.5 ${voice.isSwitchingCamera ? "animate-spin" : ""}`}
+                          />
+                        </button>
+                      )}
+                      <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between">
+                        <span
+                          dir="auto"
+                          className="truncate rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100"
+                        >
+                          {name}
+                        </span>
+                        {p.isMuted && (
+                          <span className="rounded-md bg-rose-500/80 p-1 text-white">
+                            <MicOff className="h-2.5 w-2.5" />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Compact DM Call Control Bar */}
+              <div className="mt-3 flex shrink-0 flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void voice.toggleMute()}
+                  title={voice.isMuted ? "Unmute" : "Mute"}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
+                    voice.isMuted
+                      ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
+                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  {voice.isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void voice.toggleDeafen()}
+                  title={voice.isDeafened ? "Undeafen" : "Deafen"}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
+                    voice.isDeafened
+                      ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
+                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  {voice.isDeafened ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void voice.toggleCamera()}
+                  title={voice.isCameraOn ? "Turn off camera" : "Turn on camera"}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
+                    voice.isCameraOn
+                      ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
+                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  {voice.isCameraOn ? (
+                    <Video className="h-4 w-4" />
+                  ) : (
+                    <VideoOff className="h-4 w-4" />
+                  )}
+                </button>
+                {voice.isCameraOn && voice.canSwitchCamera && (
+                  <button
+                    type="button"
+                    disabled={voice.isSwitchingCamera}
+                    onClick={() => void voice.switchCameraFacingMode()}
+                    title={
+                      voice.cameraFacingMode === "user"
+                        ? "Switch to rear camera"
+                        : "Switch to front camera"
+                    }
+                    aria-label={
+                      voice.cameraFacingMode === "user"
+                        ? "Switch to rear camera"
+                        : "Switch to front camera"
+                    }
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.1] bg-[#18191E] text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50 sm:h-9 sm:w-9"
+                  >
+                    <SwitchCamera
+                      className={`h-4 w-4 ${voice.isSwitchingCamera ? "animate-spin" : ""}`}
+                    />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onOpenScreenShareModal}
+                  title={voice.isScreenSharing ? "Stream options" : "Share screen"}
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
+                    voice.isScreenSharing
+                      ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
+                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  <Monitor className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (document.fullscreenElement) {
+                      void document.exitFullscreen().catch(() => {});
+                    }
+                    onLeaveCall();
+                  }}
+                  title="End call"
+                  className="flex h-10 items-center gap-1.5 rounded-full bg-rose-500 px-4 text-xs font-semibold text-white transition-colors hover:bg-rose-400 sm:h-9 sm:px-3.5"
+                >
+                  <PhoneOff className="h-3.5 w-3.5" />
+                  <span>Leave</span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Unified Direct Message Chat Feed (hidden when call stage is expanded to full-app width) */}
+        {!(isInThisDmCall && isStageMaximized) && (
         <TextChannelView
           channel={syntheticDmChannel}
           currentUser={currentUser}
@@ -321,6 +583,7 @@ export function DmConversationView({
           onOpenUserProfile={onOpenUserProfile}
           onMessagesSeen={onMessagesSeen}
         />
+        )}
       </div>
 
       {/* Right Sticky Friend Profile Sidebar (Image 8 ergonomics) */}
@@ -335,7 +598,7 @@ export function DmConversationView({
                     background: `linear-gradient(135deg, ${livePeer.avatarColor}45 0%, #0E0F12 100%)`,
                   }
                 : {
-                    backgroundImage: `url(${livePeer.bannerUrl})`,
+                    backgroundImage: `url(${mediaUrl(livePeer.bannerUrl)})`,
                     backgroundSize: "cover",
                     backgroundPosition: "center",
                   }
@@ -447,7 +710,7 @@ export function DmConversationView({
                         {srv.iconUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={srv.iconUrl}
+                            src={mediaUrl(srv.iconUrl)}
                             alt={srv.name}
                             className="h-full w-full rounded-md object-cover"
                           />

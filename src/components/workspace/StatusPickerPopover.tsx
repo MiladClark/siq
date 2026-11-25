@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, mediaUrl } from "@/lib/client-api";
 import { Check, Gamepad2, Settings, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -88,7 +89,7 @@ export function StatusPickerPopover({
     });
 
     try {
-      const res = await fetch("/api/auth/me", {
+      const res = await apiFetch("/api/auth/me", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -125,7 +126,7 @@ export function StatusPickerPopover({
       transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
       role="dialog"
       aria-label="Status & activity"
-      className="fixed bottom-[72px] left-3 z-[85] w-[280px] origin-bottom-left overflow-hidden rounded-2xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/80"
+      className="fixed bottom-[72px] left-3 z-[85] w-[280px] max-w-[calc(100vw-24px)] origin-bottom-left overflow-hidden rounded-2xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/80"
     >
       {/* Mini Banner + Header */}
       <div
@@ -136,7 +137,7 @@ export function StatusPickerPopover({
                 background: `linear-gradient(135deg, ${user.avatarColor}45 0%, #14151A 100%)`,
               }
             : {
-                backgroundImage: `url(${user.bannerUrl})`,
+                backgroundImage: `url(${mediaUrl(user.bannerUrl)})`,
                 backgroundSize: "cover",
                 backgroundPosition: "center",
               }

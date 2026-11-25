@@ -139,7 +139,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }} />
       </head>
-      <body className="min-h-[100dvh] bg-[#070709] text-zinc-100 antialiased selection:bg-emerald-500/25 selection:text-emerald-200">
+      <body className="flex min-h-[100dvh] flex-col bg-[#070709] text-zinc-100 antialiased selection:bg-emerald-500/25 selection:text-emerald-200">
         {children}
       </body>
     </html>

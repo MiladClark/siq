@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import { Compass, Plus, Server, Sparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, useEffect, useState } from "react";
@@ -41,7 +42,7 @@ export function ServerCreateJoinModal({
     if (!name.trim() || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/servers", {
+      const res = await apiFetch("/api/servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -88,7 +89,7 @@ export function ServerCreateJoinModal({
     if (!inviteCode.trim() || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/servers/join", {
+      const res = await apiFetch("/api/servers/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: inviteCode.trim() }),

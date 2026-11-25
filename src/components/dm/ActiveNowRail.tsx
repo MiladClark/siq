@@ -1,5 +1,6 @@
 "use client";
 
+import { mediaUrl } from "@/lib/client-api";
 import { Gamepad2, Headphones, Monitor, Play, Volume2 } from "lucide-react";
 import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
 import type {
@@ -157,7 +158,7 @@ export function ActiveNowRail({
                         {server.iconUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
-                            src={server.iconUrl}
+                            src={mediaUrl(server.iconUrl)}
                             alt={server.name}
                             className="h-full w-full rounded-md object-cover"
                           />

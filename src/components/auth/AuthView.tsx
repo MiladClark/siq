@@ -20,6 +20,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { BarVisualizer } from "@/components/ui/BarVisualizer";
 import { ContextMenuProvider } from "@/components/ui/ContextMenu";
+import { apiFetch } from "@/lib/client-api";
 import {
   SlidingNumber,
   SpotlightCard,
@@ -33,6 +34,7 @@ interface AuthViewProps {
   schemaReady: boolean;
   hasUsers: boolean;
   dbError?: string;
+  onAuthenticated?: (token: string, rememberMe: boolean) => Promise<void>;
 }
 
 export function AuthView({
@@ -42,6 +44,7 @@ export function AuthView({
   schemaReady,
   hasUsers,
   dbError,
+  onAuthenticated,
 }: AuthViewProps) {
   const router = useRouter();
   const isBootstrap = dbConfigured && schemaReady && !hasUsers;
@@ -97,7 +100,7 @@ export function AuthView({
               inviteCode,
             };
 
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -106,14 +109,24 @@ export function AuthView({
       const data = await response.json();
       if (!response.ok) {
         setError(data.error ?? "Authentication failed.");
-        setSubmitting(false);
         return;
       }
 
-      router.push("/");
-      router.refresh();
-    } catch {
-      setError("Network error. Please try again.");
+      if (onAuthenticated) {
+        if (typeof data.token !== "string") {
+          setError("The server does not support desktop sign-in yet.");
+          return;
+        }
+        await onAuthenticated(data.token, mode === "register" || rememberMe);
+      } else {
+        router.push("/");
+        router.refresh();
+      }
+    } catch (error) {
+      setError(error instanceof Error && error.message.startsWith("Windows Credential Manager")
+        ? error.message
+        : "Network error. Please try again.");
+    } finally {
       setSubmitting(false);
     }
   }

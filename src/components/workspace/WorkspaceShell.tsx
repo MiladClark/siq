@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, markPresenceOffline, mediaUrl } from "@/lib/client-api";
 import {
   ChevronDown,
   ChevronRight,
@@ -60,6 +61,7 @@ import {
   PlusIcon,
   SearchIcon,
   SettingsIcon,
+  UserPlusIcon,
   UsersIcon,
 } from "@/components/ui/animated-icons";
 import { Avatar, resolveDisplayStatus } from "@/components/ui/Avatar";
@@ -135,6 +137,7 @@ import type {
 } from "@/lib/types";
 
 interface WorkspaceShellProps {
+  onSignedOut?: () => Promise<void>;
   initialUser: PrivateUser;
   initialServers: ServerDetail[];
   initialFriends: FriendItem[];
@@ -210,6 +213,7 @@ function WorkspaceInner({
   initialVoiceOccupancy,
   initialVoiceRoomCreatedAt,
   initialCapabilities,
+  onSignedOut,
   onPresenceRef,
   onNotifyRef,
 }: WorkspaceShellProps & {
@@ -622,7 +626,7 @@ function WorkspaceInner({
     const memberVersion = memberSnapshotVersion.current;
     try {
       const since = lastNotifyCheckRef.current;
-      const res = await fetch(`/api/presence?since=${encodeURIComponent(since)}`, {
+      const res = await apiFetch(`/api/presence?since=${encodeURIComponent(since)}`, {
         cache: "no-store",
       });
       if (!res.ok) return;
@@ -700,7 +704,7 @@ function WorkspaceInner({
       return;
     }
     try {
-      const res = await fetch("/api/servers", { cache: "no-store" });
+      const res = await apiFetch("/api/servers", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         if (data.servers && version === serverSnapshotVersion.current) {
@@ -715,7 +719,7 @@ function WorkspaceInner({
   const syncVoiceOccupancyOnly = useCallback(async () => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
     try {
-      const res = await fetch("/api/voice/occupancy", { cache: "no-store" });
+      const res = await apiFetch("/api/voice/occupancy", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       applyVoiceOccupancy(data.voiceOccupancy);
@@ -816,8 +820,9 @@ function WorkspaceInner({
     if (streamPreviewTimerRef.current) clearTimeout(streamPreviewTimerRef.current);
     streamPreviewTimerRef.current = setTimeout(() => {
       setStreamPreview(null);
+      voice.setPreviewTargetIdentity(null);
     }, 180);
-  }, []);
+  }, [voice]);
 
   const cancelHideStreamPreview = useCallback(() => {
     if (streamPreviewTimerRef.current) {
@@ -882,7 +887,7 @@ function WorkspaceInner({
 
     function handlePageHide() {
       try {
-        navigator.sendBeacon("/api/presence/offline");
+        markPresenceOffline();
       } catch {
         // ignore
       }
@@ -897,12 +902,14 @@ function WorkspaceInner({
   }, [syncPresence]);
 
   // Navigation helpers
-  function selectServer(serverId: string, specificChannelId?: string) {
+  function selectServer(serverId: string, specificChannelId?: string, keepDrawerOpen = false) {
     const targetSrv = servers.find((s) => s.id === serverId);
     setViewMode("server");
     setActiveServerId(serverId);
     setServerDropdownOpen(false);
-    setMobileMenuOpen(false);
+    if (!keepDrawerOpen) {
+      setMobileMenuOpen(false);
+    }
     const nextChId =
       specificChannelId ?? pickInitialChannelId(targetSrv, user.id);
     setSelectedChannelId(nextChId);
@@ -932,11 +939,13 @@ function WorkspaceInner({
     setToasts((prev) => prev.filter((t) => t.channelId !== channelId));
   }
 
-  function selectHomeFriends(tab?: FriendsTab) {
+  function selectHomeFriends(tab?: FriendsTab, keepDrawerOpen = false) {
     setViewMode("home");
     setHomeView("friends");
     if (tab) setFriendsTab(tab);
-    setMobileMenuOpen(false);
+    if (!keepDrawerOpen) {
+      setMobileMenuOpen(false);
+    }
   }
 
   function selectDmConversation(dmId: string) {
@@ -968,7 +977,7 @@ function WorkspaceInner({
     if (existing) return existing;
 
     try {
-      const res = await fetch("/api/dms", {
+      const res = await apiFetch("/api/dms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetUserId }),
@@ -1010,7 +1019,7 @@ function WorkspaceInner({
   async function handleQuickMessage(targetUserId: string, text: string) {
     const conv = await ensureDmConversation(targetUserId);
     if (!conv) return;
-    const res = await fetch(`/api/dms/${conv.id}/messages`, {
+    const res = await apiFetch(`/api/dms/${conv.id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: text }),
@@ -1175,7 +1184,7 @@ function WorkspaceInner({
     );
     setCallActionBusy(true);
     try {
-      await fetch(`/api/dms/${call.dmConversationId}/call-decline`, {
+      await apiFetch(`/api/dms/${call.dmConversationId}/call-decline`, {
         method: "POST",
       });
     } catch {
@@ -1222,11 +1231,19 @@ function WorkspaceInner({
       await voice.leaveVoiceChannel();
     }
     try {
-      navigator.sendBeacon("/api/presence/offline");
+      markPresenceOffline();
     } catch {
       // ignore
     }
-    await fetch("/api/auth/logout", { method: "POST" });
+    if (onSignedOut) {
+      try {
+        await onSignedOut();
+      } catch {
+        onNotifyRef.current({ kind: "error", title: "Sign-out failed", message: "Could not clear the saved Windows session." });
+      }
+      return;
+    }
+    await apiFetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
   }
@@ -1286,7 +1303,7 @@ function WorkspaceInner({
     const confirmed = window.confirm(`Delete "${ch.name}"?`);
     if (!confirmed) return;
 
-    const res = await fetch(`/api/channels/${ch.id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/channels/${ch.id}`, { method: "DELETE" });
     if (res.ok) {
       if (voice.activeChannel?.id === ch.id) {
         await voice.leaveVoiceChannel();
@@ -1323,7 +1340,7 @@ function WorkspaceInner({
     );
     if (!confirmed) return;
 
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/servers/${activeServer.id}/categories/${cat.id}`,
       { method: "DELETE" }
     );
@@ -1347,7 +1364,7 @@ function WorkspaceInner({
   async function handleLeaveServer(srv: ServerDetail) {
     const confirmed = window.confirm(`Leave "${srv.name}"?`);
     if (!confirmed) return;
-    const res = await fetch(`/api/servers/${srv.id}/leave`, { method: "POST" });
+    const res = await apiFetch(`/api/servers/${srv.id}/leave`, { method: "POST" });
     if (res.ok) {
       const remaining = servers.filter((s) => s.id !== srv.id);
       setServers(remaining);
@@ -1397,7 +1414,7 @@ function WorkspaceInner({
 
   // Friend & Role actions from Profile Popover
   async function handleQuickAddFriend(username: string) {
-    const res = await fetch("/api/friends", {
+    const res = await apiFetch("/api/friends", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username }),
@@ -1432,7 +1449,7 @@ function WorkspaceInner({
   }
 
   async function handleQuickAcceptFriend(friendshipId: string) {
-    const res = await fetch(`/api/friends/${friendshipId}`, {
+    const res = await apiFetch(`/api/friends/${friendshipId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "accept" }),
@@ -1454,7 +1471,7 @@ function WorkspaceInner({
       ? currentIds.filter((id) => id !== roleId)
       : [...currentIds, roleId];
 
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/servers/${activeServer.id}/members/${targetUserId}/roles`,
       {
         method: "PUT",
@@ -2020,6 +2037,49 @@ function WorkspaceInner({
     if (!showMembersRail) setMobileMembersOpen(false);
   }, [showMembersRail]);
 
+  // Reset full-app stage maximize if voice disconnects or user navigates to a regular text/friends page
+  const canKeepStageMaximized =
+    isVoiceConnected &&
+    ((viewMode === "server" && activeChannel?.type === "voice") ||
+      (viewMode === "home" && homeView === "dm" && Boolean(activeDm)));
+
+  useEffect(() => {
+    if (isStageMaximized && !canKeepStageMaximized) {
+      setIsStageMaximized(false);
+    }
+  }, [canKeepStageMaximized, isStageMaximized]);
+
+  useEffect(() => {
+    if (!isStageMaximized) return;
+    function handleEscRestore(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (document.fullscreenElement) return;
+      if (
+        settingsOpen ||
+        screenShareModalOpen ||
+        serverSettingsOpen ||
+        serverCreateJoinOpen ||
+        inviteOpen ||
+        channelModalOpen ||
+        categoryModalOpen
+      ) {
+        return;
+      }
+      setIsStageMaximized(false);
+    }
+    window.addEventListener("keydown", handleEscRestore);
+    return () => window.removeEventListener("keydown", handleEscRestore);
+  }, [
+    categoryModalOpen,
+    channelModalOpen,
+    inviteOpen,
+    isStageMaximized,
+    screenShareModalOpen,
+    serverCreateJoinOpen,
+    serverSettingsOpen,
+    settingsOpen,
+  ]);
+
   // Render helper for a single channel row (Text or Voice)
   function renderChannelItem(channel: ChannelItem) {
     const selected = viewMode === "server" && activeChannel?.id === channel.id;
@@ -2248,6 +2308,9 @@ function WorkspaceInner({
                   onMouseEnter={(e) => {
                     if (!occ.isScreenSharing) return;
                     cancelHideStreamPreview();
+                    if (voice.activeChannel?.id === channel.id) {
+                      voice.setPreviewTargetIdentity(occ.identity);
+                    }
                     const rect = e.currentTarget.getBoundingClientRect();
                     setStreamPreview({
                       identity: occ.identity,
@@ -2292,18 +2355,12 @@ function WorkspaceInner({
                     <span
                       onClick={(e) => {
                         e.stopPropagation();
-                        openUserCard(e, {
-                          id: occ.identity,
-                          displayName: occ.name,
-                          username: occ.username,
-                          avatarColor: occ.avatarColor,
-                          avatarUrl: occ.avatarUrl,
-                          role: occ.role,
-                          online: true,
-                        });
+                        setStreamPreview(null);
+                        voice.setPreviewTargetIdentity(null);
+                        handleWatchUserStream(occ.identity, channel.id);
                       }}
-                      title="Live streaming — hover to preview or click to view"
-                      className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-xs transition-transform hover:scale-105"
+                      title="Watch live stream"
+                      className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-xs transition-transform hover:scale-105 hover:bg-emerald-500 hover:text-zinc-950"
                     >
                       LIVE
                     </span>
@@ -2697,23 +2754,33 @@ function WorkspaceInner({
   );
 
   return (
-    <div ref={workspaceRef} className="siq-workspace flex h-[100dvh] w-full overflow-hidden text-zinc-100 select-none">
+    <div
+      ref={workspaceRef}
+      data-stage-maximized={isStageMaximized}
+      className="siq-workspace flex h-[calc(100dvh-var(--siq-titlebar-height,0px))] w-full overflow-hidden text-zinc-100 select-none"
+    >
       {/* Mobile Backdrop */}
-      {(mobileMenuOpen || mobileMembersOpen) && (
-        <button
-          type="button"
-          aria-label="Close sidebar"
-          className={`fixed inset-0 z-30 bg-black/65 ${mobileMembersOpen ? "lg:hidden" : "md:hidden"}`}
-          onClick={() => {
-            setMobileMenuOpen(false);
-            setMobileMembersOpen(false);
-          }}
-        />
-      )}
+      <AnimatePresence>
+        {(mobileMenuOpen || mobileMembersOpen) && !isStageMaximized && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            aria-label="Close sidebar"
+            className={`fixed inset-0 z-30 bg-black/65 ${mobileMembersOpen ? "lg:hidden" : "md:hidden"}`}
+            onClick={() => {
+              setMobileMenuOpen(false);
+              setMobileMembersOpen(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Workspace edge tabs and the sidebar they connect to */}
       <div
-        className="siq-workspace-navigation flex shrink-0"
+        className={`siq-workspace-navigation shrink-0 ${isStageMaximized ? "hidden" : "flex"}`}
         id="workspace-navigation"
         data-open={mobileMenuOpen}
       >
@@ -2723,9 +2790,12 @@ function WorkspaceInner({
           activeServerId={activeServer?.id ?? null}
           homeBadgeCount={homeBadgeCount}
           unreadServerIds={unreadServerIds}
-          onSelectHome={() => selectHomeFriends()}
-          onSelectServer={(id) => selectServer(id)}
-          onOpenCreateJoin={() => setServerCreateJoinOpen(true)}
+          onSelectHome={() => selectHomeFriends(undefined, true)}
+          onSelectServer={(id) => selectServer(id, undefined, true)}
+          onOpenCreateJoin={() => {
+            setMobileMenuOpen(false);
+            setServerCreateJoinOpen(true);
+          }}
           onCloseNavigation={() => setMobileMenuOpen(false)}
           onServerContextMenu={handleServerRailContextMenu}
         />
@@ -2944,21 +3014,25 @@ function WorkspaceInner({
               {/* Server Header + Optional Banner + Dropdown Menu */}
               <div ref={serverDropdownRef} className="relative shrink-0">
                 {activeServer?.bannerUrl ? (
-                  <div
-                    onClick={() => setServerDropdownOpen((v) => !v)}
-                    className="group relative h-36 w-full cursor-pointer overflow-hidden border-b border-white/[0.08]"
-                  >
+                  <div className="group relative h-36 w-full overflow-hidden border-b border-white/[0.08]">
+                    <button
+                      type="button"
+                      aria-expanded={serverDropdownOpen}
+                      aria-label={`${activeServer.name} server menu`}
+                      onClick={() => setServerDropdownOpen((v) => !v)}
+                      className="absolute inset-0 z-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400/60"
+                    />
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activeServer.bannerUrl}
+                      src={mediaUrl(activeServer.bannerUrl)}
                       alt=""
-                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      className="pointer-events-none absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                     />
                     <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/50 to-transparent" />
 
-                    <div className="relative z-10 flex h-12 w-full items-center justify-between px-3.5 text-left">
-                      <div className="flex min-w-0 items-center gap-2">
+                    <div className="pointer-events-none relative z-10 flex h-12 w-full items-center justify-between px-3.5 text-left">
+                      <div className="flex min-w-0 items-center gap-2 pr-2">
                         <span
                           dir="auto"
                           className="truncate text-sm font-bold tracking-tight text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
@@ -2968,31 +3042,46 @@ function WorkspaceInner({
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
+                        {canCreateInvites && (
+                          <AnimatedIconButton
+                            type="button"
+                            icon={UserPlusIcon}
+                            iconSize={15}
+                            aria-label="Invite people"
+                            title="Invite people"
+                            onClick={() => {
+                              setServerDropdownOpen(false);
+                              openServerInvites(activeServer);
+                            }}
+                            className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors hover:bg-black/35 hover:text-white"
+                          />
+                        )}
                         <ChevronDown
                           className={`h-4 w-4 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-transform ${
                             serverDropdownOpen ? "rotate-180" : ""
                           }`}
                         />
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMobileMenuOpen(false);
-                          }}
-                          className="rounded-lg p-1 text-white hover:bg-white/[0.1] md:hidden"
+                        <button
+                          type="button"
+                          aria-label="Close menu"
+                          onClick={() => setMobileMenuOpen(false)}
+                          className="pointer-events-auto rounded-lg p-1 text-white hover:bg-white/[0.1] md:hidden"
                         >
                           <X className="h-4 w-4" />
-                        </span>
+                        </button>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    aria-expanded={serverDropdownOpen}
-                    onClick={() => setServerDropdownOpen((v) => !v)}
-                    className="flex h-12 w-full items-center justify-between border-b border-white/[0.07] px-3.5 text-left transition-colors hover:bg-white/[0.03]"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
+                  <div className="relative flex h-12 w-full items-center justify-between border-b border-white/[0.07] px-3.5 text-left transition-colors hover:bg-white/[0.03]">
+                    <button
+                      type="button"
+                      aria-expanded={serverDropdownOpen}
+                      aria-label={`${activeServer?.name ?? "siq"} server menu`}
+                      onClick={() => setServerDropdownOpen((v) => !v)}
+                      className="absolute inset-0 z-0 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-emerald-400/60"
+                    />
+                    <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2 pr-2">
                       <span
                         dir="auto"
                         className="truncate text-sm font-bold tracking-tight text-zinc-100"
@@ -3001,23 +3090,36 @@ function WorkspaceInner({
                       </span>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="pointer-events-none relative z-10 flex shrink-0 items-center gap-1">
+                      {canCreateInvites && activeServer && (
+                        <AnimatedIconButton
+                          type="button"
+                          icon={UserPlusIcon}
+                          iconSize={15}
+                          aria-label="Invite people"
+                          title="Invite people"
+                          onClick={() => {
+                            setServerDropdownOpen(false);
+                            openServerInvites(activeServer);
+                          }}
+                          className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-zinc-100"
+                        />
+                      )}
                       <ChevronDown
                         className={`h-4 w-4 text-zinc-300 transition-transform ${
                           serverDropdownOpen ? "rotate-180" : ""
                         }`}
                       />
-                      <span
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setMobileMenuOpen(false);
-                        }}
-                        className="rounded-lg p-1 text-zinc-300 hover:bg-white/[0.1] md:hidden"
+                      <button
+                        type="button"
+                        aria-label="Close menu"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className="pointer-events-auto rounded-lg p-1 text-zinc-300 hover:bg-white/[0.1] md:hidden"
                       >
                         <X className="h-4 w-4" />
-                      </span>
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 )}
 
                 {/* Server Dropdown Menu */}
@@ -3354,18 +3456,21 @@ function WorkspaceInner({
 
       {/* Main Content Area */}
       <div className="siq-workspace-content flex min-w-0 flex-1 flex-col">
-        <div className="siq-workspace-header">
+        <div className={`siq-workspace-header ${isStageMaximized ? "hidden" : ""}`}>
           {/* TOP BAR — Dynamic based on Home/Friends, Home/DM, or Server Channel */}
           {viewMode === "home" && homeView === "friends" ? (
             <header className="flex h-14 shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.07] px-2.5 md:gap-2 md:pl-6 md:pr-3">
               <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none]">
                 <button
                   type="button"
-                  onClick={() => setMobileMenuOpen(true)}
+                  onClick={() => {
+                    closeHeaderPanel();
+                    setMobileMenuOpen(true);
+                  }}
                   aria-label="Open navigation menu"
                   aria-expanded={mobileMenuOpen}
                   aria-controls="workspace-navigation"
-                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/[0.06] active:bg-white/[0.1] md:hidden"
                 >
                   <Menu className="h-4 w-4" />
                 </button>
@@ -3436,11 +3541,14 @@ function WorkspaceInner({
               <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setMobileMenuOpen(true)}
+                  onClick={() => {
+                    closeHeaderPanel();
+                    setMobileMenuOpen(true);
+                  }}
                   aria-label="Open navigation menu"
                   aria-expanded={mobileMenuOpen}
                   aria-controls="workspace-navigation"
-                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/[0.06] active:bg-white/[0.1] md:hidden"
                 >
                   <Menu className="h-4 w-4" />
                 </button>
@@ -3526,11 +3634,14 @@ function WorkspaceInner({
               <div className="flex min-w-0 items-center gap-1.5 md:gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setMobileMenuOpen(true)}
+                  onClick={() => {
+                    closeHeaderPanel();
+                    setMobileMenuOpen(true);
+                  }}
                   aria-label="Open channels menu"
                   aria-expanded={mobileMenuOpen}
                   aria-controls="workspace-navigation"
-                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] md:hidden"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-300 hover:bg-white/[0.06] active:bg-white/[0.1] md:hidden"
                 >
                   <Menu className="h-4 w-4" />
                 </button>
@@ -3580,34 +3691,6 @@ function WorkspaceInner({
                       setUnpinnedEvent({ messageId, nonce: Date.now() })
                     }
                   />
-                )}
-
-                {canCreateInvites && activeServer && (
-                    <div className="siq-header-slot" key={activeServer.id}>
-                      <button
-                        type="button"
-                        onClick={() => toggleHeaderPanel("invite")}
-                        aria-expanded={headerPanel === "invite"}
-                        aria-controls={headerPanel === "invite" ? "workspace-header-invite" : undefined}
-                        aria-haspopup="dialog"
-                        aria-label="Invite"
-                        data-header-trigger="invite"
-                        className="siq-header-trigger inline-flex size-8 items-center justify-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 md:w-auto md:px-3"
-                      >
-                        <KeyRound className="h-3.5 w-3.5" />
-                        <span className="hidden md:inline">Invite</span>
-                      </button>
-                      <ServerInvites
-                        presentation="panel"
-                        open={headerPanel === "invite"}
-                        serverId={activeServer.id}
-                        serverName={activeServer.name}
-                        onClose={() => {
-                          closeHeaderPanel();
-                          focusHeaderTrigger("invite");
-                        }}
-                      />
-                    </div>
                 )}
 
                 {renderHeaderSmartSearch()}
@@ -3672,7 +3755,9 @@ function WorkspaceInner({
               onlineMemberIds={onlineMemberIds}
               voiceOccupancy={voiceOccupancy}
               blobReady={capabilities.blobReady}
-              showProfileSidebar={showDmProfileSidebar}
+              showProfileSidebar={showDmProfileSidebar && !isStageMaximized}
+              isStageMaximized={isStageMaximized}
+              onToggleMaximize={() => setIsStageMaximized((v) => !v)}
               density={appPrefs.messageDensity}
               textScale={appPrefs.textScale}
               jumpTarget={jumpTarget}
@@ -3719,7 +3804,9 @@ function WorkspaceInner({
                 onOpenScreenShareModal={() => setScreenShareModalOpen(true)}
                 onOpenVoiceSettings={() => openSettings("voice")}
                 onOpenUserProfile={openEnrichedProfilePopover}
-                onJoinVoiceChannel={(ch) => handleJoinVoiceChannel(ch)}
+                onJoinVoiceChannel={(ch, watchIdentity) =>
+                  handleJoinVoiceChannel(ch, watchIdentity)
+                }
                 onLeaveVoiceChannel={handleLeaveVoiceChannel}
               />
             )
@@ -4002,11 +4089,17 @@ function WorkspaceInner({
       <AnimatePresence>
         {streamPreview && (
           <StreamPreviewPopover
-            target={streamPreview}
+            target={{
+              ...streamPreview,
+              liveScreenTrack:
+                voice.participants.find((p) => p.identity === streamPreview.identity)
+                  ?.screenTrack ?? streamPreview.liveScreenTrack,
+            }}
             onMouseEnter={cancelHideStreamPreview}
             onMouseLeave={scheduleHideStreamPreview}
             onWatchStream={(target) => {
               setStreamPreview(null);
+              voice.setPreviewTargetIdentity(null);
               handleWatchUserStream(target.identity, target.channelId);
             }}
           />

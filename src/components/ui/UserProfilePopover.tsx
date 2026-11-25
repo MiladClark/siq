@@ -1,5 +1,6 @@
 "use client";
 
+import { mediaUrl } from "@/lib/client-api";
 import {
   Calendar,
   Check,
@@ -256,7 +257,7 @@ export function UserProfilePopover({
             {target.bannerUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={target.bannerUrl}
+                src={mediaUrl(target.bannerUrl)}
                 alt={`${target.displayName} banner`}
                 className="h-full w-full object-cover"
               />

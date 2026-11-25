@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch, mediaUrl, siteUrl } from "@/lib/client-api";
 import {
   Camera,
   Check,
@@ -177,7 +178,7 @@ export function ServerSettingsModal({
     if (!server) return;
     setLoadingInvites(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/invites?serverId=${encodeURIComponent(server.id)}`,
         { cache: "no-store" }
       );
@@ -221,14 +222,14 @@ export function ServerSettingsModal({
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const res = await apiFetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok || !data.attachment?.url) {
         throw new Error(data.error ?? "Failed to upload server image.");
       }
 
       const url: string = data.attachment.url;
-      const response = await fetch(`/api/servers/${draft.serverId}`, {
+      const response = await apiFetch(`/api/servers/${draft.serverId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(mode === "avatar" ? { iconUrl: url } : { bannerUrl: url }),
@@ -265,7 +266,7 @@ export function ServerSettingsModal({
     if (!server || !canManageServer || savingOverview || uploadingAsset) return;
     setSavingOverview(true);
     try {
-      const res = await fetch(`/api/servers/${server.id}`, {
+      const res = await apiFetch(`/api/servers/${server.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -312,7 +313,7 @@ export function ServerSettingsModal({
     );
     if (!confirmed) return;
 
-    const res = await fetch(`/api/servers/${server.id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/servers/${server.id}`, { method: "DELETE" });
     if (res.ok) {
       onServerDeleted(server.id);
       onClose();
@@ -331,7 +332,7 @@ export function ServerSettingsModal({
     if (!server || !canManageRoles || creatingRole) return;
     setCreatingRole(true);
     try {
-      const res = await fetch(`/api/servers/${server.id}/roles`, {
+      const res = await apiFetch(`/api/servers/${server.id}/roles`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -374,7 +375,7 @@ export function ServerSettingsModal({
     if (!server || !activeRole || !canManageRoles || savingRole) return;
     setSavingRole(true);
     try {
-      const res = await fetch(`/api/servers/${server.id}/roles/${activeRole.id}`, {
+      const res = await apiFetch(`/api/servers/${server.id}/roles/${activeRole.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -417,7 +418,7 @@ export function ServerSettingsModal({
     const confirmed = window.confirm(`Delete role "${role.name}"?`);
     if (!confirmed) return;
 
-    const res = await fetch(`/api/servers/${server.id}/roles/${role.id}`, {
+    const res = await apiFetch(`/api/servers/${server.id}/roles/${role.id}`, {
       method: "DELETE",
     });
     if (res.ok) {
@@ -442,7 +443,7 @@ export function ServerSettingsModal({
       ? currentIds.filter((id) => id !== roleId)
       : [...currentIds, roleId];
 
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/servers/${server.id}/members/${targetUserId}/roles`,
       {
         method: "PUT",
@@ -468,7 +469,7 @@ export function ServerSettingsModal({
     const confirmed = window.confirm(`Kick ${member.displayName} from ${server.name}?`);
     if (!confirmed) return;
 
-    const res = await fetch(`/api/servers/${server.id}/members/${member.id}/roles`, {
+    const res = await apiFetch(`/api/servers/${server.id}/members/${member.id}/roles`, {
       method: "DELETE",
     });
     if (res.ok) {
@@ -494,7 +495,7 @@ export function ServerSettingsModal({
     if (!server || !canManageInvites || creatingInvite) return;
     setCreatingInvite(true);
     try {
-      const res = await fetch("/api/invites", {
+      const res = await apiFetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -520,7 +521,7 @@ export function ServerSettingsModal({
   }
 
   async function handleRevokeInvite(id: string) {
-    const res = await fetch(`/api/invites/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`/api/invites/${id}`, { method: "DELETE" });
     if (res.ok) {
       setInvites((prev) =>
         prev.map((inv) => (inv.id === id ? { ...inv, revoked: true } : inv))
@@ -723,7 +724,7 @@ export function ServerSettingsModal({
                                 background: `linear-gradient(135deg, ${srvColor}40 0%, #0E0F12 100%)`,
                               }
                             : {
-                                backgroundImage: `url(${srvBannerUrl})`,
+                                backgroundImage: `url(${mediaUrl(srvBannerUrl)})`,
                                 backgroundSize: "cover",
                                 backgroundPosition: "center",
                               }
@@ -767,7 +768,7 @@ export function ServerSettingsModal({
                               {srvIconUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img
-                                  src={srvIconUrl}
+                                  src={mediaUrl(srvIconUrl)}
                                   alt={srvName}
                                   className="h-full w-full object-cover"
                                 />
@@ -1245,7 +1246,7 @@ export function ServerSettingsModal({
                           const inactive = inv.revoked || expired || exhausted;
                           const joinUrl =
                             typeof window !== "undefined"
-                              ? `${window.location.origin}/join/${inv.code}`
+                              ? siteUrl(`/join/${inv.code}`)
                               : `/join/${inv.code}`;
 
                           return (

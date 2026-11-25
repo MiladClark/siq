@@ -1,9 +1,11 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import {
   ConnectionState,
   LocalAudioTrack,
   LocalParticipant,
+  LocalVideoTrack,
   Participant,
   RemoteAudioTrack,
   RemoteParticipant,
@@ -27,6 +29,7 @@ import {
 import { preconnect } from "react-dom";
 import { useSystemNotify } from "@/components/ui/NotificationCenter";
 import { RemoteAudioPlayer } from "@/components/voice/AudioRenderer";
+import { voiceControls } from "@/lib/voice-controls";
 import {
   createNoiseProcessor,
   type NoiseCancellationMode,
@@ -73,6 +76,8 @@ export interface VoiceParticipantView {
   micAudioTrack: RemoteAudioTrack | null;
 }
 
+export type CameraFacingMode = "user" | "environment";
+
 interface MediaDevicesList {
   audioInputs: MediaDeviceInfo[];
   audioOutputs: MediaDeviceInfo[];
@@ -89,6 +94,10 @@ interface VoiceContextValue {
   isMuted: boolean;
   isDeafened: boolean;
   isCameraOn: boolean;
+  cameraFacingMode: CameraFacingMode;
+  isSwitchingCamera: boolean;
+  canSwitchCamera: boolean;
+  supportsScreenShare: boolean;
   isScreenSharing: boolean;
   screenShareConfig: ScreenShareConfig;
   updateScreenShareConfig: (patch: Partial<ScreenShareConfig>) => void;
@@ -116,11 +125,15 @@ interface VoiceContextValue {
   serverMuteParticipant: (targetIdentity: string, roomName?: string) => Promise<void>;
   watchTargetIdentity: string | null;
   setWatchTargetIdentity: (identity: string | null) => void;
+  previewTargetIdentity: string | null;
+  setPreviewTargetIdentity: (identity: string | null) => void;
   joinVoiceChannel: (channel: ChannelItem, options?: JoinVoiceOptions) => Promise<void>;
   leaveVoiceChannel: (options?: { silent?: boolean }) => Promise<void>;
   toggleMute: () => Promise<void>;
   toggleDeafen: () => Promise<void>;
   toggleCamera: () => Promise<void>;
+  switchCameraFacingMode: (target?: CameraFacingMode) => Promise<void>;
+  enableCameraWithFacing: (facing: CameraFacingMode) => Promise<boolean>;
   clearError: () => void;
   clearNotice: () => void;
 }
@@ -286,6 +299,9 @@ export function VoiceProvider({
   const [watchTargetIdentity, setWatchTargetIdentity] = useState<string | null>(null);
   const watchTargetIdentityRef = useRef<string | null>(null);
   watchTargetIdentityRef.current = watchTargetIdentity;
+  const [previewTargetIdentity, setPreviewTargetIdentity] = useState<string | null>(null);
+  const previewTargetIdentityRef = useRef<string | null>(null);
+  previewTargetIdentityRef.current = previewTargetIdentity;
   const leaveVoiceChannelRef = useRef<(options?: { silent?: boolean }) => Promise<void>>(
     async () => {}
   );
@@ -293,7 +309,21 @@ export function VoiceProvider({
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<CameraFacingMode>("user");
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
+  const switchingCameraRef = useRef(false);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [supportsScreenShare, setSupportsScreenShare] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+
+  useEffect(() => {
+    setIsTouchDevice(
+      typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches
+    );
+    setSupportsScreenShare(
+      typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia)
+    );
+  }, []);
 
   const [noiseMode, setNoiseModeState] = useState<NoiseCancellationMode>("krisp");
   const [activeNoiseEngine, setActiveNoiseEngine] =
@@ -338,31 +368,30 @@ export function VoiceProvider({
 
   /** On-demand screen share subscription: always subscribe to Mic & Camera,
    *  and only subscribe to remote ScreenShare video/audio in server voice channels
-   *  when the user explicitly watches that stream (eliminating idle 4-10 Mbps downlink). */
+   *  when the user explicitly watches (or hovers to preview) that stream. */
   const syncTrackSubscriptions = useCallback(
-    (room: Room | null, watchIdentity: string | null) => {
+    (room: Room | null, watchIdentity: string | null, previewIdentity: string | null = null) => {
       if (!room || room.state !== ConnectionState.Connected) return;
       const isDmRoom = Boolean(room.name?.startsWith("dm-"));
 
       room.remoteParticipants.forEach((rp: RemoteParticipant) => {
         rp.trackPublications.forEach((pub) => {
           const remotePub = pub as RemoteTrackPublication;
-          const isScreen =
-            remotePub.source === Track.Source.ScreenShare ||
-            remotePub.source === Track.Source.ScreenShareAudio;
+          const isScreenVideo = remotePub.source === Track.Source.ScreenShare;
+          const isScreenAudio = remotePub.source === Track.Source.ScreenShareAudio;
+          const isScreen = isScreenVideo || isScreenAudio;
 
           if (isScreen && !isDmRoom) {
-            const shouldSubscribe = watchIdentity === rp.identity;
+            const isWatching = watchIdentity === rp.identity;
+            const isPreviewing = !isWatching && isScreenVideo && previewIdentity === rp.identity;
+            const shouldSubscribe = isWatching || isPreviewing;
+
             if (remotePub.isSubscribed !== shouldSubscribe) {
               remotePub.setSubscribed(shouldSubscribe);
             }
-            if (
-              shouldSubscribe &&
-              remotePub.isSubscribed &&
-              remotePub.source === Track.Source.ScreenShare
-            ) {
+            if (shouldSubscribe && remotePub.isSubscribed && isScreenVideo) {
               try {
-                remotePub.setVideoQuality(VideoQuality.HIGH);
+                remotePub.setVideoQuality(isWatching ? VideoQuality.HIGH : VideoQuality.LOW);
               } catch {
                 // ignore if track isn't simulcast
               }
@@ -371,11 +400,7 @@ export function VoiceProvider({
             if (!remotePub.isSubscribed) {
               remotePub.setSubscribed(true);
             }
-            if (
-              isScreen &&
-              remotePub.isSubscribed &&
-              remotePub.source === Track.Source.ScreenShare
-            ) {
+            if (isScreenVideo && remotePub.isSubscribed) {
               try {
                 remotePub.setVideoQuality(VideoQuality.HIGH);
               } catch {
@@ -391,9 +416,9 @@ export function VoiceProvider({
 
   useEffect(() => {
     if (connectionState === ConnectionState.Connected) {
-      syncTrackSubscriptions(roomRef.current, watchTargetIdentity);
+      syncTrackSubscriptions(roomRef.current, watchTargetIdentity, previewTargetIdentity);
     }
-  }, [connectionState, syncTrackSubscriptions, watchTargetIdentity]);
+  }, [connectionState, previewTargetIdentity, syncTrackSubscriptions, watchTargetIdentity]);
 
   const syncParticipants = useCallback(() => {
     const room = roomRef.current;
@@ -612,7 +637,7 @@ export function VoiceProvider({
       const targetRoom = roomName || activeChannel?.slug;
       if (!targetRoom) return;
       try {
-        const res = await fetch("/api/livekit/moderate", {
+        const res = await apiFetch("/api/livekit/moderate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -640,7 +665,7 @@ export function VoiceProvider({
       const targetRoom = roomName || activeChannel?.slug;
       if (!targetRoom) return;
       try {
-        const res = await fetch("/api/livekit/moderate", {
+        const res = await apiFetch("/api/livekit/moderate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -987,7 +1012,7 @@ export function VoiceProvider({
         if (url?.startsWith("wss://")) preconnect(url.replace(/^wss:/, "https:"));
 
         const tokenStartedAt = performance.now();
-        const tokenRequest = fetch("/api/livekit/token", {
+        const tokenRequest = apiFetch("/api/livekit/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: request.controller.signal,
@@ -1050,14 +1075,22 @@ export function VoiceProvider({
             setConnectionState(state);
             if (state === ConnectionState.Connected) {
               switchingRef.current = false;
-              syncTrackSubscriptions(room, watchTargetIdentityRef.current);
+              syncTrackSubscriptions(
+                room,
+                watchTargetIdentityRef.current,
+                previewTargetIdentityRef.current
+              );
               syncParticipants();
             }
           })
           .on(RoomEvent.ParticipantConnected, () => {
             if (roomRef.current !== room) return;
             playSound("peer-join");
-            syncTrackSubscriptions(room, watchTargetIdentityRef.current);
+            syncTrackSubscriptions(
+              room,
+              watchTargetIdentityRef.current,
+              previewTargetIdentityRef.current
+            );
             syncParticipants();
             onOccupancyChanged?.();
           })
@@ -1069,16 +1102,36 @@ export function VoiceProvider({
           })
           .on(RoomEvent.TrackPublished, () => {
             if (roomRef.current !== room) return;
-            syncTrackSubscriptions(room, watchTargetIdentityRef.current);
+            syncTrackSubscriptions(
+              room,
+              watchTargetIdentityRef.current,
+              previewTargetIdentityRef.current
+            );
             syncParticipants();
+            onOccupancyChanged?.();
           })
-          .on(RoomEvent.TrackUnpublished, handleRoomUpdate)
+          .on(RoomEvent.TrackUnpublished, () => {
+            if (roomRef.current !== room) return;
+            syncParticipants();
+            onOccupancyChanged?.();
+          })
           .on(RoomEvent.TrackSubscribed, handleRoomUpdate)
           .on(RoomEvent.TrackUnsubscribed, handleRoomUpdate)
           .on(RoomEvent.TrackMuted, handleRoomUpdate)
           .on(RoomEvent.TrackUnmuted, handleRoomUpdate)
-          .on(RoomEvent.LocalTrackPublished, handleRoomUpdate)
-          .on(RoomEvent.LocalTrackUnpublished, handleRoomUpdate)
+          .on(RoomEvent.LocalTrackPublished, () => {
+            if (roomRef.current !== room) return;
+            syncParticipants();
+            onOccupancyChanged?.();
+          })
+          .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+            if (roomRef.current !== room) return;
+            if (pub.source === Track.Source.ScreenShare) {
+              playSound("stream-stop");
+            }
+            syncParticipants();
+            onOccupancyChanged?.();
+          })
           .on(RoomEvent.DataReceived, (payload: Uint8Array) => {
             if (roomRef.current !== room) return;
             try {
@@ -1265,20 +1318,151 @@ export function VoiceProvider({
     try {
       await room.localParticipant.setCameraEnabled(nextEnabled, {
         resolution: VideoPresets.h720.resolution,
-        deviceId: selectedVideoInput || undefined,
+        ...(selectedVideoInput
+          ? { deviceId: selectedVideoInput }
+          : { facingMode: cameraFacingMode }),
       });
+      if (nextEnabled) {
+        const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+        const settings = track?.mediaStreamTrack?.getSettings?.();
+        if (settings?.facingMode === "environment" || settings?.facingMode === "user") {
+          setCameraFacingMode(settings.facingMode);
+        }
+        void refreshDevices();
+      }
       playSound(nextEnabled ? "unmute" : "mute");
       syncParticipants();
     } catch {
       setError("Could not access webcam.");
     }
-  }, [selectedVideoInput, syncParticipants]);
+  }, [cameraFacingMode, refreshDevices, selectedVideoInput, setError, syncParticipants]);
+
+  const switchCameraFacingMode = useCallback(
+    async (target?: CameraFacingMode) => {
+      const nextFacing: CameraFacingMode =
+        target ?? (cameraFacingMode === "user" ? "environment" : "user");
+      const room = roomRef.current;
+      if (!room || !room.localParticipant.isCameraEnabled) {
+        setCameraFacingMode(nextFacing);
+        return;
+      }
+      if (switchingCameraRef.current) return;
+      switchingCameraRef.current = true;
+      setIsSwitchingCamera(true);
+
+      try {
+        const camPub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+        const videoTrack = camPub?.track as LocalVideoTrack | undefined;
+        if (!videoTrack) {
+          setCameraFacingMode(nextFacing);
+          return;
+        }
+
+        const currentDeviceId =
+          videoTrack.mediaStreamTrack?.getSettings?.().deviceId ?? selectedVideoInput;
+        let switched = false;
+
+        try {
+          await videoTrack.restartTrack({
+            facingMode: nextFacing,
+            resolution: VideoPresets.h720.resolution,
+          });
+          const afterSettings = videoTrack.mediaStreamTrack?.getSettings?.();
+          const sameDevice =
+            Boolean(currentDeviceId) && afterSettings?.deviceId === currentDeviceId;
+
+          if (!sameDevice) {
+            switched = true;
+          }
+        } catch {
+          // Fall through to explicit deviceId switching
+        }
+
+        if (!switched) {
+          const allCameras = devices.videoInputs;
+          const labelRegex =
+            nextFacing === "environment" ? /back|rear|environment/i : /front|user|facetime/i;
+          const matchedCamera =
+            allCameras.find((d) => labelRegex.test(d.label) && d.deviceId !== currentDeviceId) ??
+            allCameras.find((d) => d.deviceId !== currentDeviceId);
+
+          if (matchedCamera) {
+            await videoTrack.restartTrack({
+              deviceId: { exact: matchedCamera.deviceId },
+              resolution: VideoPresets.h720.resolution,
+            });
+            switched = true;
+          }
+        }
+
+        if (switched) {
+          const settings = videoTrack.mediaStreamTrack?.getSettings?.();
+          if (settings?.facingMode === "environment" || settings?.facingMode === "user") {
+            setCameraFacingMode(settings.facingMode);
+          } else {
+            setCameraFacingMode(nextFacing);
+          }
+          if (settings?.deviceId) {
+            setSelectedVideoInput(settings.deviceId);
+          }
+          syncParticipants();
+          void refreshDevices();
+        }
+      } catch {
+        setError("Could not switch camera.");
+      } finally {
+        switchingCameraRef.current = false;
+        setIsSwitchingCamera(false);
+      }
+    },
+    [cameraFacingMode, devices.videoInputs, refreshDevices, selectedVideoInput, setError, syncParticipants]
+  );
+
+  const enableCameraWithFacing = useCallback(
+    async (facing: CameraFacingMode): Promise<boolean> => {
+      const room = roomRef.current;
+      if (!room) return false;
+      if (room.localParticipant.isCameraEnabled) {
+        await switchCameraFacingMode(facing);
+        return true;
+      }
+      try {
+        await room.localParticipant.setCameraEnabled(true, {
+          facingMode: facing,
+          resolution: VideoPresets.h720.resolution,
+        });
+        const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+        const settings = track?.mediaStreamTrack?.getSettings?.();
+        setCameraFacingMode(
+          settings?.facingMode === "environment" || settings?.facingMode === "user"
+            ? settings.facingMode
+            : facing
+        );
+        if (settings?.deviceId) {
+          setSelectedVideoInput(settings.deviceId);
+        }
+        playSound("unmute");
+        syncParticipants();
+        void refreshDevices();
+        return true;
+      } catch {
+        setError("Could not start camera.");
+        return false;
+      }
+    },
+    [refreshDevices, setError, switchCameraFacingMode, syncParticipants]
+  );
 
   /** Start or seamlessly restart (change source / quality) screen share without dropping voice */
   const startScreenShare = useCallback(
     async (override?: Partial<ScreenShareConfig>): Promise<boolean> => {
       const room = roomRef.current;
       if (!room) return false;
+
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
+        setError("Screen sharing is not supported in this mobile browser.");
+        return false;
+      }
 
       const cfg: ScreenShareConfig = { ...screenShareConfig, ...(override ?? {}) };
       updateScreenShareConfig(cfg);
@@ -1294,27 +1478,46 @@ export function VoiceProvider({
           ? { width: dims.width, height: dims.height, frameRate: cfg.fps }
           : undefined;
 
-        await room.localParticipant.setScreenShareEnabled(
-          true,
-          {
-            audio: cfg.shareAudio,
-            resolution,
-            contentHint: cfg.mode,
-            selfBrowserSurface: "exclude",
-            systemAudio: cfg.shareAudio ? "include" : "exclude",
-            suppressLocalAudioPlayback: true,
+        const publishOpts = {
+          simulcast: false,
+          videoCodec: cfg.codec,
+          degradationPreference:
+            cfg.mode === "detail"
+              ? ("maintain-resolution" as const)
+              : ("maintain-framerate" as const),
+          screenShareEncoding: {
+            maxBitrate: cfg.bitrateMbps * 1_000_000,
+            maxFramerate: cfg.fps,
           },
-          {
-            simulcast: false,
-            videoCodec: cfg.codec,
-            degradationPreference:
-              cfg.mode === "detail" ? "maintain-resolution" : "maintain-framerate",
-            screenShareEncoding: {
-              maxBitrate: cfg.bitrateMbps * 1_000_000,
-              maxFramerate: cfg.fps,
+        };
+
+        try {
+          await room.localParticipant.setScreenShareEnabled(
+            true,
+            {
+              audio: cfg.shareAudio,
+              resolution,
+              contentHint: cfg.mode,
+              selfBrowserSurface: "exclude",
+              systemAudio: cfg.shareAudio ? "include" : "exclude",
+              suppressLocalAudioPlayback: true,
             },
+            publishOpts
+          );
+        } catch (innerErr) {
+          if (innerErr instanceof Error && innerErr.name === "NotAllowedError") {
+            throw innerErr;
           }
-        );
+          // Mobile browsers sometimes reject desktop-only displaySurface/audio hints — retry with safe constraints
+          await room.localParticipant.setScreenShareEnabled(
+            true,
+            {
+              audio: cfg.shareAudio,
+              resolution,
+            },
+            publishOpts
+          );
+        }
 
         playSound("stream-start");
         syncParticipants();
@@ -1328,7 +1531,7 @@ export function VoiceProvider({
         return false;
       }
     },
-    [onOccupancyChanged, screenShareConfig, syncParticipants, updateScreenShareConfig]
+    [onOccupancyChanged, screenShareConfig, setError, syncParticipants, updateScreenShareConfig]
   );
 
   const stopScreenShare = useCallback(async () => {
@@ -1363,6 +1566,42 @@ export function VoiceProvider({
   }, []);
 
   useEffect(() => {
+    const inVoice =
+      Boolean(activeChannel) && connectionState !== ConnectionState.Disconnected;
+    void voiceControls?.syncState({
+      inVoice,
+      muted: isMuted,
+      deafened: isDeafened,
+      channelName: activeChannel?.name ?? null,
+    });
+  }, [activeChannel, connectionState, isDeafened, isMuted]);
+
+  const toggleMuteRef = useRef(toggleMute);
+  toggleMuteRef.current = toggleMute;
+  const toggleDeafenRef = useRef(toggleDeafen);
+  toggleDeafenRef.current = toggleDeafen;
+
+  useEffect(() => {
+    if (!voiceControls) return;
+    let cleanup: (() => void) | null = null;
+    let active = true;
+    void voiceControls.subscribe({
+      onToggleMute: () => void toggleMuteRef.current(),
+      onToggleDeafen: () => void toggleDeafenRef.current(),
+    }).then((unlisten) => {
+      if (active) {
+        cleanup = unlisten;
+      } else {
+        unlisten();
+      }
+    });
+    return () => {
+      active = false;
+      cleanup?.();
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       joinAttemptIdRef.current += 1;
       joinRequestRef.current?.controller.abort();
@@ -1370,6 +1609,8 @@ export function VoiceProvider({
       void disconnectCurrentRoom()?.catch(() => {});
     };
   }, [disconnectCurrentRoom]);
+
+  const canSwitchCamera = devices.videoInputs.length > 1 || isTouchDevice;
 
   const value = useMemo<VoiceContextValue>(
     () => ({
@@ -1382,6 +1623,10 @@ export function VoiceProvider({
       isMuted,
       isDeafened,
       isCameraOn,
+      cameraFacingMode,
+      isSwitchingCamera,
+      canSwitchCamera,
+      supportsScreenShare,
       isScreenSharing,
       screenShareConfig,
       updateScreenShareConfig,
@@ -1409,11 +1654,15 @@ export function VoiceProvider({
       serverMuteParticipant,
       watchTargetIdentity,
       setWatchTargetIdentity,
+      previewTargetIdentity,
+      setPreviewTargetIdentity,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
       toggleCamera,
+      switchCameraFacingMode,
+      enableCameraWithFacing,
       clearError: () => setError(null),
       clearNotice: () => setNotice(null),
     }),
@@ -1427,6 +1676,10 @@ export function VoiceProvider({
       isMuted,
       isDeafened,
       isCameraOn,
+      cameraFacingMode,
+      isSwitchingCamera,
+      canSwitchCamera,
+      supportsScreenShare,
       isScreenSharing,
       screenShareConfig,
       updateScreenShareConfig,
@@ -1453,11 +1706,16 @@ export function VoiceProvider({
       kickParticipant,
       serverMuteParticipant,
       watchTargetIdentity,
+      previewTargetIdentity,
       joinVoiceChannel,
       leaveVoiceChannel,
       toggleMute,
       toggleDeafen,
       toggleCamera,
+      switchCameraFacingMode,
+      enableCameraWithFacing,
+      setError,
+      setNotice,
     ]
   );
 

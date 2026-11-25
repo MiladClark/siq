@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import {
   Check,
   Gamepad2,
@@ -102,7 +103,7 @@ export function FriendsHubView({
     if (!clean || submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/friends", {
+      const res = await apiFetch("/api/friends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: clean }),
@@ -146,8 +147,8 @@ export function FriendsHubView({
     try {
       const res =
         action === "remove"
-          ? await fetch(`/api/friends/${friendshipId}`, { method: "DELETE" })
-          : await fetch(`/api/friends/${friendshipId}`, {
+          ? await apiFetch(`/api/friends/${friendshipId}`, { method: "DELETE" })
+          : await apiFetch(`/api/friends/${friendshipId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ action }),

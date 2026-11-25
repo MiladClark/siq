@@ -1,5 +1,6 @@
 "use client";
 
+import { mediaUrl } from "@/lib/client-api";
 import type { PresenceStatus } from "@/lib/types";
 
 export type AvatarStatus = Exclude<PresenceStatus, "invisible"> | "offline";
@@ -88,7 +89,7 @@ export function Avatar({
       {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={avatarUrl}
+          src={mediaUrl(avatarUrl)}
           alt={name}
           className="block h-full w-full rounded-full object-cover select-none"
           style={{ backgroundColor: color }}

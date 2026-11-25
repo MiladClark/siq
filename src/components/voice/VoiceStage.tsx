@@ -3,28 +3,46 @@
 import {
   Copy,
   Expand,
+  Eye,
+  Fullscreen,
   Headphones,
   Maximize2,
   Mic,
   MicOff,
+  Minimize,
   Minimize2,
   Monitor,
+  MonitorOff,
   PhoneOff,
   PictureInPicture2,
   Play,
+  Radio,
+  RotateCcw,
   Settings,
   Shrink,
+  SlidersHorizontal,
+  SwitchCamera,
   User,
+  Users,
   UserX,
   Video,
   VideoOff,
   Volume2,
   VolumeX,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { ConnectionState, type Track } from "livekit-client";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Avatar } from "@/components/ui/Avatar";
 import { BarVisualizer } from "@/components/ui/BarVisualizer";
 import { type ContextMenuEntry, useContextMenu } from "@/components/ui/ContextMenu";
@@ -45,11 +63,13 @@ import type { ChannelItem, PublicUser, VoiceParticipantSummary } from "@/lib/typ
 function VideoTrackCanvas({
   track,
   mirror = false,
+  style,
   className = "",
   videoRefExternal,
 }: {
   track: Track;
   mirror?: boolean;
+  style?: React.CSSProperties;
   className?: string;
   videoRefExternal?: React.MutableRefObject<HTMLVideoElement | null>;
 }) {
@@ -73,6 +93,7 @@ function VideoTrackCanvas({
       autoPlay
       playsInline
       muted
+      style={style}
       className={`${mirror ? "-scale-x-100" : ""} ${className}`}
     />
   );
@@ -89,8 +110,12 @@ interface VoiceStageProps {
   onOpenScreenShareModal: () => void;
   onOpenVoiceSettings: () => void;
   onOpenUserProfile: (target: ProfilePopoverTarget) => void;
-  onJoinVoiceChannel: (channel: ChannelItem) => void;
+  onJoinVoiceChannel: (channel: ChannelItem, watchIdentity?: string) => void;
   onLeaveVoiceChannel: () => void;
+}
+
+function clampZoom(val: number): number {
+  return Math.min(3, Math.max(1, Number(val.toFixed(2))));
 }
 
 export function VoiceStage({
@@ -115,7 +140,12 @@ export function VoiceStage({
     isMuted,
     isDeafened,
     isCameraOn,
+    cameraFacingMode,
+    isSwitchingCamera,
+    canSwitchCamera,
     isScreenSharing,
+    screenShareConfig,
+    stopScreenShare,
     userVolumes,
     setUserVolume,
     kickParticipant,
@@ -125,17 +155,33 @@ export function VoiceStage({
     toggleMute,
     toggleDeafen,
     toggleCamera,
+    switchCameraFacingMode,
   } = useVoice();
 
   const [streamFit, setStreamFit] = useState<"contain" | "cover">("contain");
-  const [streamMuted, setStreamMuted] = useState(false);
+  const [streamZoom, setStreamZoom] = useState<number>(1);
+  const [streamPan, setStreamPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(
+    null
+  );
+
+  const [showParticipantsStrip, setShowParticipantsStrip] = useState(true);
+  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false);
+  const [isPipActive, setIsPipActive] = useState(false);
+  const [pipSupported, setPipSupported] = useState(false);
+  const [hudVisible, setHudVisible] = useState(true);
+  const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevStreamVolRef = useRef<number>(1);
+
   const [liveVideoMeta, setLiveVideoMeta] = useState<{
     width: number;
     height: number;
     fps: number;
   } | null>(null);
 
-  const stageVideoContainerRef = useRef<HTMLDivElement | null>(null);
+  const stageRootRef = useRef<HTMLDivElement | null>(null);
+  const videoSurfaceRef = useRef<HTMLDivElement | null>(null);
   const focusedVideoElRef = useRef<HTMLVideoElement | null>(null);
 
   const isInThisChannel =
@@ -148,19 +194,68 @@ export function VoiceStage({
 
   const screenSharers = participants.filter((p) => p.isScreenSharing);
 
-  // Never auto-jump into someone's stream. Only clear watch target if the watched stream ends.
+  useEffect(() => {
+    setPipSupported(
+      typeof document !== "undefined" && Boolean(document.pictureInPictureEnabled)
+    );
+  }, []);
+
+  // Track native OS Fullscreen accurately
+  useEffect(() => {
+    function handleFsChange() {
+      const active = Boolean(document.fullscreenElement);
+      setIsBrowserFullscreen(active);
+      if (active) {
+        setShowParticipantsStrip(false);
+      } else {
+        setShowParticipantsStrip(true);
+        setHudVisible(true);
+      }
+    }
+    document.addEventListener("fullscreenchange", handleFsChange);
+    return () => document.removeEventListener("fullscreenchange", handleFsChange);
+  }, []);
+
+  // Only clear watch target if the watched stream ends
   useEffect(() => {
     if (!watchTargetIdentity) return;
     const stillLive = screenSharers.some((s) => s.identity === watchTargetIdentity);
     if (!stillLive) {
       setWatchTargetIdentity(null);
+      setStreamZoom(1);
+      setStreamPan({ x: 0, y: 0 });
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      }
     }
   }, [screenSharers, setWatchTargetIdentity, watchTargetIdentity]);
 
-  const focusedSharer: VoiceParticipantView | null =
-    watchTargetIdentity
-      ? (screenSharers.find((s) => s.identity === watchTargetIdentity) ?? null)
-      : null;
+  const focusedSharer: VoiceParticipantView | null = watchTargetIdentity
+    ? (screenSharers.find((s) => s.identity === watchTargetIdentity) ?? null)
+    : null;
+
+  // Reset zoom/pan when switching watched streamer
+  useEffect(() => {
+    setStreamZoom(1);
+    setStreamPan({ x: 0, y: 0 });
+  }, [focusedSharer?.identity]);
+
+  // Track Picture-in-Picture state accurately
+  useEffect(() => {
+    const el = focusedVideoElRef.current;
+    if (!el) {
+      setIsPipActive(false);
+      return;
+    }
+    const onEnter = () => setIsPipActive(true);
+    const onLeave = () => setIsPipActive(false);
+    el.addEventListener("enterpictureinpicture", onEnter);
+    el.addEventListener("leavepictureinpicture", onLeave);
+    return () => {
+      el.removeEventListener("enterpictureinpicture", onEnter);
+      el.removeEventListener("leavepictureinpicture", onLeave);
+    };
+  }, [focusedSharer?.screenTrack]);
 
   // Measure real rendered stream resolution & FPS from <video> element
   useEffect(() => {
@@ -196,15 +291,85 @@ export function VoiceStage({
     return () => clearInterval(timer);
   }, [focusedSharer]);
 
-  function requestFullscreen() {
-    const el = stageVideoContainerRef.current;
+  // Auto-hide HUD & cursor on idle mouse in Cinema / Fullscreen modes
+  const wakeHud = useCallback(() => {
+    setHudVisible(true);
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    if (focusedSharer && (isBrowserFullscreen || isStageMaximized)) {
+      hudTimerRef.current = setTimeout(() => {
+        setHudVisible(false);
+      }, 2600);
+    }
+  }, [focusedSharer, isBrowserFullscreen, isStageMaximized]);
+
+  useEffect(() => {
+    wakeHud();
+    return () => {
+      if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    };
+  }, [wakeHud]);
+
+  const toggleBrowserFullscreen = useCallback(() => {
+    const el = stageRootRef.current;
     if (!el) return;
     if (document.fullscreenElement) {
-      void document.exitFullscreen();
+      void document.exitFullscreen().catch(() => {});
     } else {
-      void el.requestFullscreen?.();
+      void el.requestFullscreen?.().catch(() => {});
     }
-  }
+  }, []);
+
+  const resetZoomAndPan = useCallback(() => {
+    setStreamZoom(1);
+    setStreamPan({ x: 0, y: 0 });
+  }, []);
+
+  const applyZoomDelta = useCallback((delta: number) => {
+    setStreamZoom((prev) => {
+      const next = clampZoom(prev + delta);
+      if (next <= 1) {
+        setStreamPan({ x: 0, y: 0 });
+      }
+      return next;
+    });
+  }, []);
+
+  // Desktop keyboard shortcuts while watching a stream
+  useEffect(() => {
+    if (!focusedSharer) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleBrowserFullscreen();
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        onToggleMaximize();
+      } else if (e.key === "0") {
+        e.preventDefault();
+        resetZoomAndPan();
+      } else if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        applyZoomDelta(0.25);
+      } else if (e.key === "-") {
+        e.preventDefault();
+        applyZoomDelta(-0.25);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [applyZoomDelta, focusedSharer, onToggleMaximize, resetZoomAndPan, toggleBrowserFullscreen]);
 
   async function togglePictureInPicture() {
     const videoEl = focusedVideoElRef.current;
@@ -222,8 +387,76 @@ export function VoiceStage({
 
   function handleCloseStream() {
     setWatchTargetIdentity(null);
+    resetZoomAndPan();
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    }
     if (isStageMaximized) {
       onToggleMaximize();
+    }
+  }
+
+  function clampPanBounds(panX: number, panY: number, zoom: number) {
+    const container = videoSurfaceRef.current;
+    if (!container || zoom <= 1) return { x: 0, y: 0 };
+    const maxX = ((zoom - 1) * container.clientWidth) / 2;
+    const maxY = ((zoom - 1) * container.clientHeight) / 2;
+    return {
+      x: Math.max(-maxX, Math.min(maxX, panX)),
+      y: Math.max(-maxY, Math.min(maxY, panY)),
+    };
+  }
+
+  function handleVideoWheel(e: ReactWheelEvent<HTMLDivElement>) {
+    if (!focusedSharer?.screenTrack) return;
+    if (e.ctrlKey || e.metaKey || streamZoom > 1 || isStageMaximized || isBrowserFullscreen) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.2 : -0.2;
+      setStreamZoom((prev) => {
+        const next = clampZoom(prev + delta);
+        if (next <= 1) {
+          setStreamPan({ x: 0, y: 0 });
+        } else {
+          setStreamPan((p) => clampPanBounds(p.x, p.y, next));
+        }
+        return next;
+      });
+    }
+  }
+
+  function handleVideoPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || streamZoom <= 1) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsPanning(true);
+    panStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      panX: streamPan.x,
+      panY: streamPan.y,
+    };
+  }
+
+  function handleVideoPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    wakeHud();
+    if (!isPanning || !panStartRef.current) return;
+    const dx = e.clientX - panStartRef.current.startX;
+    const dy = e.clientY - panStartRef.current.startY;
+    setStreamPan(
+      clampPanBounds(
+        panStartRef.current.panX + dx,
+        panStartRef.current.panY + dy,
+        streamZoom
+      )
+    );
+  }
+
+  function handleVideoPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    if (isPanning) {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+      setIsPanning(false);
+      panStartRef.current = null;
     }
   }
 
@@ -302,7 +535,7 @@ export function VoiceStage({
       entries.push({
         type: "item",
         id: "watch-stream",
-        label: "Watch Stream",
+        label: p.isLocal ? "Preview My Stream" : "Watch Stream",
         icon: <Play className="h-3.5 w-3.5 text-emerald-400" />,
         onSelect: () => {
           setWatchTargetIdentity(p.identity);
@@ -379,6 +612,7 @@ export function VoiceStage({
 
   // Spacious Discord-inspired Voice Lobby (Pre-Join Stage)
   if (!isInThisChannel) {
+    const liveLobbyStreamer = previewOccupants.find((o) => o.isScreenSharing);
     const occupantSummary = (() => {
       if (previewOccupants.length === 0) {
         return "No one is currently in voice · Double-click channel or press Join";
@@ -391,7 +625,6 @@ export function VoiceStage({
 
     return (
       <div className="siq-grid-bg relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#08090C] p-6">
-        {/* Subtle ambient matte obsidian depth */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
@@ -407,7 +640,6 @@ export function VoiceStage({
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
           className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center"
         >
-          {/* Occupant Preview Tile Row or Studio Acoustic Visualizer */}
           {previewOccupants.length > 0 ? (
             <div className="mb-7 flex flex-wrap items-center justify-center gap-3">
               {previewOccupants.slice(0, 6).map((occ) => {
@@ -420,7 +652,11 @@ export function VoiceStage({
                   >
                     <button
                       type="button"
-                      onClick={(e) => openParticipantProfile(e, occ)}
+                      onClick={(e) =>
+                        occ.isScreenSharing
+                          ? onJoinVoiceChannel(channel, occ.identity)
+                          : openParticipantProfile(e, occ)
+                      }
                       className="relative z-10 flex h-32 w-44 flex-col items-center justify-center px-3 focus:outline-none active:scale-[0.98]"
                     >
                       {occ.isScreenSharing && (
@@ -443,6 +679,12 @@ export function VoiceStage({
                       >
                         {fresh.name}
                       </span>
+                      {occ.isScreenSharing && (
+                        <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400">
+                          <Play className="h-2.5 w-2.5 fill-current" />
+                          Click to watch
+                        </span>
+                      )}
                     </button>
                   </SpotlightCard>
                 );
@@ -496,17 +738,35 @@ export function VoiceStage({
             </div>
           )}
 
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.97 }}
-            type="button"
-            disabled={!livekitReady || isConnecting}
-            onClick={() => onJoinVoiceChannel(channel)}
-            className="mt-6 inline-flex items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 px-8 py-3 text-sm font-semibold text-zinc-950 shadow-xl shadow-emerald-500/20 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            <Headphones className="h-4 w-4" />
-            <span>{isConnecting ? "Connecting..." : "Join Voice"}</span>
-          </motion.button>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+              type="button"
+              disabled={!livekitReady || isConnecting}
+              onClick={() => onJoinVoiceChannel(channel)}
+              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 px-8 py-3 text-sm font-semibold text-zinc-950 shadow-xl shadow-emerald-500/20 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <Headphones className="h-4 w-4" />
+              <span>{isConnecting ? "Connecting..." : "Join Voice"}</span>
+            </motion.button>
+
+            {liveLobbyStreamer && (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                type="button"
+                disabled={!livekitReady || isConnecting}
+                onClick={() => onJoinVoiceChannel(channel, liveLobbyStreamer.identity)}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-500/40 bg-emerald-500/12 px-6 py-3 text-sm font-semibold text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                <span>
+                  Watch {resolveMemberVisuals(liveLobbyStreamer.identity, liveLobbyStreamer).name}
+                </span>
+              </motion.button>
+            )}
+          </div>
         </motion.div>
       </div>
     );
@@ -514,32 +774,181 @@ export function VoiceStage({
 
   const streamAudioKey = focusedSharer ? `${focusedSharer.identity}:screen` : "";
   const streamAudioVol = streamAudioKey ? (userVolumes[streamAudioKey] ?? 1) : 1;
+  const isStreamAudioMuted = streamAudioVol === 0;
+  const isCinemaLayout = Boolean(focusedSharer && (isStageMaximized || isBrowserFullscreen));
+  const shouldShowParticipantsGrid = !focusedSharer || showParticipantsStrip;
+
+  function handleToggleStreamAudioMute() {
+    if (!streamAudioKey) return;
+    if (streamAudioVol > 0) {
+      prevStreamVolRef.current = streamAudioVol;
+      setUserVolume(streamAudioKey, 0);
+    } else {
+      setUserVolume(streamAudioKey, prevStreamVolRef.current > 0 ? prevStreamVolRef.current : 1);
+    }
+  }
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#0B0C0F]">
+    <div
+      ref={stageRootRef}
+      onMouseMove={wakeHud}
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#08090C]"
+    >
       {/* Main Media Area */}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-5">
-        {/* Focused Screen Share Theater (only shown when user explicitly clicks Watch Stream) */}
+      <div
+        className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${
+          isCinemaLayout
+            ? "gap-2 p-0"
+            : "gap-3 p-2.5 sm:gap-3.5 sm:p-4"
+        }`}
+      >
+        {/* Live Broadcast Discovery Bar (shown when streams are active and none is currently opened) */}
+        <AnimatePresence>
+          {!focusedSharer && screenSharers.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="siq-bezel-sm flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/25 bg-[#111319] px-3.5 py-2.5 sm:px-4"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold tracking-wider text-rose-300 ring-1 ring-rose-500/35">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" />
+                  LIVE
+                </span>
+                {screenSharers.length === 1 ? (
+                  <span className="truncate text-xs font-medium text-zinc-200">
+                    {screenSharers[0].isLocal ? (
+                      <>
+                        You are sharing your screen{" "}
+                        <span className="font-mono text-[11px] text-zinc-400">
+                          ({screenShareConfig.resolution} · {screenShareConfig.fps}fps ·{" "}
+                          {screenShareConfig.codec.toUpperCase()})
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <strong dir="auto" className="font-semibold text-white">
+                          {resolveMemberVisuals(screenSharers[0].identity, screenSharers[0]).name}
+                        </strong>{" "}
+                        is sharing their screen
+                      </>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-xs font-medium text-zinc-200">
+                    {screenSharers.length} live screen streams in this channel
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {screenSharers.map((sharer) => {
+                  const sVisual = resolveMemberVisuals(sharer.identity, sharer);
+                  return (
+                    <button
+                      key={sharer.identity}
+                      type="button"
+                      onClick={() => setWatchTargetIdentity(sharer.identity)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98]"
+                    >
+                      {sharer.isLocal ? (
+                        <Eye className="h-3.5 w-3.5" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                      )}
+                      <span>
+                        {sharer.isLocal
+                          ? "Preview Stream"
+                          : screenSharers.length > 1
+                            ? `Watch ${sVisual.name}`
+                            : "Watch Stream"}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                {isScreenSharing && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onOpenScreenShareModal}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.1] bg-[#181920] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+                      <span>Stream Options</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void stopScreenShare()}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-rose-500/15 px-3 py-1.5 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500 hover:text-white"
+                    >
+                      <MonitorOff className="h-3.5 w-3.5" />
+                      <span>Stop</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Focused Screen Share Theater */}
         <AnimatePresence>
           {focusedSharer && (
             <motion.div
-              ref={stageVideoContainerRef}
-              initial={{ opacity: 0, scale: 0.98 }}
+              initial={{ opacity: 0, scale: 0.99 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-              className={`group/theater relative flex flex-col overflow-hidden rounded-xl border border-white/[0.1] bg-black ${
-                isStageMaximized ? "min-h-[72dvh] flex-1" : "min-h-[340px] flex-1"
+              exit={{ opacity: 0, scale: 0.99 }}
+              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              className={`group/theater relative flex min-h-0 flex-1 flex-col overflow-hidden bg-black ${
+                isCinemaLayout
+                  ? "min-h-0 rounded-none border-0"
+                  : "min-h-[240px] rounded-2xl border border-white/[0.1] sm:min-h-[380px]"
               }`}
             >
-              {/* Video Surface */}
-              <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black">
+              {/* Video Surface (supports zoom, drag-to-pan, double-click fullscreen, idle cursor hide) */}
+              <div
+                ref={videoSurfaceRef}
+                onWheel={handleVideoWheel}
+                onPointerDown={handleVideoPointerDown}
+                onPointerMove={handleVideoPointerMove}
+                onPointerUp={handleVideoPointerUp}
+                onPointerCancel={handleVideoPointerUp}
+                onClick={() => {
+                  if (!isPanning) setHudVisible((v) => !v);
+                }}
+                onDoubleClick={() => {
+                  if (streamZoom > 1) {
+                    resetZoomAndPan();
+                  } else {
+                    toggleBrowserFullscreen();
+                  }
+                }}
+                className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050507] select-none ${
+                  isCinemaLayout && !hudVisible
+                    ? "cursor-none"
+                    : streamZoom > 1
+                      ? isPanning
+                        ? "cursor-grabbing"
+                        : "cursor-grab"
+                      : "cursor-default"
+                }`}
+              >
                 {focusedSharer.screenTrack ? (
                   <VideoTrackCanvas
                     track={focusedSharer.screenTrack}
                     videoRefExternal={focusedVideoElRef}
-                    className={`h-full w-full ${
-                      isStageMaximized ? "max-h-[78dvh]" : "max-h-[64dvh]"
+                    style={{
+                      transform:
+                        streamZoom > 1 || streamPan.x !== 0 || streamPan.y !== 0
+                          ? `translate3d(${streamPan.x}px, ${streamPan.y}px, 0) scale(${streamZoom})`
+                          : undefined,
+                      transformOrigin: "center center",
+                    }}
+                    className={`h-full w-full transition-transform ${
+                      isPanning ? "duration-0" : "duration-150 ease-out"
                     } ${streamFit === "cover" ? "object-cover" : "object-contain"}`}
                   />
                 ) : (
@@ -556,79 +965,144 @@ export function VoiceStage({
                 )}
 
                 {/* Top Floating HUD */}
-                <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-4 py-3 opacity-100 transition-opacity duration-200 md:opacity-0 md:group-hover/theater:opacity-100">
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 bg-gradient-to-b from-black/85 via-black/45 to-transparent px-3.5 py-3 transition-opacity duration-200 sm:gap-3 sm:px-5 ${
+                    hudVisible
+                      ? "opacity-100"
+                      : "opacity-0 group-hover/theater:opacity-100"
+                  }`}
+                >
                   <div className="pointer-events-auto flex min-w-0 items-center gap-2.5">
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 ring-1 ring-emerald-500/35">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    {isStageMaximized && !isBrowserFullscreen && (
+                      <button
+                        type="button"
+                        onClick={onToggleMaximize}
+                        title="Restore sidebar layout (Esc)"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.15] bg-black/70 px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/45 hover:text-emerald-300"
+                      >
+                        <Minimize2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Exit Full Width</span>
+                      </button>
+                    )}
+
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold tracking-wider text-rose-300 ring-1 ring-rose-500/40">
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
                       LIVE
                     </span>
                     <Avatar
                       name={resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}
                       color={resolveMemberVisuals(focusedSharer.identity, focusedSharer).avatarColor}
-                      avatarUrl={resolveMemberVisuals(focusedSharer.identity, focusedSharer).avatarUrl}
+                      avatarUrl={
+                        resolveMemberVisuals(focusedSharer.identity, focusedSharer).avatarUrl
+                      }
                       size="xs"
                     />
                     <span dir="auto" className="truncate text-xs font-semibold text-white">
-                      {resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}&apos;s screen
+                      {focusedSharer.isLocal
+                        ? "Your Screen Preview"
+                        : `${resolveMemberVisuals(focusedSharer.identity, focusedSharer).name}'s screen`}
                     </span>
                     {liveVideoMeta && (
-                      <span className="hidden rounded-md bg-black/60 px-2 py-0.5 text-[11px] font-medium tabular-nums text-zinc-200 ring-1 ring-white/10 sm:inline">
+                      <span className="hidden rounded-md border border-white/[0.12] bg-black/70 px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-zinc-200 sm:inline">
                         {liveVideoMeta.width}×{liveVideoMeta.height}
-                        {liveVideoMeta.fps > 0 ? ` · ${liveVideoMeta.fps} fps` : ""}
+                        {liveVideoMeta.fps > 0 ? ` · ${liveVideoMeta.fps} FPS` : ""}
                       </span>
+                    )}
+                    {streamZoom > 1 && (
+                      <button
+                        type="button"
+                        onClick={resetZoomAndPan}
+                        title="Reset zoom to 100%"
+                        className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/20 px-2 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-emerald-200 hover:bg-emerald-500 hover:text-zinc-950"
+                      >
+                        <span>{Math.round(streamZoom * 100)}%</span>
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
                     )}
                   </div>
 
                   <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
-                    {screenSharers.length > 1 &&
-                      screenSharers.map((s) => (
-                        <button
-                          key={s.identity}
-                          type="button"
-                          onClick={() => setWatchTargetIdentity(s.identity)}
-                          className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-                            s.identity === focusedSharer.identity
-                              ? "bg-emerald-500 text-zinc-950"
-                              : "bg-black/60 text-zinc-300 ring-1 ring-white/15 hover:text-white"
-                          }`}
-                        >
-                          {resolveMemberVisuals(s.identity, s).name}
-                        </button>
-                      ))}
+                    {screenSharers.length > 1 && (
+                      <div className="flex items-center gap-1 rounded-lg border border-white/[0.12] bg-black/70 p-0.5">
+                        {screenSharers.map((s) => {
+                          const active = s.identity === focusedSharer.identity;
+                          return (
+                            <button
+                              key={s.identity}
+                              type="button"
+                              onClick={() => setWatchTargetIdentity(s.identity)}
+                              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                active
+                                  ? "bg-emerald-500 font-semibold text-zinc-950"
+                                  : "text-zinc-300 hover:bg-white/[0.08] hover:text-white"
+                              }`}
+                            >
+                              {s.isLocal
+                                ? "You"
+                                : resolveMemberVisuals(s.identity, s).name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     <button
                       type="button"
                       onClick={handleCloseStream}
-                      title="Close stream view (stay in voice)"
-                      className="inline-flex items-center gap-1 rounded-lg bg-black/65 px-2.5 py-1 text-xs font-medium text-zinc-200 ring-1 ring-white/15 transition-colors hover:bg-rose-500/80 hover:text-white"
+                      title="Stop watching stream (stay in voice)"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.14] bg-black/70 px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-rose-500/50 hover:bg-rose-500/85 hover:text-white"
                     >
                       <X className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Close</span>
+                      <span className="hidden sm:inline">Close Stream</span>
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Bottom Theater Toolbar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.08] bg-[#0E0F12] px-4 py-2">
-                <div className="flex items-center gap-2.5">
-                  {!focusedSharer.isLocal && focusedSharer.screenAudioTrack ? (
-                    <div className="flex items-center gap-2">
+              {/* Precision Studio Theater Control Bar */}
+              <div
+                onMouseEnter={wakeHud}
+                className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-[#0E0F13] px-3 py-2 sm:gap-3 sm:px-4"
+              >
+                {/* Left: Stream Audio Mixer OR Broadcaster Quick Controls */}
+                <div className="flex min-w-0 items-center gap-2.5">
+                  {focusedSharer.isLocal ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300">
+                        <Radio className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">Broadcasting</span>
+                        <span className="font-mono">
+                          {screenShareConfig.resolution} · {screenShareConfig.fps}fps
+                        </span>
+                      </span>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (!streamMuted) {
-                            setStreamMuted(true);
-                            setUserVolume(streamAudioKey, 0);
-                          } else {
-                            setStreamMuted(false);
-                            setUserVolume(streamAudioKey, 1);
-                          }
-                        }}
-                        title={streamMuted || streamAudioVol === 0 ? "Unmute stream" : "Mute stream"}
-                        className="rounded-md p-1 text-zinc-300 hover:bg-white/[0.06] hover:text-white"
+                        onClick={onOpenScreenShareModal}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#17181F] px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
                       >
-                        {streamMuted || streamAudioVol === 0 ? (
+                        <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
+                        <span>Change Window / Quality</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void stopScreenShare()}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500 hover:text-white"
+                      >
+                        <MonitorOff className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Stop Sharing</span>
+                      </button>
+                    </div>
+                  ) : focusedSharer.screenAudioTrack ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-[#15161C] px-2.5 py-1">
+                      <button
+                        type="button"
+                        onClick={handleToggleStreamAudioMute}
+                        title={isStreamAudioMuted ? "Unmute stream audio" : "Mute stream audio"}
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white"
+                      >
+                        {isStreamAudioMuted ? (
                           <VolumeX className="h-4 w-4 text-rose-400" />
                         ) : (
                           <Volume2 className="h-4 w-4 text-emerald-400" />
@@ -643,74 +1117,170 @@ export function VoiceStage({
                         value={streamAudioVol}
                         onChange={(e) => {
                           const v = Number(e.target.value);
-                          setStreamMuted(v === 0);
+                          if (v > 0) prevStreamVolRef.current = v;
                           setUserVolume(streamAudioKey, v);
                         }}
-                        className="h-1.5 w-24 cursor-pointer accent-emerald-500"
+                        className="h-1.5 w-20 cursor-pointer accent-emerald-500 sm:w-28"
                       />
-                      <span className="w-9 text-[11px] font-medium tabular-nums text-zinc-400">
+                      <span className="w-9 text-right font-mono text-[11px] font-medium tabular-nums text-zinc-300">
                         {Math.round(streamAudioVol * 100)}%
                       </span>
                     </div>
                   ) : (
-                    <span className="text-xs text-zinc-500">
-                      {focusedSharer.isLocal
-                        ? "You are streaming · click Stream Options to adjust or stop"
-                        : "Stream video only"}
+                    <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+                      <VolumeX className="h-3.5 w-3.5" />
+                      <span>No stream audio shared</span>
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                {/* Right: Zoom + Fit/Fill + Participants Toggle + PiP + Full App Width + OS Fullscreen */}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Desktop Zoom Control Pill */}
+                  <div className="hidden items-center rounded-lg border border-white/[0.09] bg-[#17181F] p-0.5 sm:flex">
+                    <button
+                      type="button"
+                      disabled={streamZoom <= 1}
+                      onClick={() => applyZoomDelta(-0.25)}
+                      title="Zoom out (-)"
+                      aria-label="Zoom out"
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white disabled:opacity-35"
+                    >
+                      <ZoomOut className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetZoomAndPan}
+                      title="Reset zoom (0)"
+                      className="min-w-[46px] px-1.5 font-mono text-[11px] font-semibold tabular-nums text-zinc-200 hover:text-emerald-300"
+                    >
+                      {Math.round(streamZoom * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      disabled={streamZoom >= 3}
+                      onClick={() => applyZoomDelta(0.25)}
+                      title="Zoom in (+)"
+                      aria-label="Zoom in"
+                      className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-300 transition-colors hover:bg-white/[0.08] hover:text-white disabled:opacity-35"
+                    >
+                      <ZoomIn className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Fit vs Fill */}
                   <button
                     type="button"
-                    onClick={() =>
-                      setStreamFit((f) => (f === "contain" ? "cover" : "contain"))
-                    }
-                    title={streamFit === "contain" ? "Fill frame" : "Fit frame"}
-                    className="rounded-lg border border-white/[0.09] bg-[#18191E] p-1.5 text-zinc-300 transition-colors hover:border-white/[0.18] hover:text-white"
+                    onClick={() => {
+                      resetZoomAndPan();
+                      setStreamFit((f) => (f === "contain" ? "cover" : "contain"));
+                    }}
+                    title={streamFit === "contain" ? "Fill frame (crop edges)" : "Fit entire screen"}
+                    aria-pressed={streamFit === "cover"}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors ${
+                      streamFit === "cover"
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                        : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                    }`}
                   >
                     {streamFit === "contain" ? (
                       <Expand className="h-3.5 w-3.5" />
                     ) : (
                       <Shrink className="h-3.5 w-3.5" />
                     )}
+                    <span className="hidden lg:inline">
+                      {streamFit === "contain" ? "Fill" : "Fit"}
+                    </span>
                   </button>
 
+                  {/* Show / Hide Participant Tiles */}
                   <button
                     type="button"
-                    onClick={() => void togglePictureInPicture()}
-                    title="Picture-in-Picture"
-                    className="rounded-lg border border-white/[0.09] bg-[#18191E] p-1.5 text-zinc-300 transition-colors hover:border-white/[0.18] hover:text-white"
-                  >
-                    <PictureInPicture2 className="h-3.5 w-3.5" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={onToggleMaximize}
-                    title={isStageMaximized ? "Restore layout" : "Maximize stage"}
-                    className={`rounded-lg border p-1.5 transition-colors ${
-                      isStageMaximized
+                    onClick={() => setShowParticipantsStrip((v) => !v)}
+                    title={
+                      showParticipantsStrip
+                        ? "Hide participant cards"
+                        : "Show participant cards"
+                    }
+                    aria-pressed={!showParticipantsStrip}
+                    className={`hidden h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors sm:inline-flex ${
+                      !showParticipantsStrip
                         ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                        : "border-white/[0.09] bg-[#18191E] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                        : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
                     }`}
                   >
-                    {isStageMaximized ? (
-                      <Minimize2 className="h-3.5 w-3.5" />
-                    ) : (
-                      <Maximize2 className="h-3.5 w-3.5" />
-                    )}
+                    <Users className="h-3.5 w-3.5" />
                   </button>
 
+                  {/* Picture-in-Picture */}
+                  {pipSupported && (
+                    <button
+                      type="button"
+                      onClick={() => void togglePictureInPicture()}
+                      title={isPipActive ? "Exit Picture-in-Picture" : "Picture-in-Picture"}
+                      aria-pressed={isPipActive}
+                      className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors sm:flex ${
+                        isPipActive
+                          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                          : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                      }`}
+                    >
+                      <PictureInPicture2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
+                  {/* Full-App Window Width (Theater Mode) */}
+                  {!isBrowserFullscreen && (
+                    <button
+                      type="button"
+                      onClick={onToggleMaximize}
+                      title={
+                        isStageMaximized
+                          ? "Restore sidebars (T / Esc)"
+                          : "Expand to full app width (T)"
+                      }
+                      aria-pressed={isStageMaximized}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors ${
+                        isStageMaximized
+                          ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-300"
+                          : "border-white/[0.09] bg-[#17181F] text-zinc-200 hover:border-white/[0.18] hover:text-white"
+                      }`}
+                    >
+                      {isStageMaximized ? (
+                        <Minimize2 className="h-3.5 w-3.5" />
+                      ) : (
+                        <Maximize2 className="h-3.5 w-3.5" />
+                      )}
+                      <span className="hidden md:inline">
+                        {isStageMaximized ? "Exit Wide" : "Full Width"}
+                      </span>
+                    </button>
+                  )}
+
+                  {/* True Monitor OS Fullscreen */}
                   <button
                     type="button"
-                    onClick={requestFullscreen}
-                    title="Fullscreen"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.09] bg-[#18191E] px-2.5 py-1.5 text-[11px] font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
+                    onClick={toggleBrowserFullscreen}
+                    title={
+                      isBrowserFullscreen
+                        ? "Exit Fullscreen (F / Esc)"
+                        : "Fullscreen (F / Double-click)"
+                    }
+                    aria-pressed={isBrowserFullscreen}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold transition-colors ${
+                      isBrowserFullscreen
+                        ? "border-emerald-500/50 bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                        : "border-white/[0.12] bg-[#1C1E26] text-zinc-100 hover:border-emerald-500/45 hover:text-emerald-300"
+                    }`}
                   >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Fullscreen</span>
+                    {isBrowserFullscreen ? (
+                      <Minimize className="h-3.5 w-3.5" />
+                    ) : (
+                      <Fullscreen className="h-3.5 w-3.5" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {isBrowserFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -718,136 +1288,202 @@ export function VoiceStage({
           )}
         </AnimatePresence>
 
-        {/* Participant Grid (SpotlightCards with live BarVisualizer) */}
-        <div
-          className={`grid gap-3.5 ${
-            focusedSharer
-              ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
-              : participants.length <= 2
-                ? "my-auto grid-cols-1 sm:grid-cols-2"
-                : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
-          }`}
-        >
-          {participants.map((p) => {
-            const fresh = resolveMemberVisuals(p.identity, p);
-            const barState = p.isMuted
-              ? "muted"
-              : p.isSpeaking
-                ? "speaking"
-                : "idle";
-            return (
-              <SpotlightCard
-                key={p.identity}
-                active={p.isSpeaking}
-                spotlightColor={`${fresh.avatarColor}22`}
-                onContextMenu={(e) => handleParticipantContextMenu(e, p)}
-                className={`siq-bezel-sm flex flex-col justify-between rounded-2xl border bg-[#101116] transition-all duration-150 ${
-                  p.isSpeaking
-                    ? "border-emerald-500/65 shadow-[0_0_24px_-8px_rgb(var(--siq-accent-rgb)/0.48)]"
-                    : "border-white/[0.08] hover:border-white/[0.14]"
-                } ${focusedSharer ? "min-h-[132px]" : "min-h-[224px]"}`}
-              >
-                {/* Video or Avatar Center */}
-                <button
-                  type="button"
-                  onClick={(e) => openParticipantProfile(e, p)}
-                  className="relative z-10 flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden bg-[#0B0C10]/80 text-left focus:outline-none"
+        {/* Participant Grid */}
+        {shouldShowParticipantsGrid && (
+          <div
+            className={`grid shrink-0 gap-2.5 sm:gap-3.5 ${
+              focusedSharer
+                ? "grid-cols-2 px-2 pb-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
+                : participants.length === 1
+                  ? "mx-auto my-auto w-full max-w-md grid-cols-1"
+                  : participants.length === 2
+                    ? "my-auto grid-cols-1 sm:grid-cols-2"
+                    : "grid-cols-2 lg:grid-cols-3"
+            }`}
+          >
+            {participants.map((p) => {
+              const fresh = resolveMemberVisuals(p.identity, p);
+              const barState = p.isMuted
+                ? "muted"
+                : p.isSpeaking
+                  ? "speaking"
+                  : "idle";
+              const isBeingWatched = focusedSharer?.identity === p.identity;
+
+              return (
+                <SpotlightCard
+                  key={p.identity}
+                  active={p.isSpeaking || isBeingWatched}
+                  spotlightColor={`${fresh.avatarColor}22`}
+                  onContextMenu={(e) => handleParticipantContextMenu(e, p)}
+                  className={`siq-bezel-sm flex flex-col justify-between rounded-2xl border bg-[#101116] transition-all duration-150 ${
+                    isBeingWatched
+                      ? "border-emerald-500/55 ring-1 ring-emerald-500/25"
+                      : p.isSpeaking
+                        ? "border-emerald-500/65 shadow-[0_0_24px_-8px_rgb(var(--siq-accent-rgb)/0.48)]"
+                        : "border-white/[0.08] hover:border-white/[0.14]"
+                  } ${
+                    focusedSharer
+                      ? "min-h-[104px] sm:min-h-[118px]"
+                      : "min-h-[168px] sm:min-h-[224px]"
+                  }`}
                 >
-                  {p.isCameraOn && p.cameraTrack ? (
-                    <VideoTrackCanvas
-                      track={p.cameraTrack}
-                      mirror={p.isLocal}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <>
-                      <Avatar
-                        name={fresh.name}
-                        color={fresh.avatarColor}
-                        avatarUrl={fresh.avatarUrl}
-                        size={focusedSharer ? "md" : "lg"}
-                        speaking={p.isSpeaking}
-                        speakingOffsetClassName="ring-offset-[#0B0C10]"
-                      />
-                      {!focusedSharer && (
+                  {/* Video or Avatar Center */}
+                  <div className="relative z-10 flex flex-1 overflow-hidden bg-[#0B0C10]/80">
+                    <button
+                      type="button"
+                      onClick={(e) =>
+                        p.isScreenSharing && !isBeingWatched
+                          ? setWatchTargetIdentity(p.identity)
+                          : openParticipantProfile(e, p)
+                      }
+                      className="flex h-full w-full flex-col items-center justify-center gap-2.5 text-left focus:outline-none"
+                    >
+                      {p.isCameraOn && p.cameraTrack ? (
+                        <VideoTrackCanvas
+                          track={p.cameraTrack}
+                          mirror={p.isLocal && cameraFacingMode === "user"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <>
+                          <Avatar
+                            name={fresh.name}
+                            color={fresh.avatarColor}
+                            avatarUrl={fresh.avatarUrl}
+                            size={focusedSharer ? "sm" : "lg"}
+                            speaking={p.isSpeaking}
+                            speakingOffsetClassName="ring-offset-[#0B0C10]"
+                          />
+                          {!focusedSharer && !p.isScreenSharing && (
+                            <BarVisualizer
+                              state={barState}
+                              barCount={9}
+                              size="sm"
+                              mediaStreamTrack={p.micAudioTrack?.mediaStreamTrack ?? null}
+                            />
+                          )}
+                          {!focusedSharer && p.isScreenSharing && (
+                            <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-200 transition-colors hover:bg-emerald-500 hover:text-zinc-950">
+                              <Play className="h-3 w-3 fill-current" />
+                              <span>{p.isLocal ? "Preview Stream" : "Watch Stream"}</span>
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </button>
+
+                    {p.isLocal && p.isCameraOn && canSwitchCamera && (
+                      <button
+                        type="button"
+                        disabled={isSwitchingCamera}
+                        onClick={() => void switchCameraFacingMode()}
+                        title={
+                          cameraFacingMode === "user"
+                            ? "Switch to rear camera"
+                            : "Switch to front camera"
+                        }
+                        aria-label={
+                          cameraFacingMode === "user"
+                            ? "Switch to rear camera"
+                            : "Switch to front camera"
+                        }
+                        className="absolute left-2.5 top-2.5 inline-flex h-8 items-center gap-1.5 rounded-full border border-white/[0.15] bg-black/75 px-2.5 text-[11px] font-medium text-zinc-100 transition-colors hover:border-emerald-500/50 hover:text-emerald-300 active:scale-95 disabled:opacity-50"
+                      >
+                        <SwitchCamera
+                          className={`h-3.5 w-3.5 ${isSwitchingCamera ? "animate-spin" : ""}`}
+                        />
+                        <span className="hidden sm:inline">
+                          {cameraFacingMode === "user" ? "Front" : "Rear"}
+                        </span>
+                      </button>
+                    )}
+
+                    {p.isScreenSharing && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isBeingWatched) {
+                            handleCloseStream();
+                          } else {
+                            setWatchTargetIdentity(p.identity);
+                          }
+                        }}
+                        title={isBeingWatched ? "Watching now — click to close" : "Watch stream"}
+                        className={`absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-wide transition-colors ${
+                          isBeingWatched
+                            ? "border-emerald-400/60 bg-emerald-500 text-zinc-950"
+                            : "border-rose-500/45 bg-black/80 text-rose-300 hover:border-emerald-500/50 hover:bg-emerald-500 hover:text-zinc-950"
+                        }`}
+                      >
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
+                        </span>
+                        <span>{isBeingWatched ? "WATCHING" : "LIVE"}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Clean Participant Footer */}
+                  <div className="relative z-10 flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121319]/95 px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={(e) => openParticipantProfile(e, p)}
+                      className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
+                    >
+                      <span dir="auto" className="truncate text-xs font-semibold text-zinc-100">
+                        {fresh.name}
+                      </span>
+                      {p.isLocal && (
+                        <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                          you
+                        </span>
+                      )}
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2 text-zinc-400">
+                      {focusedSharer && !p.isMuted && (
                         <BarVisualizer
                           state={barState}
-                          barCount={9}
-                          size="sm"
+                          barCount={4}
+                          size="xs"
                           mediaStreamTrack={p.micAudioTrack?.mediaStreamTrack ?? null}
                         />
                       )}
-                    </>
-                  )}
-
-                  {p.isScreenSharing && (
-                    <span
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openParticipantProfile(e, p);
-                      }}
-                      title="Click to view profile & watch stream"
-                      className="absolute right-2.5 top-2.5 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/45 bg-black/80 px-2.5 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500 hover:text-zinc-950"
-                    >
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-75" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-current" />
-                      </span>
-                      <span>LIVE</span>
-                    </span>
-                  )}
-                </button>
-
-                {/* Clean Participant Footer (Name + Live Mini Visualizer / Mic Status) */}
-                <div className="relative z-10 flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121319]/95 px-3.5 py-2.5">
-                  <button
-                    type="button"
-                    onClick={(e) => openParticipantProfile(e, p)}
-                    className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
-                  >
-                    <span dir="auto" className="truncate text-xs font-semibold text-zinc-100">
-                      {fresh.name}
-                    </span>
-                    {p.isLocal && (
-                      <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
-                        you
-                      </span>
-                    )}
-                  </button>
-                  <div className="flex shrink-0 items-center gap-2 text-zinc-400">
-                    {focusedSharer && !p.isMuted && (
-                      <BarVisualizer
-                        state={barState}
-                        barCount={4}
-                        size="xs"
-                        mediaStreamTrack={p.micAudioTrack?.mediaStreamTrack ?? null}
-                      />
-                    )}
-                    {p.isMuted ? (
-                      <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400">
-                        <MicOff className="h-3.5 w-3.5" />
-                      </span>
-                    ) : (
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-lg transition-colors duration-100 ${
-                          p.isSpeaking
-                            ? "bg-emerald-500/15 text-emerald-400"
-                            : "bg-white/[0.04] text-zinc-400"
-                        }`}
-                      >
-                        <Mic className="h-3.5 w-3.5" />
-                      </span>
-                    )}
+                      {p.isMuted ? (
+                        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400">
+                          <MicOff className="h-3.5 w-3.5" />
+                        </span>
+                      ) : (
+                        <span
+                          className={`flex h-6 w-6 items-center justify-center rounded-lg transition-colors duration-100 ${
+                            p.isSpeaking
+                              ? "bg-emerald-500/15 text-emerald-400"
+                              : "bg-white/[0.04] text-zinc-400"
+                          }`}
+                        >
+                          <Mic className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </SpotlightCard>
-            );
-          })}
-        </div>
+                </SpotlightCard>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Bottom Studio Control Deck with Floating Magnification Dock */}
-      <div className="relative flex shrink-0 items-center justify-center border-t border-white/[0.07] bg-[#0B0C0F]/95 px-1.5 py-2.5 backdrop-blur-md sm:px-4 sm:py-3">
+      {/* Bottom Studio Control Deck (Stays accessible inside OS Fullscreen & Full-App Mode) */}
+      <div
+        onMouseEnter={wakeHud}
+        className={`relative flex shrink-0 items-center justify-center border-t border-white/[0.07] bg-[#0B0C0F]/95 px-2 pt-2 pb-[max(0.625rem,env(safe-area-inset-bottom))] transition-opacity duration-200 sm:px-4 sm:py-2.5 ${
+          isBrowserFullscreen && !hudVisible
+            ? "pointer-events-none opacity-0"
+            : "opacity-100"
+        }`}
+      >
         <FloatingDock className="siq-voice-stage-dock">
           <DockItem
             label={isMuted ? "Unmute microphone" : "Mute microphone"}
@@ -876,6 +1512,24 @@ export function VoiceStage({
             <span className="hidden lg:inline">Camera</span>
           </DockItem>
 
+          {isCameraOn && canSwitchCamera && (
+            <DockItem
+              label={
+                cameraFacingMode === "user"
+                  ? "Switch to rear camera"
+                  : "Switch to front camera"
+              }
+              onClick={() => void switchCameraFacingMode()}
+            >
+              <SwitchCamera
+                className={`h-4 w-4 ${isSwitchingCamera ? "animate-spin" : ""}`}
+              />
+              <span className="hidden lg:inline">
+                {cameraFacingMode === "user" ? "Rear" : "Front"}
+              </span>
+            </DockItem>
+          )}
+
           <DockItem
             label={isScreenSharing ? "Stream options & stop" : "Share screen"}
             onClick={onOpenScreenShareModal}
@@ -888,6 +1542,20 @@ export function VoiceStage({
             </span>
           </DockItem>
 
+          {!focusedSharer && (
+            <DockItem
+              label={isStageMaximized ? "Restore sidebars" : "Expand stage to full app width"}
+              onClick={onToggleMaximize}
+              active={isStageMaximized}
+            >
+              {isStageMaximized ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </DockItem>
+          )}
+
           <div className="mx-0.5 h-6 w-px bg-white/[0.09]" />
 
           <DockItem label="Voice & audio settings" onClick={onOpenVoiceSettings}>
@@ -896,14 +1564,18 @@ export function VoiceStage({
 
           <DockItem
             label="Disconnect from voice"
-            onClick={onLeaveVoiceChannel}
+            onClick={() => {
+              if (document.fullscreenElement) {
+                void document.exitFullscreen().catch(() => {});
+              }
+              onLeaveVoiceChannel();
+            }}
             solidDanger
           >
             <PhoneOff className="h-4 w-4" />
             <span className="hidden sm:inline">Leave</span>
           </DockItem>
         </FloatingDock>
-
       </div>
     </div>
   );

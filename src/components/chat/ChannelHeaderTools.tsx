@@ -1,5 +1,6 @@
 "use client";
 
+import { apiFetch } from "@/lib/client-api";
 import { Loader2, Pin, X } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { useEffect, useState } from "react";
@@ -59,7 +60,7 @@ export function ChannelHeaderTools({
 
     async function loadPins() {
       try {
-        const res = await fetch(`${baseUrl}?pinned=true`, { cache: "no-store", signal });
+        const res = await apiFetch(`${baseUrl}?pinned=true`, { cache: "no-store", signal });
         if (!res.ok) throw new Error("Could not load pinned messages.");
         const data = await res.json();
         if (!signal.aborted) setPinnedMessages(data.messages ?? []);
@@ -83,7 +84,7 @@ export function ChannelHeaderTools({
 
   async function handleUnpin(msg: MessageItem) {
     try {
-      const res = await fetch(`${baseUrl}/${msg.id}`, {
+      const res = await apiFetch(`${baseUrl}/${msg.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pinned: false }),
