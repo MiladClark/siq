@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "siq-sync-assets public && dotenv -e ../../.env.local -- next dev --turbopack -p 3100",
-    "build": "siq-sync-assets public && dotenv -e ../../.env.local -- next build",
+    "dev": "siq-sync-assets public && node scripts/sync-desktop-release.mjs && dotenv -e ../../.env.local -- next dev --turbopack -p 3100",
+    "build": "siq-sync-assets public && node scripts/sync-desktop-release.mjs && dotenv -e ../../.env.local -- next build",
     "start": "dotenv -e ../../.env.local -- next start -p 3100",
     "typecheck": "tsc --noEmit",
     "db:push": "dotenv -e ../../.env.local -- drizzle-kit push",

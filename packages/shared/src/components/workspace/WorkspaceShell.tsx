@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   FolderPlus,
   Gamepad2,
   Hash,
@@ -139,6 +140,7 @@ import type {
 interface WorkspaceShellProps {
   onSignedOut?: () => Promise<void>;
   desktopChrome?: { controls: ReactNode; settings: ReactNode };
+  desktopDownloadHref?: string;
   initialUser: PrivateUser;
   initialServers: ServerDetail[];
   initialFriends: FriendItem[];
@@ -216,6 +218,7 @@ function WorkspaceInner({
   initialCapabilities,
   onSignedOut,
   desktopChrome,
+  desktopDownloadHref,
   onPresenceRef,
   onNotifyRef,
 }: WorkspaceShellProps & {
@@ -2449,6 +2452,21 @@ function WorkspaceInner({
     }
   }, [voicePanelAvailable]);
 
+  function renderDesktopDownload() {
+    return desktopDownloadHref && (
+      <a
+        href={desktopDownloadHref}
+        download
+        aria-label="Download SIQ for Windows"
+        title="Download SIQ for Windows"
+        className="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/10 text-xs font-medium text-emerald-300 transition-colors hover:border-emerald-500/50 hover:bg-emerald-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 xl:pr-2.5 xl:pl-2"
+      >
+        <Download aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="hidden whitespace-nowrap xl:inline">Download app</span>
+      </a>
+    );
+  }
+
   function renderHeaderSmartSearch() {
     return (
       <div className="siq-header-slot">
@@ -3544,6 +3562,7 @@ function WorkspaceInner({
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
+                {renderDesktopDownload()}
                 {renderHeaderSmartSearch()}
                 {renderNotificationBell()}
               </div>
@@ -3636,6 +3655,7 @@ function WorkspaceInner({
                   <PanelRight className="h-4 w-4" />
                 </button>
 
+                {renderDesktopDownload()}
                 {renderHeaderSmartSearch()}
 
                 {renderNotificationBell()}
@@ -3705,6 +3725,7 @@ function WorkspaceInner({
                   />
                 )}
 
+                {renderDesktopDownload()}
                 {renderHeaderSmartSearch()}
 
                 {showMembersRail && (

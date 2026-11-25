@@ -23,6 +23,7 @@ export default async function HomePage() {
 
   return (
     <WorkspaceShell
+      desktopDownloadHref="/downloads/SIQ-Windows-Portable.exe"
       initialUser={user}
       initialServers={servers}
       initialFriends={friends}

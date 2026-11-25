@@ -23,6 +23,7 @@ next-env.d.ts
 public/uploads/
 /apps/web/public/audio-worklets/
 /apps/web/public/sounds/
+/apps/web/public/downloads/SIQ-Windows-Portable.exe
 .vercel/
 
 # Logs
