@@ -1,0 +1,3 @@
+html[data-desktop="tauri"] {
+  --siq-titlebar-height: 30px;
+}

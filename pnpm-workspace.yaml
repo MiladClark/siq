@@ -1,2 +1,7 @@
+packages:
+  - apps/web
+  - apps/desktop
+  - packages/shared
+
 allowBuilds:
   esbuild: true

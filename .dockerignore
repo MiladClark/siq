@@ -1,0 +1,13 @@
+.git
+**/.next
+**/out
+**/.vercel
+build
+**/node_modules
+**/.env
+**/.env.*
+**/.local-uploads
+**/src-tauri
+apps/desktop
+apps/web/public/audio-worklets
+apps/web/public/sounds

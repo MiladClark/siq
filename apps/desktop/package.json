@@ -1,0 +1,28 @@
+{
+  "name": "@siq/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "ui": "next build && siq-sync-assets out",
+    "dev": "node scripts/tauri-runner.mjs dev --no-dev-server",
+    "build": "node scripts/tauri-runner.mjs build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@siq/shared": "workspace:*",
+    "@tauri-apps/api": "^2.12.5",
+    "lucide-react": "^1.77.0",
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.8",
+    "@tauri-apps/cli": "^2.12.6",
+    "@types/node": "^22.15.29",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5.8.3"
+  }
+}
