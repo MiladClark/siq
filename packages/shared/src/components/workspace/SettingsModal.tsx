@@ -8,21 +8,25 @@ import {
   Headphones,
   ImagePlus,
   KeyRound,
+  Keyboard,
   Lock,
   LogOut,
   Mail,
   Mic,
   Monitor,
   Palette,
+  Radio,
   RotateCcw,
   Shield,
   ShieldCheck,
+  Sliders,
   Sparkles,
   Trash2,
   UserCircle,
   Volume2,
   VolumeX,
   X,
+  Zap,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
@@ -42,7 +46,13 @@ import {
   clearLocalWorkspaceData,
   type MessageDensity,
   type TextScale,
+  type VoiceQualityProfile,
 } from "@siq/shared/lib/preferences";
+import {
+  SIQ_DSP_PRESETS,
+  type SiqHighPassHz,
+  type SiqVoiceTone,
+} from "@siq/shared/lib/siq-audio-worklet";
 import { getSoundPrefs, playSound, setSoundPrefs } from "@siq/shared/lib/sounds";
 import { AVATAR_PALETTE, type PrivateUser } from "@siq/shared/lib/types";
 
@@ -74,27 +84,33 @@ const NOISE_MODES: Array<{
   desc: string;
 }> = [
   {
+    id: "siq",
+    title: "SIQ Cancellation",
+    badge: "Zero-Delay · Custom",
+    desc: "Our in-house 3-band studio DSP engine (~2.7 ms latency, <0.5% CPU). 100% local with custom Voice Gate, Rumble Filter, Tone EQ & Limiter.",
+  },
+  {
     id: "krisp",
     title: "Krisp AI",
     badge: "Best · Cloud",
-    desc: "Discord-grade neural voice isolation via LiveKit Cloud. Auto-falls back to RNNoise on local servers.",
+    desc: "Discord-grade neural voice isolation via LiveKit Cloud. Auto-falls back to SIQ Cancellation if offline or blocked.",
   },
   {
     id: "gtcrn",
     title: "GTCRN AI",
-    badge: "Open-Source",
+    badge: "Neural · Local",
     desc: "Modern neural WASM model. Strong mechanical keyboard & ambient suppression everywhere, 100% free.",
   },
   {
     id: "rnnoise",
     title: "RNNoise AI",
-    badge: "Ultra-Light",
-    desc: "Featherweight WASM filter (~1% CPU). Great for fan hum and low-power laptops.",
+    badge: "Light · Neural",
+    desc: "Featherweight WASM neural filter (~1% CPU). Great for fan hum and low-power laptops.",
   },
   {
     id: "standard",
     title: "Standard",
-    badge: "Browser",
+    badge: "WebRTC",
     desc: "Built-in WebRTC noise suppression.",
   },
   {
@@ -104,6 +120,71 @@ const NOISE_MODES: Array<{
     desc: "Unprocessed microphone audio (for studio mics or music).",
   },
 ];
+
+const VOICE_QUALITY_PROFILES: Array<{
+  id: VoiceQualityProfile;
+  title: string;
+  bitrate: string;
+  desc: string;
+}> = [
+  {
+    id: "low-bandwidth",
+    title: "Low-Ping",
+    bitrate: "32 kbps",
+    desc: "Minimal jitter for constrained or high-ping routes",
+  },
+  {
+    id: "balanced",
+    title: "Studio Voice",
+    bitrate: "64 kbps",
+    desc: "Recommended clarity + packet-loss recovery",
+  },
+  {
+    id: "studio",
+    title: "High-Fidelity",
+    bitrate: "96 kbps",
+    desc: "Full-band studio voice & music (DTX off)",
+  },
+];
+
+const SIQ_TONE_OPTIONS: Array<{ id: SiqVoiceTone; label: string }> = [
+  { id: "natural", label: "Natural" },
+  { id: "clarity", label: "Studio Clarity" },
+  { id: "warm", label: "Broadcast Warm" },
+  { id: "crisp", label: "Crisp Comms" },
+];
+
+const SIQ_HPF_OPTIONS: Array<{ hz: SiqHighPassHz; label: string }> = [
+  { hz: 0, label: "Off" },
+  { hz: 80, label: "80 Hz" },
+  { hz: 120, label: "120 Hz" },
+];
+
+function formatGainDb(pct: number): string {
+  if (pct <= 0) return "-∞ dB";
+  const db = 20 * Math.log10(pct / 100);
+  const rounded = Math.round(db * 10) / 10;
+  return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)} dB`;
+}
+
+function formatKeybindCode(code: string): string {
+  if (!code) return "Unbound";
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  const map: Record<string, string> = {
+    AltLeft: "Left Alt",
+    AltRight: "Right Alt",
+    ControlLeft: "Left Ctrl",
+    ControlRight: "Right Ctrl",
+    ShiftLeft: "Left Shift",
+    ShiftRight: "Right Shift",
+    Backquote: "` (Tilde)",
+    CapsLock: "Caps Lock",
+    Space: "Space",
+    Tab: "Tab",
+  };
+  return map[code] ?? code;
+}
 
 export function SettingsModal({
   open,
@@ -173,6 +254,30 @@ export function SettingsModal({
   // Sound prefs
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [soundVolume, setSoundVolume] = useState(0.45);
+  const [recordingPtt, setRecordingPtt] = useState(false);
+
+  useEffect(() => {
+    if (!recordingPtt) {
+      delete document.body.dataset.siqRecordingPtt;
+      return;
+    }
+    document.body.dataset.siqRecordingPtt = "true";
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.code === "Escape") {
+        setRecordingPtt(false);
+        return;
+      }
+      void voice.updateVoiceAudio({ pttKey: e.code });
+      setRecordingPtt(false);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      delete document.body.dataset.siqRecordingPtt;
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [recordingPtt, voice]);
 
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const bannerInputRef = useRef<HTMLInputElement | null>(null);
@@ -182,6 +287,7 @@ export function SettingsModal({
     if (!open) {
       accountDraftRef.current = null;
       setCropRequest(null);
+      setRecordingPtt(false);
       return;
     }
     if (
@@ -836,8 +942,8 @@ export function SettingsModal({
                     {/* VOICE & VIDEO TAB */}
                     {tab === "voice" && (
                       <>
-                        {/* Devices */}
-                        <div className="space-y-3">
+                        {/* Devices & Master Volumes */}
+                        <div className="space-y-3.5">
                           <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
                             Audio &amp; Camera Devices
                           </h3>
@@ -884,6 +990,89 @@ export function SettingsModal({
                             </div>
                           </div>
 
+                          {/* Input Gain & Master Output Volume */}
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <label htmlFor="s-input-gain" className="text-xs font-medium text-zinc-200">
+                                  Input Volume (Mic Gain)
+                                </label>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                    {voice.voiceAudio.inputGainPct}% · {formatGainDb(voice.voiceAudio.inputGainPct)}
+                                  </span>
+                                  {voice.voiceAudio.inputGainPct !== 100 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void voice.updateVoiceAudio({ inputGainPct: 100 })}
+                                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
+                                      title="Reset to 100% (0 dB)"
+                                    >
+                                      0 dB
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <input
+                                id="s-input-gain"
+                                type="range"
+                                min={0}
+                                max={250}
+                                step={5}
+                                value={voice.voiceAudio.inputGainPct}
+                                onChange={(e) =>
+                                  void voice.updateVoiceAudio({ inputGainPct: Number(e.target.value) })
+                                }
+                                className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                              />
+                              <div className="flex justify-between text-[10px] tabular-nums text-zinc-500">
+                                <span>0%</span>
+                                <span>100% (0 dB)</span>
+                                <span>250% (+8 dB)</span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <label htmlFor="s-output-vol" className="text-xs font-medium text-zinc-200">
+                                  Output Volume (Master)
+                                </label>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                    {voice.voiceAudio.outputVolumePct}%
+                                  </span>
+                                  {voice.voiceAudio.outputVolumePct !== 100 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void voice.updateVoiceAudio({ outputVolumePct: 100 })}
+                                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
+                                      title="Reset to 100%"
+                                    >
+                                      100%
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              <input
+                                id="s-output-vol"
+                                type="range"
+                                min={0}
+                                max={200}
+                                step={5}
+                                value={voice.voiceAudio.outputVolumePct}
+                                onChange={(e) =>
+                                  void voice.updateVoiceAudio({ outputVolumePct: Number(e.target.value) })
+                                }
+                                className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                              />
+                              <div className="flex justify-between text-[10px] tabular-nums text-zinc-500">
+                                <span>Mute</span>
+                                <span>100%</span>
+                                <span>200% Boost</span>
+                              </div>
+                            </div>
+                          </div>
+
                           <div className="space-y-1.5">
                             <label htmlFor="s-cam" className="block text-xs text-zinc-300">
                               Camera
@@ -904,26 +1093,30 @@ export function SettingsModal({
                             />
                           </div>
 
-                          {/* Live Mic Test */}
+                          {/* Live Studio Mic Test + Sidetone */}
                           <LiveMicWaveform
                             deviceId={voice.selectedAudioInput}
+                            outputDeviceId={voice.selectedAudioOutput}
                             echoCancellation={voice.echoCancellation}
                             autoGainControl={voice.autoGainControl}
                             noiseMode={voice.noiseMode}
+                            inputGainPct={voice.voiceAudio.inputGainPct}
+                            siqDsp={voice.voiceAudio.siqDsp}
                           />
                         </div>
 
-                        {/* AI Noise Cancellation Selector */}
+                        {/* Noise Cancellation Selector */}
                         <div className="space-y-3 border-t border-white/[0.07] pt-5">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <Sparkles className="h-4 w-4 text-emerald-400" />
                               <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                                AI Noise Cancellation
+                                Noise Cancellation Engine
                               </h3>
                             </div>
-                            <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-300">
+                            <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide tabular-nums text-emerald-300">
                               Active: {voice.activeNoiseEngine.toUpperCase()}
+                              {voice.activeNoiseEngine === "siq" ? " · ~2.7ms" : ""}
                             </span>
                           </div>
 
@@ -942,11 +1135,17 @@ export function SettingsModal({
                                   }`}
                                 >
                                   <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                       <span className="text-xs font-semibold text-zinc-100">
                                         {m.title}
                                       </span>
-                                      <span className="rounded bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                                      <span
+                                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                          m.id === "siq"
+                                            ? "bg-emerald-500/20 text-emerald-300"
+                                            : "bg-white/[0.07] text-zinc-400"
+                                        }`}
+                                      >
                                         {m.badge}
                                       </span>
                                     </div>
@@ -967,60 +1166,477 @@ export function SettingsModal({
                               );
                             })}
                           </div>
+
+                          {/* SIQ Cancellation Studio Console */}
+                          {(voice.noiseMode === "siq" || voice.activeNoiseEngine === "siq") && (
+                            <div className="space-y-3.5 rounded-xl border border-emerald-500/25 bg-[#0C0D11] p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Sliders className="h-3.5 w-3.5 text-emerald-400" />
+                                  <span className="text-xs font-semibold text-zinc-100">
+                                    SIQ Studio DSP Tuning
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-medium text-emerald-300/80">
+                                  Live hot-update · 0 extra latency
+                                </span>
+                              </div>
+
+                              {/* 4 Quick Presets */}
+                              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                                {SIQ_DSP_PRESETS.map((preset) => {
+                                  const isMatch =
+                                    voice.voiceAudio.siqDsp.suppressionStrength ===
+                                      preset.patch.suppressionStrength &&
+                                    voice.voiceAudio.siqDsp.voiceTone === preset.patch.voiceTone &&
+                                    voice.voiceAudio.siqDsp.highPassHz === preset.patch.highPassHz;
+                                  return (
+                                    <button
+                                      key={preset.id}
+                                      type="button"
+                                      onClick={() => voice.applySiqPreset(preset.id)}
+                                      className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                                        isMatch
+                                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                                          : "border-white/[0.07] bg-[#121318] text-zinc-300 hover:border-white/[0.15]"
+                                      }`}
+                                    >
+                                      <p className="text-[11px] font-semibold">{preset.label}</p>
+                                      <p className="mt-0.5 text-[10px] text-zinc-500">{preset.desc}</p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Suppression Strength */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <label htmlFor="s-siq-sup" className="text-zinc-300">
+                                    Noise Suppression Strength
+                                  </label>
+                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                    {voice.voiceAudio.siqDsp.suppressionStrength}%
+                                  </span>
+                                </div>
+                                <input
+                                  id="s-siq-sup"
+                                  type="range"
+                                  min={0}
+                                  max={100}
+                                  step={2}
+                                  value={voice.voiceAudio.siqDsp.suppressionStrength}
+                                  onChange={(e) =>
+                                    voice.updateSiqDsp({
+                                      suppressionStrength: Number(e.target.value),
+                                    })
+                                  }
+                                  className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                />
+                              </div>
+
+                              {/* Voice Gate Auto / Manual + Threshold */}
+                              <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#101116] p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-xs font-medium text-zinc-200">
+                                      Smart Voice Gate
+                                    </p>
+                                    <p className="text-[10px] text-zinc-500">
+                                      Silences background room noise between words without clipping speech.
+                                    </p>
+                                  </div>
+                                  <div className="inline-flex rounded-lg border border-white/[0.08] bg-[#0A0B0E] p-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => voice.updateSiqDsp({ autoGate: true })}
+                                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                        voice.voiceAudio.siqDsp.autoGate
+                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          : "text-zinc-400 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      Auto
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => voice.updateSiqDsp({ autoGate: false })}
+                                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                        !voice.voiceAudio.siqDsp.autoGate
+                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          : "text-zinc-400 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      Manual
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {!voice.voiceAudio.siqDsp.autoGate && (
+                                  <div className="space-y-1 pt-1">
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <label htmlFor="s-gate-db" className="text-zinc-400">
+                                        Gate Open Threshold
+                                      </label>
+                                      <span className="font-mono tabular-nums text-amber-300">
+                                        {voice.voiceAudio.siqDsp.gateThresholdDb} dB
+                                      </span>
+                                    </div>
+                                    <input
+                                      id="s-gate-db"
+                                      type="range"
+                                      min={-65}
+                                      max={-15}
+                                      step={1}
+                                      value={voice.voiceAudio.siqDsp.gateThresholdDb}
+                                      onChange={(e) =>
+                                        voice.updateSiqDsp({
+                                          gateThresholdDb: Number(e.target.value),
+                                        })
+                                      }
+                                      className="h-1.5 w-full cursor-pointer accent-amber-400"
+                                    />
+                                    <div className="flex justify-between text-[10px] tabular-nums text-zinc-500">
+                                      <span>-65 dB (Sensitive)</span>
+                                      <span>-40 dB</span>
+                                      <span>-15 dB (Strict)</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* High-Pass Rumble Filter + Voice Tone EQ */}
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                  <p className="text-[11px] font-medium text-zinc-300">
+                                    High-Pass Rumble Filter
+                                  </p>
+                                  <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.07] bg-[#0A0B0E] p-1">
+                                    {SIQ_HPF_OPTIONS.map((opt) => (
+                                      <button
+                                        key={opt.hz}
+                                        type="button"
+                                        onClick={() => voice.updateSiqDsp({ highPassHz: opt.hz })}
+                                        className={`rounded-md py-1.5 text-[11px] font-medium tabular-nums transition-colors ${
+                                          voice.voiceAudio.siqDsp.highPassHz === opt.hz
+                                            ? "bg-emerald-500/20 text-emerald-300"
+                                            : "text-zinc-400 hover:text-zinc-200"
+                                        }`}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <p className="text-[11px] font-medium text-zinc-300">
+                                    Broadcast Compressor &amp; Limiter
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      voice.updateSiqDsp({
+                                        compressor: !voice.voiceAudio.siqDsp.compressor,
+                                      })
+                                    }
+                                    className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                      voice.voiceAudio.siqDsp.compressor
+                                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                                        : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
+                                    }`}
+                                  >
+                                    <span>Evening &amp; Anti-Clip</span>
+                                    <span className="text-[11px] font-semibold">
+                                      {voice.voiceAudio.siqDsp.compressor ? "On" : "Off"}
+                                    </span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <p className="text-[11px] font-medium text-zinc-300">
+                                  Voice Tone EQ
+                                </p>
+                                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                                  {SIQ_TONE_OPTIONS.map((tone) => (
+                                    <button
+                                      key={tone.id}
+                                      type="button"
+                                      onClick={() => voice.updateSiqDsp({ voiceTone: tone.id })}
+                                      className={`rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                                        voice.voiceAudio.siqDsp.voiceTone === tone.id
+                                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                                          : "border-white/[0.07] bg-[#121318] text-zinc-400 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      {tone.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
 
-                        {/* Voice Processing Toggles (AEC + AGC) */}
-                        <div className="space-y-2.5 border-t border-white/[0.07] pt-5">
-                          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                            Voice Processing
-                          </h3>
-
-                          <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] px-4 py-3">
-                            <div>
-                              <p className="text-xs font-medium text-zinc-100">
-                                Echo Cancellation (AEC3)
-                              </p>
-                              <p className="text-[11px] text-zinc-500">
-                                Prevents speaker or headset bleed from echoing back to friends.
-                              </p>
+                        {/* Input Mode: Voice Activity vs Push-to-Talk */}
+                        <div className="space-y-3 border-t border-white/[0.07] pt-5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Keyboard className="h-4 w-4 text-emerald-400" />
+                              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                                Input Mode
+                              </h3>
                             </div>
+                            {voice.voiceAudio.inputMode === "push-to-talk" && (
+                              <span
+                                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                                  voice.isPttActive
+                                    ? "bg-emerald-500/25 text-emerald-300"
+                                    : "bg-white/[0.06] text-zinc-400"
+                                }`}
+                              >
+                                {voice.isPttActive ? "TRANSMITTING" : "PTT STANDBY"}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
                             <button
                               type="button"
                               onClick={() =>
-                                void voice.setEchoCancellation(!voice.echoCancellation)
+                                void voice.updateVoiceAudio({ inputMode: "voice-activity" })
                               }
-                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                voice.echoCancellation
-                                  ? "bg-emerald-500/20 text-emerald-300"
-                                  : "bg-white/[0.06] text-zinc-400"
+                              className={`rounded-xl border p-3 text-left transition-all ${
+                                voice.voiceAudio.inputMode === "voice-activity"
+                                  ? "border-emerald-500/50 bg-emerald-500/10"
+                                  : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
                               }`}
                             >
-                              {voice.echoCancellation ? "On" : "Off"}
+                              <p className="text-xs font-semibold text-zinc-100">Voice Activity</p>
+                              <p className="mt-0.5 text-[11px] text-zinc-400">
+                                Open mic with smart noise gate
+                              </p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void voice.updateVoiceAudio({ inputMode: "push-to-talk" })
+                              }
+                              className={`rounded-xl border p-3 text-left transition-all ${
+                                voice.voiceAudio.inputMode === "push-to-talk"
+                                  ? "border-emerald-500/50 bg-emerald-500/10"
+                                  : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                              }`}
+                            >
+                              <p className="text-xs font-semibold text-zinc-100">Push-to-Talk</p>
+                              <p className="mt-0.5 text-[11px] text-zinc-400">
+                                Zero-delay instant transmit key
+                              </p>
                             </button>
                           </div>
 
-                          <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] px-4 py-3">
-                            <div>
-                              <p className="text-xs font-medium text-zinc-100">
-                                Automatic Gain Control (AGC)
-                              </p>
-                              <p className="text-[11px] text-zinc-500">
-                                Keeps your microphone loudness consistent automatically.
-                              </p>
+                          {voice.voiceAudio.inputMode === "push-to-talk" && (
+                            <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3.5 sm:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <p className="text-[11px] font-medium text-zinc-300">
+                                  Push-to-Talk Shortcut
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setRecordingPtt((prev) => !prev)}
+                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                                    recordingPtt
+                                      ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
+                                      : "border-white/[0.1] bg-[#16171D] text-zinc-100 hover:border-white/[0.2]"
+                                  }`}
+                                >
+                                  <span>
+                                    {recordingPtt
+                                      ? "Press any key… (Esc cancels)"
+                                      : formatKeybindCode(voice.voiceAudio.pttKey)}
+                                  </span>
+                                  <span className="text-[10px] font-normal text-zinc-400">
+                                    {recordingPtt ? "Listening" : "Edit"}
+                                  </span>
+                                </button>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <label htmlFor="s-ptt-delay" className="text-zinc-300">
+                                    Release Delay
+                                  </label>
+                                  <span className="font-mono tabular-nums text-emerald-300">
+                                    {voice.voiceAudio.pttReleaseDelayMs} ms
+                                  </span>
+                                </div>
+                                <input
+                                  id="s-ptt-delay"
+                                  type="range"
+                                  min={0}
+                                  max={600}
+                                  step={20}
+                                  value={voice.voiceAudio.pttReleaseDelayMs}
+                                  onChange={(e) =>
+                                    void voice.updateVoiceAudio({
+                                      pttReleaseDelayMs: Number(e.target.value),
+                                    })
+                                  }
+                                  className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                />
+                                <p className="text-[10px] text-zinc-500">
+                                  Keeps mic open briefly after release so word endings never cut off.
+                                </p>
+                              </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void voice.setAutoGainControl(!voice.autoGainControl)
-                              }
-                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                voice.autoGainControl
-                                  ? "bg-emerald-500/20 text-emerald-300"
-                                  : "bg-white/[0.06] text-zinc-400"
-                              }`}
-                            >
-                              {voice.autoGainControl ? "On" : "Off"}
-                            </button>
+                          )}
+                        </div>
+
+                        {/* Voice Quality & Network Resilience */}
+                        <div className="space-y-3 border-t border-white/[0.07] pt-5">
+                          <div className="flex items-center gap-2">
+                            <Radio className="h-4 w-4 text-emerald-400" />
+                            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                              Voice Quality &amp; Network Resilience
+                            </h3>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            {VOICE_QUALITY_PROFILES.map((profile) => {
+                              const selected = voice.voiceAudio.voiceQuality === profile.id;
+                              return (
+                                <button
+                                  key={profile.id}
+                                  type="button"
+                                  onClick={() =>
+                                    void voice.updateVoiceAudio({ voiceQuality: profile.id })
+                                  }
+                                  className={`rounded-xl border p-3 text-left transition-all ${
+                                    selected
+                                      ? "border-emerald-500/50 bg-emerald-500/10"
+                                      : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-xs font-semibold text-zinc-100">
+                                      {profile.title}
+                                    </span>
+                                    <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-300">
+                                      {profile.bitrate}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+                                    {profile.desc}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* 2x2 Voice Processing Toggles */}
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-zinc-100">
+                                  Echo Cancellation (AEC3)
+                                </p>
+                                <p className="text-[11px] text-zinc-500">
+                                  Blocks speaker bleed from echoing back.
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void voice.setEchoCancellation(!voice.echoCancellation)
+                                }
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  voice.echoCancellation
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : "bg-white/[0.06] text-zinc-400"
+                                }`}
+                              >
+                                {voice.echoCancellation ? "On" : "Off"}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-zinc-100">
+                                  Auto Gain Control (AGC)
+                                </p>
+                                <p className="text-[11px] text-zinc-500">
+                                  OS-level mic leveling (disable for manual gain).
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void voice.setAutoGainControl(!voice.autoGainControl)
+                                }
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  voice.autoGainControl
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : "bg-white/[0.06] text-zinc-400"
+                                }`}
+                              >
+                                {voice.autoGainControl ? "On" : "Off"}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <Zap className="h-3 w-3 text-emerald-400" />
+                                  <p className="text-xs font-medium text-zinc-100">
+                                    Packet-Loss Recovery (RED)
+                                  </p>
+                                </div>
+                                <p className="text-[11px] text-zinc-500">
+                                  Prevents choppy audio on high-ping / lossy routes.
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void voice.updateVoiceAudio({
+                                    packetLossRecovery: !voice.voiceAudio.packetLossRecovery,
+                                  })
+                                }
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  voice.voiceAudio.packetLossRecovery
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : "bg-white/[0.06] text-zinc-400"
+                                }`}
+                              >
+                                {voice.voiceAudio.packetLossRecovery ? "On" : "Off"}
+                              </button>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-zinc-100">
+                                  Silence Saver (DTX)
+                                </p>
+                                <p className="text-[11px] text-zinc-500">
+                                  Saves upload bandwidth when you aren&apos;t speaking.
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void voice.updateVoiceAudio({
+                                    dtxEnabled: !voice.voiceAudio.dtxEnabled,
+                                  })
+                                }
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  voice.voiceAudio.dtxEnabled
+                                    ? "bg-emerald-500/20 text-emerald-300"
+                                    : "bg-white/[0.06] text-zinc-400"
+                                }`}
+                              >
+                                {voice.voiceAudio.dtxEnabled ? "On" : "Off"}
+                              </button>
+                            </div>
                           </div>
                         </div>
 

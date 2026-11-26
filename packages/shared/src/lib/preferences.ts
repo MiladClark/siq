@@ -1,6 +1,43 @@
 "use client";
 
 import type { NoiseCancellationMode } from "@siq/shared/lib/noise-processor";
+import { DEFAULT_SIQ_DSP_CONFIG, type SiqDspConfig } from "@siq/shared/lib/siq-audio-worklet";
+
+export type VoiceInputMode = "voice-activity" | "push-to-talk";
+export type VoiceQualityProfile = "low-bandwidth" | "balanced" | "studio";
+
+export interface VoiceAudioSettings {
+  /** Master microphone gain percentage (0 – 250, 100 = unity 0 dB) */
+  inputGainPct: number;
+  /** Master headset/speaker output percentage (0 – 200, 100 = unity) */
+  outputVolumePct: number;
+  /** Voice Activity (open mic) or Push-to-Talk */
+  inputMode: VoiceInputMode;
+  /** KeyboardEvent.code bound for Push-to-Talk (e.g. "KeyV", "AltRight") */
+  pttKey: string;
+  /** Push-to-Talk release hold delay in ms (0 – 600) */
+  pttReleaseDelayMs: number;
+  /** Bandwidth & quality preset (tailored for both Iran and global routes) */
+  voiceQuality: VoiceQualityProfile;
+  /** Opus RED redundant packet-loss recovery (great for high-ping/lossy routes) */
+  packetLossRecovery: boolean;
+  /** Discontinuous Transmission — saves uplink bandwidth during silence */
+  dtxEnabled: boolean;
+  /** Custom SIQ Cancellation Studio DSP configuration */
+  siqDsp: SiqDspConfig;
+}
+
+export const DEFAULT_VOICE_AUDIO_SETTINGS: VoiceAudioSettings = {
+  inputGainPct: 100,
+  outputVolumePct: 100,
+  inputMode: "voice-activity",
+  pttKey: "KeyV",
+  pttReleaseDelayMs: 160,
+  voiceQuality: "balanced",
+  packetLossRecovery: true,
+  dtxEnabled: true,
+  siqDsp: DEFAULT_SIQ_DSP_CONFIG,
+};
 
 export type ScreenResolutionOption = "720p" | "1080p" | "1440p" | "source";
 export type ScreenFpsOption = 15 | 30 | 60;
@@ -154,6 +191,7 @@ export interface AppPreferences {
   noiseMode: NoiseCancellationMode;
   echoCancellation: boolean;
   autoGainControl: boolean;
+  voiceAudio: VoiceAudioSettings;
   toastsEnabled: boolean;
   toastStyle: ToastStyle;
   messageDensity: MessageDensity;
@@ -177,9 +215,10 @@ export const DEFAULT_SCREEN_SHARE_CONFIG: ScreenShareConfig = {
 export const DEFAULT_APP_THEME: AppThemeId = "violet";
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
-  noiseMode: "krisp",
+  noiseMode: "siq",
   echoCancellation: true,
   autoGainControl: true,
+  voiceAudio: DEFAULT_VOICE_AUDIO_SETTINGS,
   toastsEnabled: true,
   toastStyle: "liquid",
   messageDensity: "comfortable",
@@ -252,6 +291,14 @@ export function loadAppPreferences(): AppPreferences {
     return {
       ...DEFAULT_APP_PREFERENCES,
       ...parsed,
+      voiceAudio: {
+        ...DEFAULT_VOICE_AUDIO_SETTINGS,
+        ...(parsed.voiceAudio ?? {}),
+        siqDsp: {
+          ...DEFAULT_SIQ_DSP_CONFIG,
+          ...(parsed.voiceAudio?.siqDsp ?? {}),
+        },
+      },
       screenShareConfig: {
         ...DEFAULT_SCREEN_SHARE_CONFIG,
         ...(parsed.screenShareConfig ?? {}),

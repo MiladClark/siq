@@ -112,7 +112,7 @@ export function RemoteAudioPlayer({
 
   // Smoothly update volume / deafen state without tearing down the audio graph
   useEffect(() => {
-    const targetGain = deafened ? 0 : Math.max(0, Math.min(2, volume));
+    const targetGain = deafened ? 0 : Math.max(0, Math.min(3, volume));
     if (gainRef.current && ctxRef.current) {
       gainRef.current.gain.setTargetAtTime(targetGain, ctxRef.current.currentTime, 0.02);
       if (ctxRef.current.state === "suspended") {

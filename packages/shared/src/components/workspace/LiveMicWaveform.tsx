@@ -1,73 +1,174 @@
 "use client";
 
 import { Track } from "livekit-client";
-import { Mic } from "lucide-react";
+import { Headphones, Mic, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createNoiseProcessor, type NoiseCancellationMode } from "@siq/shared/lib/noise-processor";
+import {
+  createNoiseProcessor,
+  type LiveConfigurableAudioProcessor,
+  type NoiseCancellationMode,
+} from "@siq/shared/lib/noise-processor";
+import type { SiqAudioTelemetry, SiqDspConfig } from "@siq/shared/lib/siq-audio-worklet";
 
 interface MicOptions {
   deviceId: string;
+  outputDeviceId: string;
   echoCancellation: boolean;
   autoGainControl: boolean;
   noiseMode: NoiseCancellationMode;
+  inputGainPct: number;
+  siqDsp: SiqDspConfig;
+}
+
+function dbToPercent(db: number): number {
+  const clamped = Math.max(-70, Math.min(0, db));
+  return ((clamped + 70) / 70) * 100;
 }
 
 export function LiveMicWaveform(options: MicOptions) {
   const [running, setRunning] = useState(false);
+  const [hearMyself, setHearMyself] = useState(false);
 
   return (
-    <div className="space-y-2 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-zinc-200">Live Mic Waveform</p>
-        <button
-          type="button"
-          aria-pressed={running}
-          onClick={() => setRunning(!running)}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:text-white aria-pressed:border-rose-400/30 aria-pressed:bg-rose-500/15 aria-pressed:text-rose-300"
-        >
-          <Mic className="h-3.5 w-3.5" aria-hidden />
-          {running ? "Stop Test" : "Mic Test"}
-        </button>
+    <div className="space-y-2.5 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-semibold text-zinc-100">Studio Mic Monitor</p>
+          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-400">
+            {options.noiseMode.toUpperCase()}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            aria-pressed={hearMyself}
+            disabled={!running}
+            onClick={() => setHearMyself((prev) => !prev)}
+            title="Play processed microphone audio back to your headset"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-emerald-400/40 aria-pressed:bg-emerald-500/15 aria-pressed:text-emerald-300"
+          >
+            {hearMyself ? (
+              <Volume2 className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Headphones className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {hearMyself ? "Sidetone On" : "Hear Myself"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={running}
+            onClick={() => {
+              if (running) setHearMyself(false);
+              setRunning((prev) => !prev);
+            }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:text-white aria-pressed:border-rose-400/30 aria-pressed:bg-rose-500/15 aria-pressed:text-rose-300"
+          >
+            <Mic className="h-3.5 w-3.5" aria-hidden />
+            {running ? "Stop Test" : "Mic Test"}
+          </button>
+        </div>
       </div>
+
       {running ? (
         <MicPreview
           key={[
             options.deviceId,
+            options.outputDeviceId,
             options.noiseMode,
             options.echoCancellation,
             options.autoGainControl,
           ].join(":")}
           {...options}
+          hearMyself={hearMyself}
         />
       ) : (
-        <div aria-hidden className="grid h-12 items-center rounded-md bg-[#090A0C] px-2">
-          <span className="h-px bg-white/10" />
+        <div aria-hidden className="space-y-2">
+          <div className="grid h-12 items-center rounded-lg border border-white/[0.05] bg-[#090A0C] px-2">
+            <span className="h-px bg-white/10" />
+          </div>
+          <p className="text-[11px] text-zinc-500">
+            Click Mic Test to inspect live input dB, noise gate threshold, and hear your active filter.
+          </p>
         </div>
       )}
     </div>
   );
 }
 
-function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: MicOptions) {
+function MicPreview({
+  deviceId,
+  outputDeviceId,
+  echoCancellation,
+  autoGainControl,
+  noiseMode,
+  inputGainPct,
+  siqDsp,
+  hearMyself,
+}: MicOptions & { hearMyself: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const processorRef = useRef<LiveConfigurableAudioProcessor | null>(null);
+  const monitorGainRef = useRef<GainNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const latestGainRef = useRef(inputGainPct);
+  const latestSiqRef = useRef<SiqDspConfig>({ ...siqDsp, inputGainPct });
+  latestGainRef.current = inputGainPct;
+  latestSiqRef.current = { ...siqDsp, inputGainPct };
+
   const [status, setStatus] = useState("Starting microphone…");
   const [error, setError] = useState(false);
+  const [telemetry, setTelemetry] = useState<SiqAudioTelemetry | null>(null);
+  const [fallbackDb, setFallbackDb] = useState<number>(-70);
+
+  // Hot-update DSP config & gain without restarting the microphone stream
+  useEffect(() => {
+    const proc = processorRef.current;
+    if (!proc) return;
+    if (proc.updateSiqConfig) {
+      proc.updateSiqConfig({ ...siqDsp, inputGainPct });
+    } else if (proc.setInputGainPct) {
+      proc.setInputGainPct(inputGainPct);
+    }
+  }, [siqDsp, inputGainPct]);
+
+  // Smoothly toggle sidetone monitoring without glitches
+  useEffect(() => {
+    const gain = monitorGainRef.current;
+    const ctx = audioContextRef.current;
+    if (!gain || !ctx) return;
+    gain.gain.setTargetAtTime(hearMyself ? 0.92 : 0, ctx.currentTime, 0.02);
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
+  }, [hearMyself]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const drawing = canvas?.getContext("2d");
     if (!canvas || !drawing) return;
+
     let active = true;
     let stream: MediaStream | undefined;
     let audioContext: AudioContext | undefined;
-    let processor: Awaited<ReturnType<typeof createNoiseProcessor>>["processor"] = null;
+    let processor: LiveConfigurableAudioProcessor | null = null;
+    let monitorAudioEl: HTMLAudioElement | null = null;
     let frame = 0;
 
     function releaseAudio() {
       cancelAnimationFrame(frame);
+      processorRef.current = null;
+      monitorGainRef.current = null;
+      audioContextRef.current = null;
+      if (monitorAudioEl) {
+        monitorAudioEl.pause();
+        monitorAudioEl.srcObject = null;
+        monitorAudioEl = null;
+      }
       stream?.getTracks().forEach((track) => track.stop());
       processor?.processedTrack?.stop();
-      if (processor) void processor.destroy().catch(() => {});
+      if (processor) {
+        processor.setTelemetryListener?.(null);
+        void processor.destroy().catch(() => {});
+      }
       if (audioContext && audioContext.state !== "closed") {
         void audioContext.close().catch(() => {});
       }
@@ -92,15 +193,25 @@ function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: 
           return;
         }
         stream = capture;
-        const context = new AudioContext({ sampleRate: 48000 });
+        const context = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
         audioContext = context;
-        // Krisp requires a LiveKit Cloud room. The local preview uses the same RNNoise fallback as local calls.
-        const result = await createNoiseProcessor(noiseMode, false);
+        audioContextRef.current = context;
+
+        // Krisp requires a LiveKit Cloud room token, so preview runs SIQ Cancellation cleanly locally
+        const result = await createNoiseProcessor(noiseMode, {
+          isLiveKitCloud: false,
+          siqConfig: latestSiqRef.current,
+          inputGainPct: latestGainRef.current,
+        });
         if (!active) return;
+
         const track = capture.getAudioTracks()[0];
         let analysisStream = capture;
         if (result.processor) {
           const filter = result.processor;
+          filter.setTelemetryListener?.((t) => {
+            if (active) setTelemetry(t);
+          });
           try {
             await filter.init({ kind: Track.Kind.Audio, track, audioContext: context });
           } catch (err) {
@@ -113,6 +224,7 @@ function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: 
             return;
           }
           processor = filter;
+          processorRef.current = filter;
           if (filter.processedTrack) {
             analysisStream = new MediaStream([filter.processedTrack]);
           }
@@ -122,18 +234,51 @@ function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: 
         const analyser = context.createAnalyser();
         analyser.fftSize = 512;
         source.connect(analyser);
-        const silentOutput = context.createGain();
-        silentOutput.gain.value = 0;
-        analyser.connect(silentOutput).connect(context.destination);
+
+        const monitorGain = context.createGain();
+        monitorGain.gain.value = hearMyself ? 0.92 : 0;
+        monitorGainRef.current = monitorGain;
+
+        const supportsSinkId =
+          typeof HTMLMediaElement !== "undefined" &&
+          "setSinkId" in HTMLMediaElement.prototype;
+
+        if (outputDeviceId && supportsSinkId) {
+          const dest = context.createMediaStreamDestination();
+          analyser.connect(monitorGain);
+          monitorGain.connect(dest);
+          monitorAudioEl = document.createElement("audio");
+          monitorAudioEl.srcObject = dest.stream;
+          monitorAudioEl.autoplay = true;
+          const setSink = (monitorAudioEl as HTMLAudioElement & {
+            setSinkId?: (id: string) => Promise<void>;
+          }).setSinkId;
+          if (setSink) {
+            void setSink.call(monitorAudioEl, outputDeviceId).catch(() => {});
+          }
+          void monitorAudioEl.play().catch(() => {});
+        } else {
+          analyser.connect(monitorGain);
+          monitorGain.connect(context.destination);
+        }
+
         await context.resume();
         if (!active) return;
+
         const samples = new Float32Array(analyser.fftSize);
         const label =
           result.effectiveMode === "off"
-            ? "Noise cancellation off"
-            : `Active filter: ${result.effectiveMode.toUpperCase()}`;
-        setStatus(noiseMode === "krisp" ? "RNNoise preview (Krisp runs on Cloud)" : label);
+            ? "Raw microphone (no noise filter)"
+            : result.effectiveMode === "siq"
+              ? `SIQ Cancellation live (${Math.round(context.sampleRate / 1000)}kHz · ~2.7ms)`
+              : `Active filter: ${result.effectiveMode.toUpperCase()} (${Math.round(context.sampleRate / 1000)}kHz)`;
+        setStatus(
+          noiseMode === "krisp"
+            ? "SIQ preview (Krisp activates live on Cloud voice rooms)"
+            : label
+        );
 
+        let meterTick = 0;
         function draw() {
           if (!canvas || !drawing) return;
           const { clientWidth, clientHeight } = canvas;
@@ -143,25 +288,39 @@ function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: 
           if (canvas.width !== width) canvas.width = width;
           if (canvas.height !== height) canvas.height = height;
           analyser.getFloatTimeDomainData(samples);
+
+          // Update fallback RMS meter for non-SIQ engines every ~4 frames (~15 Hz)
+          meterTick++;
+          if (meterTick % 4 === 0) {
+            let sumSq = 0;
+            for (let i = 0; i < samples.length; i++) {
+              sumSq += samples[i] * samples[i];
+            }
+            const rms = Math.sqrt(sumSq / samples.length);
+            const db = Math.max(-70, Math.min(0, 20 * Math.log10(rms + 1e-9)));
+            setFallbackDb(db);
+          }
+
           drawing.clearRect(0, 0, width, height);
           drawing.strokeStyle = getComputedStyle(canvas).color;
           drawing.lineWidth = 1.5 * dpr;
           drawing.beginPath();
-          samples.forEach((sample, index) => {
+          for (let index = 0; index < samples.length; index++) {
             const x = (index / (samples.length - 1)) * width;
-            const y = height * (0.5 + 0.46 * Math.max(-1, Math.min(1, sample * 2)));
+            const y = height * (0.5 + 0.45 * Math.max(-1, Math.min(1, samples[index] * 2.2)));
             if (index === 0) drawing.moveTo(x, y);
             else drawing.lineTo(x, y);
-          });
+          }
           drawing.stroke();
           frame = requestAnimationFrame(draw);
         }
         draw();
-      } catch {
+      } catch (err) {
         releaseAudio();
         if (active) {
           setError(true);
-          setStatus("Could not start the microphone with these settings.");
+          const detail = err instanceof Error ? err.message : "Unknown audio error";
+          setStatus(`Could not start microphone filter: ${detail}`);
         }
       }
     }
@@ -171,18 +330,86 @@ function MicPreview({ deviceId, echoCancellation, autoGainControl, noiseMode }: 
       active = false;
       releaseAudio();
     };
-  }, [deviceId, echoCancellation, autoGainControl, noiseMode]);
+  }, [deviceId, outputDeviceId, echoCancellation, autoGainControl, noiseMode]);
+
+  const levelDb = telemetry ? telemetry.inputDb : fallbackDb;
+  const levelPct = dbToPercent(levelDb);
+  const floorPct = telemetry ? dbToPercent(telemetry.noiseFloorDb) : null;
+  const thresholdDb = telemetry
+    ? telemetry.effectiveThresholdDb
+    : !siqDsp.autoGate
+      ? siqDsp.gateThresholdDb
+      : null;
+  const thresholdPct = thresholdDb !== null ? dbToPercent(thresholdDb) : null;
 
   return (
-    <>
+    <div className="space-y-2">
       <canvas
         ref={canvasRef}
         aria-hidden="true"
-        className="block h-12 w-full rounded-md bg-[#090A0C] text-emerald-400"
+        className="block h-12 w-full rounded-lg border border-white/[0.05] bg-[#090A0C] text-emerald-400"
       />
+
+      {/* Live Studio dB VU Meter + Noise Floor + Gate Marker */}
+      <div className="space-y-1">
+        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090A0C] ring-1 ring-white/[0.06]">
+          {/* Ambient noise floor marker */}
+          {floorPct !== null && (
+            <div
+              className="absolute inset-y-0 left-0 bg-zinc-700/50 transition-all duration-150"
+              style={{ width: `${floorPct}%` }}
+            />
+          )}
+          {/* Live input level */}
+          <div
+            className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-75 ${
+              levelDb > -4
+                ? "bg-rose-400"
+                : telemetry && !telemetry.gateOpen
+                  ? "bg-zinc-500"
+                  : "bg-emerald-400"
+            }`}
+            style={{ width: `${levelPct}%` }}
+          />
+          {/* Gate threshold tick */}
+          {thresholdPct !== null && (
+            <div
+              className="absolute inset-y-0 w-0.5 bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.7)]"
+              style={{ left: `${thresholdPct}%` }}
+              title={`Gate threshold: ${Math.round(thresholdDb!)} dB`}
+            />
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] tabular-nums text-zinc-400">
+          <div className="flex items-center gap-2">
+            <span>Input: {Math.round(levelDb)} dB</span>
+            {telemetry && (
+              <>
+                <span className="text-zinc-600">·</span>
+                <span>Floor: {Math.round(telemetry.noiseFloorDb)} dB</span>
+                <span className="text-zinc-600">·</span>
+                <span>NR: -{Math.round(telemetry.gainReductionDb)} dB</span>
+              </>
+            )}
+          </div>
+          {telemetry && (
+            <span
+              className={`rounded px-1.5 py-0.5 font-semibold tracking-wide ${
+                telemetry.gateOpen
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : "bg-white/[0.06] text-zinc-400"
+              }`}
+            >
+              {telemetry.gateOpen ? "VOICE OPEN" : "GATE CLOSED"}
+            </span>
+          )}
+        </div>
+      </div>
+
       <p role="status" className={error ? "text-[11px] text-rose-300" : "text-[11px] text-zinc-400"}>
         {status}
       </p>
-    </>
+    </div>
   );
 }

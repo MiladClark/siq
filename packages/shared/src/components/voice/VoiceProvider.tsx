@@ -32,14 +32,22 @@ import { RemoteAudioPlayer } from "@siq/shared/components/voice/AudioRenderer";
 import { voiceControls } from "@/lib/voice-controls";
 import {
   createNoiseProcessor,
+  type LiveConfigurableAudioProcessor,
   type NoiseCancellationMode,
 } from "@siq/shared/lib/noise-processor";
 import {
   DEFAULT_SCREEN_SHARE_CONFIG,
+  DEFAULT_VOICE_AUDIO_SETTINGS,
   loadAppPreferences,
   saveAppPreferences,
   type ScreenShareConfig,
+  type VoiceAudioSettings,
 } from "@siq/shared/lib/preferences";
+import {
+  SIQ_DSP_PRESETS,
+  type SiqDspConfig,
+  type SiqPresetId,
+} from "@siq/shared/lib/siq-audio-worklet";
 import { playCallDeclinedSound, playSound } from "@siq/shared/lib/sounds";
 import {
   pickAvatarColor,
@@ -110,6 +118,11 @@ interface VoiceContextValue {
   setEchoCancellation: (enabled: boolean) => Promise<void>;
   autoGainControl: boolean;
   setAutoGainControl: (enabled: boolean) => Promise<void>;
+  voiceAudio: VoiceAudioSettings;
+  updateVoiceAudio: (patch: Partial<VoiceAudioSettings>) => Promise<void>;
+  updateSiqDsp: (patch: Partial<SiqDspConfig>) => void;
+  applySiqPreset: (presetId: SiqPresetId) => void;
+  isPttActive: boolean;
   devices: MediaDevicesList;
   selectedAudioInput: string;
   selectedAudioOutput: string;
@@ -249,6 +262,20 @@ function getResolutionDimensions(res: ScreenShareConfig["resolution"]): {
   }
 }
 
+function getAudioPublishOptions(voiceAudio: VoiceAudioSettings) {
+  const maxBitrate =
+    voiceAudio.voiceQuality === "low-bandwidth"
+      ? 32_000
+      : voiceAudio.voiceQuality === "studio"
+        ? 96_000
+        : 64_000;
+  return {
+    audioPreset: { maxBitrate },
+    dtx: voiceAudio.voiceQuality === "studio" ? false : voiceAudio.dtxEnabled,
+    red: voiceAudio.packetLossRecovery,
+  };
+}
+
 export function VoiceProvider({
   children,
   onOccupancyChanged,
@@ -325,14 +352,26 @@ export function VoiceProvider({
     );
   }, []);
 
-  const [noiseMode, setNoiseModeState] = useState<NoiseCancellationMode>("krisp");
+  const [noiseMode, setNoiseModeState] = useState<NoiseCancellationMode>("siq");
   const [activeNoiseEngine, setActiveNoiseEngine] =
-    useState<NoiseCancellationMode>("krisp");
+    useState<NoiseCancellationMode>("siq");
   const [echoCancellation, setEchoCancellationState] = useState(true);
   const [autoGainControl, setAutoGainControlState] = useState(true);
+  const [voiceAudio, setVoiceAudioState] = useState<VoiceAudioSettings>(
+    DEFAULT_VOICE_AUDIO_SETTINGS
+  );
+  const [isPttActive, setIsPttActive] = useState(false);
   const [screenShareConfig, setScreenShareConfig] = useState<ScreenShareConfig>(
     DEFAULT_SCREEN_SHARE_CONFIG
   );
+
+  const activeProcessorRef = useRef<LiveConfigurableAudioProcessor | null>(null);
+  const voiceAudioRef = useRef<VoiceAudioSettings>(voiceAudio);
+  voiceAudioRef.current = voiceAudio;
+  const noiseModeRef = useRef<NoiseCancellationMode>(noiseMode);
+  noiseModeRef.current = noiseMode;
+  const pttReleaseTimerRef = useRef<number | null>(null);
+  const pttHeldRef = useRef<boolean>(false);
 
   // Hydrate persisted audio/screen preferences on mount
   useEffect(() => {
@@ -341,6 +380,7 @@ export function VoiceProvider({
     setActiveNoiseEngine(prefs.noiseMode);
     setEchoCancellationState(prefs.echoCancellation);
     setAutoGainControlState(prefs.autoGainControl);
+    setVoiceAudioState(prefs.voiceAudio);
     setScreenShareConfig(prefs.screenShareConfig);
   }, []);
 
@@ -493,35 +533,44 @@ export function VoiceProvider({
     }
   }, []);
 
-  /** Attach or remove the active AI Noise Processor on the live microphone track */
+  /** Attach or remove the active Noise / Gain Processor on the live microphone track */
   const applyNoiseProcessorToCurrentMic = useCallback(
     async (
       targetMode: NoiseCancellationMode,
       aec: boolean,
       agc: boolean,
-      forceRepublishMic = false
+      forceRepublishMic = false,
+      audioOverride?: VoiceAudioSettings
     ) => {
+      const currentAudio = audioOverride ?? voiceAudioRef.current;
       const room = roomRef.current;
       if (!room || room.state !== ConnectionState.Connected) {
+        activeProcessorRef.current = null;
         setActiveNoiseEngine(targetMode);
         return;
       }
 
       const browserNoiseSuppression = targetMode === "standard";
+      const pubOpts = getAudioPublishOptions(currentAudio);
 
       if (forceRepublishMic && room.localParticipant.isMicrophoneEnabled) {
         await room.localParticipant.setMicrophoneEnabled(false);
-        await room.localParticipant.setMicrophoneEnabled(true, {
-          autoGainControl: agc,
-          echoCancellation: aec,
-          noiseSuppression: browserNoiseSuppression,
-          deviceId: selectedAudioInput || undefined,
-        });
+        await room.localParticipant.setMicrophoneEnabled(
+          true,
+          {
+            autoGainControl: agc,
+            echoCancellation: aec,
+            noiseSuppression: browserNoiseSuppression,
+            deviceId: selectedAudioInput || undefined,
+          },
+          pubOpts
+        );
       }
 
       const micPub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
       const localTrack = micPub?.track as LocalAudioTrack | undefined;
       if (!localTrack) {
+        activeProcessorRef.current = null;
         setActiveNoiseEngine(targetMode);
         return;
       }
@@ -531,31 +580,55 @@ export function VoiceProvider({
       } catch {
         // ignore if no previous processor was running
       }
+      activeProcessorRef.current = null;
 
-      if (targetMode === "off" || targetMode === "standard") {
-        setActiveNoiseEngine(targetMode);
-        return;
-      }
+      const siqConfig: SiqDspConfig = {
+        ...currentAudio.siqDsp,
+        inputGainPct: currentAudio.inputGainPct,
+      };
 
-      try {
-        const result = await createNoiseProcessor(
-          targetMode,
-          isLiveKitCloudRef.current
-        );
+      const attach = async (modeToAttach: NoiseCancellationMode) => {
+        const result = await createNoiseProcessor(modeToAttach, {
+          isLiveKitCloud: isLiveKitCloudRef.current,
+          siqConfig,
+          inputGainPct: currentAudio.inputGainPct,
+        });
         if (result.processor) {
           await localTrack.setProcessor(result.processor);
+          activeProcessorRef.current = result.processor;
+        } else {
+          activeProcessorRef.current = null;
         }
         setActiveNoiseEngine(result.effectiveMode);
         if (result.notice) {
           setNotice(result.notice);
         }
+      };
+
+      try {
+        await attach(targetMode);
       } catch (err) {
-        console.warn("[noise-processor] fallback to standard:", err);
+        console.warn(`[noise-processor] ${targetMode} failed:`, err);
+        const detail = err instanceof Error ? err.message : "runtime error";
+        // If Krisp / GTCRN / RNNoise failed (e.g. CDN unreachable or runtime block),
+        // fall back cleanly to our 100% local zero-latency SIQ Cancellation engine first!
+        if (targetMode !== "siq" && targetMode !== "standard" && targetMode !== "off") {
+          try {
+            await attach("siq");
+            setNotice(
+              `${targetMode.toUpperCase()} unavailable (${detail}); switched to SIQ Cancellation.`
+            );
+            return;
+          } catch (siqErr) {
+            console.warn("[noise-processor] SIQ fallback failed:", siqErr);
+          }
+        }
+        activeProcessorRef.current = null;
         setActiveNoiseEngine("standard");
-        setNotice("AI noise filter unavailable on this browser; using standard suppression.");
+        setNotice(`Audio filter fallback to standard (${detail}).`);
       }
     },
-    [selectedAudioInput]
+    [selectedAudioInput, setNotice]
   );
 
   const setNoiseMode = useCallback(
@@ -571,7 +644,7 @@ export function VoiceProvider({
         mode === "standard" || mode === "off"
       );
     },
-    [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation]
+    [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation, setNotice]
   );
 
   const setEchoCancellation = useCallback(
@@ -593,6 +666,240 @@ export function VoiceProvider({
     },
     [applyNoiseProcessorToCurrentMic, echoCancellation, noiseMode]
   );
+
+  const updateVoiceAudio = useCallback(
+    async (patch: Partial<VoiceAudioSettings>) => {
+      const prev = voiceAudioRef.current;
+      const next: VoiceAudioSettings = {
+        ...prev,
+        ...patch,
+        siqDsp: {
+          ...prev.siqDsp,
+          ...(patch.siqDsp ?? {}),
+          inputGainPct: patch.inputGainPct ?? patch.siqDsp?.inputGainPct ?? prev.inputGainPct,
+        },
+      };
+      voiceAudioRef.current = next;
+      setVoiceAudioState(next);
+
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, voiceAudio: next });
+
+      // Live hot-update input gain with zero interruption if a processor is already running
+      if (patch.inputGainPct !== undefined && patch.inputGainPct !== prev.inputGainPct) {
+        const proc = activeProcessorRef.current;
+        if (proc?.updateSiqConfig) {
+          proc.updateSiqConfig(next.siqDsp);
+        } else if (proc?.setInputGainPct) {
+          proc.setInputGainPct(next.inputGainPct);
+        } else if (
+          roomRef.current?.state === ConnectionState.Connected &&
+          next.inputGainPct !== 100
+        ) {
+          void applyNoiseProcessorToCurrentMic(
+            noiseModeRef.current,
+            echoCancellation,
+            autoGainControl,
+            false,
+            next
+          );
+        }
+      }
+
+      // Live hot-update SIQ DSP parameters
+      if (patch.siqDsp && activeProcessorRef.current?.updateSiqConfig) {
+        activeProcessorRef.current.updateSiqConfig(next.siqDsp);
+      }
+
+      // Handle Push-to-Talk mode switches immediately on active room
+      if (patch.inputMode && patch.inputMode !== prev.inputMode) {
+        const room = roomRef.current;
+        const micPub = room?.localParticipant.getTrackPublication(Track.Source.Microphone);
+        const localTrack = micPub?.track as LocalAudioTrack | undefined;
+        if (room && room.state === ConnectionState.Connected && localTrack) {
+          if (patch.inputMode === "push-to-talk") {
+            setIsPttActive(false);
+            pttHeldRef.current = false;
+            await localTrack.mute().catch(() => {});
+            syncParticipants();
+          } else {
+            setIsPttActive(false);
+            pttHeldRef.current = false;
+            if (!isDeafened) {
+              await localTrack.unmute().catch(() => {});
+            }
+            syncParticipants();
+          }
+        }
+      }
+
+      // Republish mic only when Opus codec / bitrate / RED / DTX settings change
+      const networkChanged =
+        (patch.voiceQuality !== undefined && patch.voiceQuality !== prev.voiceQuality) ||
+        (patch.packetLossRecovery !== undefined &&
+          patch.packetLossRecovery !== prev.packetLossRecovery) ||
+        (patch.dtxEnabled !== undefined && patch.dtxEnabled !== prev.dtxEnabled);
+
+      if (networkChanged && roomRef.current?.state === ConnectionState.Connected) {
+        await applyNoiseProcessorToCurrentMic(
+          noiseModeRef.current,
+          echoCancellation,
+          autoGainControl,
+          true,
+          next
+        );
+      }
+    },
+    [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation, isDeafened, syncParticipants]
+  );
+
+  const updateSiqDsp = useCallback((patch: Partial<SiqDspConfig>) => {
+    const prev = voiceAudioRef.current;
+    const nextSiq: SiqDspConfig = {
+      ...prev.siqDsp,
+      ...patch,
+      inputGainPct: patch.inputGainPct ?? prev.inputGainPct,
+    };
+    const next: VoiceAudioSettings = {
+      ...prev,
+      inputGainPct: nextSiq.inputGainPct,
+      siqDsp: nextSiq,
+    };
+    voiceAudioRef.current = next;
+    setVoiceAudioState(next);
+
+    const prefs = loadAppPreferences();
+    saveAppPreferences({ ...prefs, voiceAudio: next });
+
+    if (activeProcessorRef.current?.updateSiqConfig) {
+      activeProcessorRef.current.updateSiqConfig(nextSiq);
+    }
+  }, []);
+
+  const applySiqPreset = useCallback(
+    (presetId: SiqPresetId) => {
+      const preset = SIQ_DSP_PRESETS.find((p) => p.id === presetId);
+      if (!preset) return;
+      updateSiqDsp(preset.patch);
+    },
+    [updateSiqDsp]
+  );
+
+  // Zero-latency Push-to-Talk keyboard listener (uses LocalAudioTrack.mute/unmute — 0ms SDP lag)
+  useEffect(() => {
+    if (
+      voiceAudio.inputMode !== "push-to-talk" ||
+      connectionState !== ConnectionState.Connected
+    ) {
+      setIsPttActive(false);
+      pttHeldRef.current = false;
+      if (pttReleaseTimerRef.current !== null) {
+        window.clearTimeout(pttReleaseTimerRef.current);
+        pttReleaseTimerRef.current = null;
+      }
+      return;
+    }
+
+    const NON_TYPING_KEYS = new Set([
+      "AltLeft",
+      "AltRight",
+      "ControlLeft",
+      "ControlRight",
+      "CapsLock",
+      "ScrollLock",
+      "Pause",
+      "Backquote",
+      "F1",
+      "F2",
+      "F3",
+      "F4",
+      "F5",
+      "F6",
+      "F7",
+      "F8",
+      "F9",
+      "F10",
+      "F11",
+      "F12",
+    ]);
+
+    const isEditableTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target.isContentEditable
+      );
+    };
+
+    const getLocalMicTrack = (): LocalAudioTrack | undefined => {
+      const room = roomRef.current;
+      if (!room || room.state !== ConnectionState.Connected) return undefined;
+      return room.localParticipant.getTrackPublication(Track.Source.Microphone)
+        ?.track as LocalAudioTrack | undefined;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (document.body.dataset.siqRecordingPtt === "true") return;
+      const boundCode = voiceAudioRef.current.pttKey;
+      if (!boundCode || e.code !== boundCode) return;
+      if (!NON_TYPING_KEYS.has(boundCode) && isEditableTarget(e.target)) return;
+      if (isDeafened) return;
+
+      if (pttReleaseTimerRef.current !== null) {
+        window.clearTimeout(pttReleaseTimerRef.current);
+        pttReleaseTimerRef.current = null;
+      }
+
+      if (!pttHeldRef.current) {
+        pttHeldRef.current = true;
+        setIsPttActive(true);
+        const track = getLocalMicTrack();
+        if (track) {
+          void track.unmute().then(() => syncParticipants()).catch(() => {});
+        }
+      }
+    };
+
+    const releasePtt = () => {
+      if (!pttHeldRef.current) return;
+      const delay = Math.max(0, Math.min(600, voiceAudioRef.current.pttReleaseDelayMs));
+      if (pttReleaseTimerRef.current !== null) {
+        window.clearTimeout(pttReleaseTimerRef.current);
+      }
+      pttReleaseTimerRef.current = window.setTimeout(() => {
+        pttReleaseTimerRef.current = null;
+        pttHeldRef.current = false;
+        setIsPttActive(false);
+        const track = getLocalMicTrack();
+        if (track) {
+          void track.mute().then(() => syncParticipants()).catch(() => {});
+        }
+      }, delay);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === voiceAudioRef.current.pttKey) {
+        releasePtt();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", releasePtt);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", releasePtt);
+      if (pttReleaseTimerRef.current !== null) {
+        window.clearTimeout(pttReleaseTimerRef.current);
+        pttReleaseTimerRef.current = null;
+      }
+    };
+  }, [connectionState, isDeafened, syncParticipants, voiceAudio.inputMode]);
 
   const updateScreenShareConfig = useCallback((patch: Partial<ScreenShareConfig>) => {
     setScreenShareConfig((prev) => {
@@ -1042,6 +1349,7 @@ export function VoiceProvider({
           isLiveKitCloudRef.current = false;
         }
 
+        const pubAudioDefaults = getAudioPublishOptions(voiceAudioRef.current);
         const room = new Room({
           adaptiveStream: false,
           dynacast: true,
@@ -1059,6 +1367,7 @@ export function VoiceProvider({
             simulcast: false,
             videoCodec: "vp9",
             screenShareSimulcastLayers: [],
+            ...pubAudioDefaults,
           },
         });
 
@@ -1187,12 +1496,16 @@ export function VoiceProvider({
         syncParticipants();
 
         try {
-          await room.localParticipant.setMicrophoneEnabled(true, {
-            autoGainControl,
-            echoCancellation,
-            noiseSuppression: noiseMode === "standard",
-            deviceId: selectedAudioInput || undefined,
-          });
+          await room.localParticipant.setMicrophoneEnabled(
+            true,
+            {
+              autoGainControl,
+              echoCancellation,
+              noiseSuppression: noiseMode === "standard",
+              deviceId: selectedAudioInput || undefined,
+            },
+            getAudioPublishOptions(voiceAudioRef.current)
+          );
           if (attemptId !== joinAttemptIdRef.current) return;
           await applyNoiseProcessorToCurrentMic(
             noiseMode,
@@ -1201,6 +1514,13 @@ export function VoiceProvider({
             false
           );
           if (attemptId !== joinAttemptIdRef.current) return;
+          if (voiceAudioRef.current.inputMode === "push-to-talk") {
+            const micPub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+            const localTrack = micPub?.track as LocalAudioTrack | undefined;
+            if (localTrack) {
+              await localTrack.mute().catch(() => {});
+            }
+          }
           if (options?.startWithVideo) {
             await room.localParticipant
               .setCameraEnabled(true, {
@@ -1262,12 +1582,16 @@ export function VoiceProvider({
       setIsDeafened(false);
     }
     try {
-      await room.localParticipant.setMicrophoneEnabled(nextEnabled, {
-        autoGainControl,
-        echoCancellation,
-        noiseSuppression: noiseMode === "standard",
-        deviceId: selectedAudioInput || undefined,
-      });
+      await room.localParticipant.setMicrophoneEnabled(
+        nextEnabled,
+        {
+          autoGainControl,
+          echoCancellation,
+          noiseSuppression: noiseMode === "standard",
+          deviceId: selectedAudioInput || undefined,
+        },
+        getAudioPublishOptions(voiceAudioRef.current)
+      );
       if (nextEnabled) {
         await applyNoiseProcessorToCurrentMic(
           noiseMode,
@@ -1639,6 +1963,11 @@ export function VoiceProvider({
       setEchoCancellation,
       autoGainControl,
       setAutoGainControl,
+      voiceAudio,
+      updateVoiceAudio,
+      updateSiqDsp,
+      applySiqPreset,
+      isPttActive,
       devices,
       selectedAudioInput,
       selectedAudioOutput,
@@ -1692,6 +2021,11 @@ export function VoiceProvider({
       setEchoCancellation,
       autoGainControl,
       setAutoGainControl,
+      voiceAudio,
+      updateVoiceAudio,
+      updateSiqDsp,
+      applySiqPreset,
+      isPttActive,
       devices,
       selectedAudioInput,
       selectedAudioOutput,
@@ -1728,7 +2062,7 @@ export function VoiceProvider({
             {p.micAudioTrack && (
               <RemoteAudioPlayer
                 track={p.micAudioTrack}
-                volume={userVolumes[p.identity] ?? 1}
+                volume={(userVolumes[p.identity] ?? 1) * (voiceAudio.outputVolumePct / 100)}
                 deafened={isDeafened}
                 outputDeviceId={selectedAudioOutput || undefined}
               />
@@ -1736,7 +2070,9 @@ export function VoiceProvider({
             {p.screenAudioTrack && (
               <RemoteAudioPlayer
                 track={p.screenAudioTrack}
-                volume={userVolumes[`${p.identity}:screen`] ?? 1}
+                volume={
+                  (userVolumes[`${p.identity}:screen`] ?? 1) * (voiceAudio.outputVolumePct / 100)
+                }
                 deafened={isDeafened}
                 outputDeviceId={selectedAudioOutput || undefined}
               />
