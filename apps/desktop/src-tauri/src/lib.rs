@@ -6,6 +6,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 mod session;
+mod updater;
 
 const TRAY_ID: &str = "siq-tray";
 
@@ -103,6 +104,8 @@ pub fn run() {
         .build(),
     )
     .setup(move |app| {
+      updater::cleanup_previous_binary(app.handle());
+
       // Register global gaming voice shortcuts safely (don't crash if another app holds them)
       let gs = app.global_shortcut();
       let _ = gs.register(mute_shortcut);
@@ -177,6 +180,14 @@ pub fn run() {
       desktop_sync_voice_state,
       session::desktop_load_session,
       session::desktop_save_session,
+      updater::desktop_check_updates,
+      updater::desktop_fetch_update,
+      updater::desktop_get_update_state,
+      updater::desktop_start_update,
+      updater::desktop_pause_update,
+      updater::desktop_resume_update,
+      updater::desktop_cancel_update,
+      updater::desktop_install_update,
       desktop_quit
     ])
     .run(tauri::generate_context!())

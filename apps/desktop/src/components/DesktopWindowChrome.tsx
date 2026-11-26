@@ -10,6 +10,8 @@ import {
   quitDesktopApp,
   toggleMaximizeDesktopWindow,
 } from "../lib/desktop";
+import { AppUpdatesCard } from "./AppUpdatesCard";
+import { UpdateRoot } from "./UpdateRoot";
 
 type CloseAction = "tray" | "quit";
 type CloseBehavior = "ask" | CloseAction;
@@ -130,24 +132,28 @@ export function DesktopWindowChrome({ children }: { children: (chrome?: DesktopC
       </div>
     ),
     settings: (
-      <fieldset className="rounded-2xl border border-white/10 bg-[#0d0e12] px-4 pb-3">
-        <legend className="px-1 text-sm font-semibold text-zinc-100">When closing SIQ</legend>
-        <div className="flex flex-wrap gap-x-4">
-          {CLOSE_BEHAVIORS.map(({ value, label }) => (
-            <label key={value} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-zinc-300">
-              <input type="radio" name="desktop-close-behavior" checked={behavior === value} onChange={() => updateBehavior(value)}
-                className="size-4 accent-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400" />
-              {label}
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <div className="space-y-4">
+        <AppUpdatesCard />
+        <fieldset className="rounded-2xl border border-white/10 bg-[#0d0e12] px-4 pb-3">
+          <legend className="px-1 text-sm font-semibold text-zinc-100">When closing SIQ</legend>
+          <div className="flex flex-wrap gap-x-4">
+            {CLOSE_BEHAVIORS.map(({ value, label }) => (
+              <label key={value} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-zinc-300">
+                <input type="radio" name="desktop-close-behavior" checked={behavior === value} onChange={() => updateBehavior(value)}
+                  className="size-4 accent-emerald-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400" />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </div>
     ),
   };
 
   return (
     <>
       {children(chrome)}
+      <UpdateRoot />
       <dialog ref={dialogRef} className="siq-close-dialog" aria-labelledby="siq-close-title" aria-describedby="siq-close-details">
         <div className="flex items-start justify-between gap-4">
           <div>

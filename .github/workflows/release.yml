@@ -1,0 +1,114 @@
+name: Release Desktop
+
+# Push a tag like "v0.2.0" (matching apps/desktop/src-tauri/tauri.conf.json) to build
+# the signed-checksum SIQ-Windows-Portable.exe + latest.json manifest and publish a
+# GitHub Release automatically. Both the web header download button and in-app desktop
+# auto-updater pick up the new release immediately.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          APP_VERSION="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          echo "APP_VERSION=${APP_VERSION}" >> "$GITHUB_ENV"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            EXPECTED="v${APP_VERSION}"
+            if [[ "${GITHUB_REF_NAME}" != "${EXPECTED}" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match tauri.conf.json version ${EXPECTED}."
+              exit 1
+            fi
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck workspace
+        run: pnpm typecheck
+
+      - name: Build SIQ Desktop portable executable
+        run: pnpm desktop:build
+
+      - name: Stage release artifacts and generate latest.json
+        shell: bash
+        run: |
+          set -e
+          mkdir -p release
+          SRC="apps/desktop/src-tauri/target/release/siq-desktop.exe"
+          DST="release/SIQ-Windows-Portable.exe"
+          cp "$SRC" "$DST"
+          TAG="v${APP_VERSION}"
+          REPO="${GITHUB_REPOSITORY}"
+          node -e '
+            const fs = require("fs");
+            const crypto = require("crypto");
+            const [file, version, tag, repo] = process.argv.slice(1);
+            const buf = fs.readFileSync(file);
+            const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+            const manifest = {
+              version,
+              fileName: "SIQ-Windows-Portable.exe",
+              sha256,
+              sizeBytes: buf.length,
+              required: false,
+              releaseNotes: `SIQ Desktop ${tag} — SIQ zero-latency voice engine, desktop noise cancellation fixes, pro audio controls, and in-app auto-updates.`,
+              releasedAt: new Date().toISOString(),
+              downloadUrl: `https://github.com/${repo}/releases/download/${tag}/SIQ-Windows-Portable.exe`,
+            };
+            fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2));
+            console.log(manifest);
+          ' "$DST" "$APP_VERSION" "$TAG" "$REPO"
+
+      - name: Publish GitHub Release atomically
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
+          prerelease_args=()
+          if [[ "$TAG" == *-* ]]; then prerelease_args+=(--prerelease); fi
+
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" \
+              --draft --title "SIQ Desktop $TAG" --generate-notes "${prerelease_args[@]}"
+          fi
+
+          gh release upload "$TAG" \
+            release/SIQ-Windows-Portable.exe \
+            release/latest.json \
+            --repo "$REPO" --clobber
+
+          gh release edit "$TAG" --draft=false --repo "$REPO"
