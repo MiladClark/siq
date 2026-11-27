@@ -50,6 +50,8 @@ import {
 } from "@siq/shared/lib/preferences";
 import {
   SIQ_DSP_PRESETS,
+  suppressionPctToAttenLimDb,
+  type SiqAiEngine,
   type SiqHighPassHz,
   type SiqVoiceTone,
 } from "@siq/shared/lib/siq-audio-worklet";
@@ -85,27 +87,27 @@ const NOISE_MODES: Array<{
 }> = [
   {
     id: "siq",
-    title: "SIQ Cancellation",
-    badge: "Zero-Delay · Custom",
-    desc: "Our in-house 3-band studio DSP engine (~2.7 ms latency, <0.5% CPU). 100% local with custom Voice Gate, Rumble Filter, Tone EQ & Limiter.",
+    title: "SIQ AI",
+    badge: "Flagship · Local 48kHz",
+    desc: "Our hybrid neural + broadcast studio engine: DeepFilterNet3 48kHz AI, Smart Gate, Tone EQ, De-Esser & Limiter. 100% local with zero cloud lock-in.",
   },
   {
     id: "krisp",
     title: "Krisp AI",
-    badge: "Best · Cloud",
-    desc: "Discord-grade neural voice isolation via LiveKit Cloud. Auto-falls back to SIQ Cancellation if offline or blocked.",
+    badge: "LiveKit Cloud",
+    desc: "Cloud-licensed neural voice isolation via LiveKit Cloud. Auto-falls back to SIQ AI when offline or self-hosted.",
   },
   {
     id: "gtcrn",
-    title: "GTCRN AI",
-    badge: "Neural · Local",
-    desc: "Modern neural WASM model. Strong mechanical keyboard & ambient suppression everywhere, 100% free.",
+    title: "GTCRN Raw",
+    badge: "Neural · Standalone",
+    desc: "Standalone lightweight GTCRN WASM denoiser without the SIQ studio mastering chain.",
   },
   {
     id: "rnnoise",
-    title: "RNNoise AI",
+    title: "RNNoise Raw",
     badge: "Light · Neural",
-    desc: "Featherweight WASM neural filter (~1% CPU). Great for fan hum and low-power laptops.",
+    desc: "Featherweight WASM neural filter (~1% CPU) for fan hum and older laptops.",
   },
   {
     id: "standard",
@@ -118,6 +120,32 @@ const NOISE_MODES: Array<{
     title: "Off",
     badge: "Raw",
     desc: "Unprocessed microphone audio (for studio mics or music).",
+  },
+];
+
+const SIQ_AI_ENGINE_OPTIONS: Array<{
+  id: SiqAiEngine;
+  label: string;
+  spec: string;
+  desc: string;
+}> = [
+  {
+    id: "ultra",
+    label: "Ultra AI",
+    spec: "48kHz · DF3",
+    desc: "Krisp-class full-band voice isolation",
+  },
+  {
+    id: "fast",
+    label: "Fast AI",
+    spec: "~10ms · GTCRN+",
+    desc: "Ultra-light neural + air recovery",
+  },
+  {
+    id: "pure",
+    label: "Studio Pure",
+    spec: "~2.7ms · DSP",
+    desc: "Zero-delay 3-band (<0.5% CPU)",
   },
 ];
 
@@ -1115,8 +1143,14 @@ export function SettingsModal({
                               </h3>
                             </div>
                             <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide tabular-nums text-emerald-300">
-                              Active: {voice.activeNoiseEngine.toUpperCase()}
-                              {voice.activeNoiseEngine === "siq" ? " · ~2.7ms" : ""}
+                              Active:{" "}
+                              {voice.activeNoiseEngine === "siq"
+                                ? voice.activeSiqEngine === "ultra"
+                                  ? "SIQ ULTRA AI · 48kHz"
+                                  : voice.activeSiqEngine === "fast"
+                                    ? "SIQ FAST AI · ~10ms"
+                                    : "SIQ PURE · ~2.7ms"
+                                : voice.activeNoiseEngine.toUpperCase()}
                             </span>
                           </div>
 
@@ -1167,19 +1201,59 @@ export function SettingsModal({
                             })}
                           </div>
 
-                          {/* SIQ Cancellation Studio Console */}
+                          {/* SIQ AI Studio Console */}
                           {(voice.noiseMode === "siq" || voice.activeNoiseEngine === "siq") && (
                             <div className="space-y-3.5 rounded-xl border border-emerald-500/25 bg-[#0C0D11] p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
                                   <Sliders className="h-3.5 w-3.5 text-emerald-400" />
                                   <span className="text-xs font-semibold text-zinc-100">
-                                    SIQ Studio DSP Tuning
+                                    SIQ AI Studio Console
                                   </span>
                                 </div>
-                                <span className="text-[10px] font-medium text-emerald-300/80">
-                                  Live hot-update · 0 extra latency
+                                <span className="text-[10px] font-medium tabular-nums text-emerald-300/80">
+                                  {voice.voiceAudio.siqDsp.aiEngine === "ultra"
+                                    ? "DeepFilterNet3 · 48kHz Full-Band"
+                                    : voice.voiceAudio.siqDsp.aiEngine === "fast"
+                                      ? "GTCRN + Air Recovery · ~10ms"
+                                      : "Pure Studio DSP · ~2.7ms"}
                                 </span>
+                              </div>
+
+                              {/* 3-Tier Neural Core Selector */}
+                              <div className="space-y-1.5">
+                                <p className="text-[11px] font-medium text-zinc-300">
+                                  Neural Core Mode
+                                </p>
+                                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                                  {SIQ_AI_ENGINE_OPTIONS.map((eng) => {
+                                    const active = voice.voiceAudio.siqDsp.aiEngine === eng.id;
+                                    return (
+                                      <button
+                                        key={eng.id}
+                                        type="button"
+                                        onClick={() => voice.updateSiqDsp({ aiEngine: eng.id })}
+                                        className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                                          active
+                                            ? "border-emerald-500/55 bg-emerald-500/15 text-emerald-200"
+                                            : "border-white/[0.07] bg-[#121318] text-zinc-300 hover:border-white/[0.15]"
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="text-[11px] font-semibold">
+                                            {eng.label}
+                                          </span>
+                                          <span className="font-mono text-[9px] tabular-nums text-zinc-400">
+                                            {eng.spec}
+                                          </span>
+                                        </div>
+                                        <p className="mt-0.5 text-[10px] text-zinc-500">
+                                          {eng.desc}
+                                        </p>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               </div>
 
                               {/* 4 Quick Presets */}
@@ -1212,10 +1286,13 @@ export function SettingsModal({
                               <div className="space-y-1.5">
                                 <div className="flex items-center justify-between text-xs">
                                   <label htmlFor="s-siq-sup" className="text-zinc-300">
-                                    Noise Suppression Strength
+                                    AI Noise Suppression Strength
                                   </label>
                                   <span className="font-mono text-[11px] tabular-nums text-emerald-300">
                                     {voice.voiceAudio.siqDsp.suppressionStrength}%
+                                    {voice.voiceAudio.siqDsp.aiEngine === "ultra"
+                                      ? ` · -${suppressionPctToAttenLimDb(voice.voiceAudio.siqDsp.suppressionStrength)} dB`
+                                      : ""}
                                   </span>
                                 </div>
                                 <input
@@ -1242,7 +1319,9 @@ export function SettingsModal({
                                       Smart Voice Gate
                                     </p>
                                     <p className="text-[10px] text-zinc-500">
-                                      Silences background room noise between words without clipping speech.
+                                      {voice.voiceAudio.siqDsp.aiEngine === "pure"
+                                        ? "Silences background room noise between words without clipping speech."
+                                        : "Neural-guided gate — ignores keyboard clicks & fans, opens only on clean speech."}
                                     </p>
                                   </div>
                                   <div className="inline-flex rounded-lg border border-white/[0.08] bg-[#0A0B0E] p-0.5">
@@ -1304,53 +1383,85 @@ export function SettingsModal({
                                 )}
                               </div>
 
-                              {/* High-Pass Rumble Filter + Voice Tone EQ */}
-                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                <div className="space-y-1.5">
-                                  <p className="text-[11px] font-medium text-zinc-300">
-                                    High-Pass Rumble Filter
+                              {/* High-Pass Rumble Filter (Pre-AI) */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <p className="font-medium text-zinc-300">
+                                    Pre-AI High-Pass Rumble Filter
                                   </p>
-                                  <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.07] bg-[#0A0B0E] p-1">
-                                    {SIQ_HPF_OPTIONS.map((opt) => (
-                                      <button
-                                        key={opt.hz}
-                                        type="button"
-                                        onClick={() => voice.updateSiqDsp({ highPassHz: opt.hz })}
-                                        className={`rounded-md py-1.5 text-[11px] font-medium tabular-nums transition-colors ${
-                                          voice.voiceAudio.siqDsp.highPassHz === opt.hz
-                                            ? "bg-emerald-500/20 text-emerald-300"
-                                            : "text-zinc-400 hover:text-zinc-200"
-                                        }`}
-                                      >
-                                        {opt.label}
-                                      </button>
-                                    ))}
-                                  </div>
+                                  <span className="text-[10px] text-zinc-500">
+                                    Blocks desk thumps &amp; wind before AI
+                                  </span>
                                 </div>
+                                <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.07] bg-[#0A0B0E] p-1">
+                                  {SIQ_HPF_OPTIONS.map((opt) => (
+                                    <button
+                                      key={opt.hz}
+                                      type="button"
+                                      onClick={() => voice.updateSiqDsp({ highPassHz: opt.hz })}
+                                      className={`rounded-md py-1.5 text-[11px] font-medium tabular-nums transition-colors ${
+                                        voice.voiceAudio.siqDsp.highPassHz === opt.hz
+                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          : "text-zinc-400 hover:text-zinc-200"
+                                      }`}
+                                    >
+                                      {opt.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
 
-                                <div className="space-y-1.5">
-                                  <p className="text-[11px] font-medium text-zinc-300">
-                                    Broadcast Compressor &amp; Limiter
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      voice.updateSiqDsp({
-                                        compressor: !voice.voiceAudio.siqDsp.compressor,
-                                      })
-                                    }
-                                    className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                                      voice.voiceAudio.siqDsp.compressor
-                                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                                        : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
-                                    }`}
-                                  >
-                                    <span>Evening &amp; Anti-Clip</span>
-                                    <span className="text-[11px] font-semibold">
-                                      {voice.voiceAudio.siqDsp.compressor ? "On" : "Off"}
+                              {/* De-Esser + Broadcast Compressor & Limiter */}
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    voice.updateSiqDsp({
+                                      deEsser: !voice.voiceAudio.siqDsp.deEsser,
+                                    })
+                                  }
+                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                    voice.voiceAudio.siqDsp.deEsser
+                                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                                      : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
+                                  }`}
+                                >
+                                  <span className="text-left">
+                                    <span className="block text-[11px] font-semibold">De-Esser</span>
+                                    <span className="block text-[10px] text-zinc-400">
+                                      Tames harsh S / Sh peaks
                                     </span>
-                                  </button>
-                                </div>
+                                  </span>
+                                  <span className="text-[11px] font-semibold">
+                                    {voice.voiceAudio.siqDsp.deEsser ? "On" : "Off"}
+                                  </span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    voice.updateSiqDsp({
+                                      compressor: !voice.voiceAudio.siqDsp.compressor,
+                                    })
+                                  }
+                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                    voice.voiceAudio.siqDsp.compressor
+                                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                                      : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
+                                  }`}
+                                >
+                                  <span className="text-left">
+                                    <span className="block text-[11px] font-semibold">
+                                      Studio Comp &amp; Limiter
+                                    </span>
+                                    <span className="block text-[10px] text-zinc-400">
+                                      Smart leveling &amp; anti-clip
+                                    </span>
+                                  </span>
+                                  <span className="text-[11px] font-semibold">
+                                    {voice.voiceAudio.siqDsp.compressor ? "On" : "Off"}
+                                  </span>
+                                </button>
                               </div>
 
                               <div className="space-y-1.5">

@@ -4,8 +4,12 @@ import type { GtcrnWorkletNode, RnnoiseWorkletNode } from "@sapphi-red/web-noise
 import type { AudioProcessorOptions, Room, Track, TrackProcessor } from "livekit-client";
 import {
   DEFAULT_SIQ_DSP_CONFIG,
+  SIQ_POST_PROCESSOR_ID,
+  SIQ_PRE_PROCESSOR_ID,
   SIQ_WORKLET_PROCESSOR_ID,
   SIQ_WORKLET_SOURCE,
+  suppressionPctToAttenLimDb,
+  type SiqAiEngine,
   type SiqAudioTelemetry,
   type SiqDspConfig,
 } from "./siq-audio-worklet";
@@ -13,20 +17,29 @@ import {
 export type NoiseCancellationMode = "siq" | "krisp" | "gtcrn" | "rnnoise" | "standard" | "off";
 
 type WebWasmMode = "rnnoise" | "gtcrn";
-type WorkletKey = WebWasmMode | "siq";
+type WorkletKey = WebWasmMode | "siq" | "df3";
 
 export interface LiveConfigurableAudioProcessor
   extends TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
   updateSiqConfig?: (config: SiqDspConfig) => void;
   setInputGainPct?: (gainPct: number) => void;
+  setBypass?: (bypassed: boolean) => void;
   setTelemetryListener?: (listener: ((telemetry: SiqAudioTelemetry) => void) | null) => void;
+  /** Actual sub-engine currently running inside SIQ AI (after any runtime fallback) */
+  activeSiqEngine?: SiqAiEngine;
+  /** Optional fallback message if a heavier neural tier stepped down during init */
+  fallbackNotice?: string | null;
   onPublish?: (room: Room) => Promise<void>;
 }
 
+const DF3_PROCESSOR_ID = "deepfilternet-processor";
+
 const loadedWorkletContexts = new WeakMap<AudioContext, Set<WorkletKey>>();
-const workletSourceCache = new Map<WebWasmMode, string>();
+const workletSourceCache = new Map<Exclude<WorkletKey, "siq">, string>();
 let cachedRnnoiseWasm: ArrayBuffer | null = null;
 let cachedGtcrnWasm: ArrayBuffer | null = null;
+let cachedDf3WasmModule: WebAssembly.Module | null = null;
+let pendingDf3WasmModule: Promise<WebAssembly.Module> | null = null;
 
 function isValidWasmBinary(buf: ArrayBuffer): boolean {
   if (buf.byteLength < 8) return false;
@@ -106,7 +119,11 @@ async function ensureWorkletModule(ctx: AudioContext, key: WorkletKey): Promise<
   }
 
   const path =
-    key === "rnnoise" ? "/audio-worklets/rnnoise-worklet.js" : "/audio-worklets/gtcrn-worklet.js";
+    key === "rnnoise"
+      ? "/audio-worklets/rnnoise-worklet.js"
+      : key === "gtcrn"
+        ? "/audio-worklets/gtcrn-worklet.js"
+        : "/audio-worklets/df3-worklet.js";
 
   // Prefer fetching text + loading via Blob URL so the AudioWorklet reliably inherits
   // the document's 'wasm-unsafe-eval' CSP on Tauri WebView2 custom schemes (tauri.localhost),
@@ -140,7 +157,6 @@ async function getWasmBinary(mode: WebWasmMode): Promise<ArrayBuffer> {
           useSimd ? "/audio-worklets/rnnoise_simd.wasm" : "/audio-worklets/rnnoise.wasm"
         );
       } catch {
-        // Retry non-SIMD binary if SIMD failed
         cachedRnnoiseWasm = await fetchWasmVerified("/audio-worklets/rnnoise.wasm");
       }
     }
@@ -153,67 +169,143 @@ async function getWasmBinary(mode: WebWasmMode): Promise<ArrayBuffer> {
   return cachedGtcrnWasm;
 }
 
+async function getDf3WasmModule(): Promise<WebAssembly.Module> {
+  if (cachedDf3WasmModule) return cachedDf3WasmModule;
+  if (!pendingDf3WasmModule) {
+    pendingDf3WasmModule = (async () => {
+      const simd = await supportsWasmSimd();
+      if (!simd) {
+        throw new Error("WebAssembly SIMD is required for SIQ Ultra AI (DeepFilterNet3).");
+      }
+      const bytes = await fetchWasmVerified("/audio-worklets/df3.wasm");
+      const mod = await WebAssembly.compile(bytes);
+      cachedDf3WasmModule = mod;
+      return mod;
+    })().finally(() => {
+      pendingDf3WasmModule = null;
+    });
+  }
+  return pendingDf3WasmModule;
+}
+
+function create48kAudioContextIfNeeded(baseCtx: AudioContext): {
+  ctx: AudioContext;
+  owned: boolean;
+} {
+  if (baseCtx.sampleRate === 48000 || typeof window === "undefined") {
+    return { ctx: baseCtx, owned: false };
+  }
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    return {
+      ctx: new AudioCtx({ sampleRate: 48000, latencyHint: "interactive" }),
+      owned: true,
+    };
+  } catch {
+    return { ctx: baseCtx, owned: false };
+  }
+}
+
+function waitForWorkletReady(node: AudioWorkletNode, timeoutMs = 4500): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      node.port.onmessage = null;
+      reject(new Error("Timed out initializing DeepFilterNet3 WASM processor."));
+    }, timeoutMs);
+
+    node.port.onmessage = (event) => {
+      if (settled) return;
+      const msg = event.data;
+      if (!msg) return;
+      if (msg.type === "ready") {
+        settled = true;
+        clearTimeout(timer);
+        node.port.onmessage = null;
+        resolve();
+      } else if (msg.type === "error") {
+        settled = true;
+        clearTimeout(timer);
+        node.port.onmessage = null;
+        reject(new Error(msg.message || "DeepFilterNet3 WASM init failed."));
+      }
+    };
+  });
+}
+
 /**
- * Custom SIQ Voice Studio TrackProcessor.
- * Zero algorithmic lookahead delay (~2.67 ms native quantum), <0.5% CPU,
- * 100% local, works at any sample rate (44.1 / 48 / 96 kHz) on both Desktop & Web.
+ * SIQ AI Engine v2 — Unified Hybrid Neural + Broadcast Studio TrackProcessor.
+ *
+ * Supports three local tiers under one unified studio console:
+ *  - "ultra": Pre-HPF/Gain -> DeepFilterNet3 (48 kHz Full-Band WASM SIMD) -> Post-Mastering + Smart Gate
+ *  - "fast":  Pre-HPF/Gain -> GTCRN WASM + 480-sample aligned High-Band Air Recovery -> Post-Mastering + Smart Gate
+ *  - "pure":  Zero-latency (~2.67 ms) 3-band TPT SVF Studio DSP + Mastering
+ *
+ * Automatically steps down (ultra -> fast -> pure) if a neural tier cannot initialize
+ * on the current runtime, ensuring voice never drops.
  */
-export class SiqVoiceTrackProcessor implements LiveConfigurableAudioProcessor {
-  readonly name = "siq-voice-studio-processor";
+export class SiqAiTrackProcessor implements LiveConfigurableAudioProcessor {
+  readonly name = "siq-ai-voice-processor";
   processedTrack?: MediaStreamTrack;
+  activeSiqEngine: SiqAiEngine;
+  fallbackNotice: string | null = null;
 
   private config: SiqDspConfig;
+  private bypassed = false;
   private audioContext: AudioContext | null = null;
+  private ownsAudioContext = false;
+
   private sourceNode: MediaStreamAudioSourceNode | null = null;
-  private workletNode: AudioWorkletNode | null = null;
+  private preNode: AudioWorkletNode | null = null;
+  private df3Node: AudioWorkletNode | null = null;
+  private gtcrnNode: GtcrnWorkletNode | null = null;
+  private postNode: AudioWorkletNode | null = null;
+  private pureNode: AudioWorkletNode | null = null;
   private destinationNode: MediaStreamAudioDestinationNode | null = null;
   private telemetryListener: ((telemetry: SiqAudioTelemetry) => void) | null = null;
 
   constructor(initialConfig: SiqDspConfig = DEFAULT_SIQ_DSP_CONFIG) {
-    this.config = { ...initialConfig };
+    this.config = { ...DEFAULT_SIQ_DSP_CONFIG, ...initialConfig };
+    this.activeSiqEngine = this.config.aiEngine;
   }
 
   setTelemetryListener(listener: ((telemetry: SiqAudioTelemetry) => void) | null): void {
     this.telemetryListener = listener;
   }
 
+  setBypass(bypassed: boolean): void {
+    this.bypassed = bypassed;
+    this.postNode?.port.postMessage({ type: "bypass", value: bypassed });
+    this.pureNode?.port.postMessage({ type: "bypass", value: bypassed });
+  }
+
   updateSiqConfig(config: SiqDspConfig): void {
-    this.config = { ...config };
-    if (this.workletNode) {
-      this.workletNode.port.postMessage({ type: "config", config: this.config });
+    this.config = { ...DEFAULT_SIQ_DSP_CONFIG, ...config };
+    this.preNode?.port.postMessage({ type: "config", config: this.config });
+    this.postNode?.port.postMessage({ type: "config", config: this.config });
+    this.pureNode?.port.postMessage({ type: "config", config: this.config });
+
+    if (this.df3Node) {
+      const attenDb = suppressionPctToAttenLimDb(this.config.suppressionStrength);
+      this.df3Node.port.postMessage({ type: "setEnabled", value: attenDb > 0 });
+      if (attenDb > 0) {
+        this.df3Node.port.postMessage({ type: "setAttenuationLimit", value: attenDb });
+      }
     }
   }
 
   setInputGainPct(gainPct: number): void {
     this.config = { ...this.config, inputGainPct: gainPct };
-    if (this.workletNode) {
-      this.workletNode.port.postMessage({ type: "config", config: this.config });
-    }
+    this.preNode?.port.postMessage({ type: "config", config: this.config });
+    this.pureNode?.port.postMessage({ type: "config", config: this.config });
   }
 
-  async init(opts: AudioProcessorOptions): Promise<void> {
-    const ctx = opts.audioContext;
-    this.audioContext = ctx;
-    if (ctx.state === "suspended") {
-      await ctx.resume().catch(() => {});
-    }
-
-    await ensureWorkletModule(ctx, "siq");
-
-    const stream = new MediaStream([opts.track]);
-    this.sourceNode = ctx.createMediaStreamSource(stream);
-    this.destinationNode = ctx.createMediaStreamDestination();
-
-    this.workletNode = new AudioWorkletNode(ctx, SIQ_WORKLET_PROCESSOR_ID, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-      processorOptions: {
-        config: this.config,
-      },
-    });
-
-    this.workletNode.port.onmessage = (event) => {
+  private bindTelemetry(node: AudioWorkletNode): void {
+    node.port.onmessage = (event) => {
       const data = event.data;
       if (data && data.type === "telemetry" && this.telemetryListener) {
         this.telemetryListener({
@@ -223,14 +315,241 @@ export class SiqVoiceTrackProcessor implements LiveConfigurableAudioProcessor {
           effectiveThresholdDb: data.effectiveThresholdDb,
           gateOpen: data.gateOpen,
           gainReductionDb: data.gainReductionDb,
+          aiNoiseReductionDb: data.aiNoiseReductionDb,
+          bypassed: data.bypassed,
         });
       }
     };
+  }
 
-    this.sourceNode.connect(this.workletNode);
-    this.workletNode.connect(this.destinationNode);
+  private async teardownNodesOnly(): Promise<void> {
+    try {
+      this.preNode?.port.postMessage({ type: "destroy" });
+      this.df3Node?.port.postMessage({ type: "destroy" });
+      this.postNode?.port.postMessage({ type: "destroy" });
+      this.pureNode?.port.postMessage({ type: "destroy" });
+      if (this.postNode) this.postNode.port.onmessage = null;
+      if (this.pureNode) this.pureNode.port.onmessage = null;
+      if (this.df3Node) this.df3Node.port.onmessage = null;
+
+      this.sourceNode?.disconnect();
+      this.preNode?.disconnect();
+      this.df3Node?.disconnect();
+      this.gtcrnNode?.disconnect();
+      this.gtcrnNode?.destroy();
+      this.postNode?.disconnect();
+      this.pureNode?.disconnect();
+      this.destinationNode?.disconnect();
+    } catch {
+      // ignore teardown errors
+    }
+
+    this.sourceNode = null;
+    this.preNode = null;
+    this.df3Node = null;
+    this.gtcrnNode = null;
+    this.postNode = null;
+    this.pureNode = null;
+    this.destinationNode = null;
+    this.processedTrack = undefined;
+  }
+
+  private async initUltra(ctx: AudioContext, track: MediaStreamTrack): Promise<void> {
+    const [wasmModule] = await Promise.all([
+      getDf3WasmModule(),
+      ensureWorkletModule(ctx, "df3"),
+      ensureWorkletModule(ctx, "siq"),
+    ]);
+
+    const attenDb = suppressionPctToAttenLimDb(this.config.suppressionStrength);
+    const df3 = new AudioWorkletNode(ctx, DF3_PROCESSOR_ID, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      channelCount: 1,
+      processorOptions: {
+        wasmModule,
+        attenuationLimit: attenDb > 0 ? attenDb : 100,
+        postFilterBeta: 0.02,
+      },
+    });
+    this.df3Node = df3;
+
+    await waitForWorkletReady(df3);
+    if (attenDb <= 0) {
+      df3.port.postMessage({ type: "setEnabled", value: false });
+    }
+
+    const stream = new MediaStream([track]);
+    this.sourceNode = ctx.createMediaStreamSource(stream);
+    this.destinationNode = ctx.createMediaStreamDestination();
+
+    this.preNode = new AudioWorkletNode(ctx, SIQ_PRE_PROCESSOR_ID, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { config: this.config },
+    });
+
+    this.postNode = new AudioWorkletNode(ctx, SIQ_POST_PROCESSOR_ID, {
+      numberOfInputs: 2,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: {
+        config: this.config,
+        enableAirRecovery: false,
+        dryDelaySamples: 0,
+        useWetMixControl: false,
+      },
+    });
+    this.bindTelemetry(this.postNode);
+    if (this.bypassed) {
+      this.postNode.port.postMessage({ type: "bypass", value: true });
+    }
+
+    // Graph: Source -> Pre (Gain + HPF) -> DF3 -> Post (input 0) -> Dest
+    //                                   \-------> Post (input 1: dry telemetry + A/B bypass)
+    this.sourceNode.connect(this.preNode);
+    this.preNode.connect(df3);
+    df3.connect(this.postNode, 0, 0);
+    this.preNode.connect(this.postNode, 0, 1);
+    this.postNode.connect(this.destinationNode);
 
     this.processedTrack = this.destinationNode.stream.getAudioTracks()[0];
+    this.activeSiqEngine = "ultra";
+  }
+
+  private async initFast(ctx: AudioContext, track: MediaStreamTrack): Promise<void> {
+    const [worklets, wasmBinary] = await Promise.all([
+      import("@sapphi-red/web-noise-suppressor"),
+      getWasmBinary("gtcrn"),
+      ensureWorkletModule(ctx, "gtcrn"),
+      ensureWorkletModule(ctx, "siq"),
+    ]);
+
+    const stream = new MediaStream([track]);
+    this.sourceNode = ctx.createMediaStreamSource(stream);
+    this.destinationNode = ctx.createMediaStreamDestination();
+
+    this.preNode = new AudioWorkletNode(ctx, SIQ_PRE_PROCESSOR_ID, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { config: this.config },
+    });
+
+    const binaryCopy = wasmBinary.slice(0);
+    this.gtcrnNode = new worklets.GtcrnWorkletNode(ctx, {
+      maxChannels: 1,
+      wasmBinary: binaryCopy,
+    });
+
+    // GTCRN runs 480-sample (10 ms @ 48 kHz) frames at 16 kHz internal bandwidth.
+    // Delay-align dry reference by 480 samples so speech-gated High-Band Air Recovery
+    // (>7.6 kHz) and suppression wet-mix have zero comb filtering.
+    this.postNode = new AudioWorkletNode(ctx, SIQ_POST_PROCESSOR_ID, {
+      numberOfInputs: 2,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: {
+        config: this.config,
+        enableAirRecovery: true,
+        dryDelaySamples: 480,
+        useWetMixControl: true,
+      },
+    });
+    this.bindTelemetry(this.postNode);
+    if (this.bypassed) {
+      this.postNode.port.postMessage({ type: "bypass", value: true });
+    }
+
+    this.sourceNode.connect(this.preNode);
+    this.preNode.connect(this.gtcrnNode);
+    this.gtcrnNode.connect(this.postNode, 0, 0);
+    this.preNode.connect(this.postNode, 0, 1);
+    this.postNode.connect(this.destinationNode);
+
+    this.processedTrack = this.destinationNode.stream.getAudioTracks()[0];
+    this.activeSiqEngine = "fast";
+  }
+
+  private async initPure(ctx: AudioContext, track: MediaStreamTrack): Promise<void> {
+    await ensureWorkletModule(ctx, "siq");
+
+    const stream = new MediaStream([track]);
+    this.sourceNode = ctx.createMediaStreamSource(stream);
+    this.destinationNode = ctx.createMediaStreamDestination();
+
+    this.pureNode = new AudioWorkletNode(ctx, SIQ_WORKLET_PROCESSOR_ID, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { config: this.config },
+    });
+    this.bindTelemetry(this.pureNode);
+    if (this.bypassed) {
+      this.pureNode.port.postMessage({ type: "bypass", value: true });
+    }
+
+    this.sourceNode.connect(this.pureNode);
+    this.pureNode.connect(this.destinationNode);
+    this.processedTrack = this.destinationNode.stream.getAudioTracks()[0];
+    this.activeSiqEngine = "pure";
+  }
+
+  async init(opts: AudioProcessorOptions): Promise<void> {
+    this.fallbackNotice = null;
+    const requested = this.config.aiEngine ?? "ultra";
+
+    // Neural tiers (DeepFilterNet3 & GTCRN) require a 48 kHz AudioContext.
+    const needs48k = requested === "ultra" || requested === "fast";
+    const resolved = needs48k
+      ? create48kAudioContextIfNeeded(opts.audioContext)
+      : { ctx: opts.audioContext, owned: false };
+
+    const ctx = resolved.ctx;
+    this.audioContext = ctx;
+    this.ownsAudioContext = resolved.owned;
+
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
+
+    if (requested === "ultra") {
+      try {
+        await this.initUltra(ctx, opts.track);
+        return;
+      } catch (ultraErr) {
+        console.warn("[siq-ai] Ultra (DeepFilterNet3) init failed, falling back to Fast AI:", ultraErr);
+        await this.teardownNodesOnly();
+        try {
+          await this.initFast(ctx, opts.track);
+          this.fallbackNotice = "SIQ Ultra AI unavailable on this runtime; switched to SIQ Fast AI.";
+          return;
+        } catch (fastErr) {
+          console.warn("[siq-ai] Fast AI fallback failed, falling back to Studio Pure:", fastErr);
+          await this.teardownNodesOnly();
+          await this.initPure(ctx, opts.track);
+          this.fallbackNotice = "SIQ Neural WASM unavailable; switched to SIQ Studio Pure DSP.";
+          return;
+        }
+      }
+    }
+
+    if (requested === "fast") {
+      try {
+        await this.initFast(ctx, opts.track);
+        return;
+      } catch (fastErr) {
+        console.warn("[siq-ai] Fast AI (GTCRN) init failed, falling back to Studio Pure:", fastErr);
+        await this.teardownNodesOnly();
+        await this.initPure(ctx, opts.track);
+        this.fallbackNotice = "SIQ Fast AI unavailable; switched to SIQ Studio Pure DSP.";
+        return;
+      }
+    }
+
+    await this.initPure(ctx, opts.track);
   }
 
   async restart(opts: AudioProcessorOptions): Promise<void> {
@@ -239,25 +558,24 @@ export class SiqVoiceTrackProcessor implements LiveConfigurableAudioProcessor {
   }
 
   async destroy(): Promise<void> {
+    await this.teardownNodesOnly();
     try {
-      this.workletNode?.port.postMessage({ type: "destroy" });
-      if (this.workletNode) this.workletNode.port.onmessage = null;
-      this.sourceNode?.disconnect();
-      this.workletNode?.disconnect();
-      this.destinationNode?.disconnect();
+      if (this.ownsAudioContext && this.audioContext && this.audioContext.state !== "closed") {
+        await this.audioContext.close().catch(() => {});
+      }
     } catch {
-      // ignore teardown errors
+      // ignore close errors
     }
-    this.sourceNode = null;
-    this.workletNode = null;
-    this.destinationNode = null;
-    this.processedTrack = undefined;
     this.audioContext = null;
+    this.ownsAudioContext = false;
   }
 }
 
+/** Backward-compatible alias for pure/hybrid SIQ processor imports */
+export class SiqVoiceTrackProcessor extends SiqAiTrackProcessor {}
+
 /**
- * LiveKit TrackProcessor wrapping @sapphi-red/web-noise-suppressor (RNNoise or GTCRN WASM)
+ * LiveKit TrackProcessor wrapping standalone @sapphi-red/web-noise-suppressor (RNNoise or GTCRN WASM)
  * with WebView2-safe Blob module loading, automatic 48 kHz context guarantee, and
  * real-time zero-latency input gain control.
  */
@@ -289,22 +607,10 @@ export class WasmNoiseTrackProcessor implements LiveConfigurableAudioProcessor {
   }
 
   async init(opts: AudioProcessorOptions): Promise<void> {
-    // RNNoise & GTCRN WASM frame size = 480 samples (10 ms @ 48 kHz).
-    // If Windows OS audio runs at 44.1 kHz, use a dedicated 48 kHz AudioContext so it never breaks.
-    let ctx = opts.audioContext;
-    this.ownsAudioContext = false;
-    if (ctx.sampleRate !== 48000 && typeof window !== "undefined") {
-      try {
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        ctx = new AudioCtx({ sampleRate: 48000, latencyHint: "interactive" });
-        this.ownsAudioContext = true;
-      } catch {
-        ctx = opts.audioContext;
-      }
-    }
+    const resolved = create48kAudioContextIfNeeded(opts.audioContext);
+    const ctx = resolved.ctx;
     this.audioContext = ctx;
+    this.ownsAudioContext = resolved.owned;
     if (ctx.state === "suspended") {
       await ctx.resume().catch(() => {});
     }
@@ -321,7 +627,6 @@ export class WasmNoiseTrackProcessor implements LiveConfigurableAudioProcessor {
     this.gainNode.gain.value = Math.max(0, Math.min(2.5, this.inputGainPct / 100));
     this.destinationNode = ctx.createMediaStreamDestination();
 
-    // Clone buffer because WebAssembly instantiation may detach/transfer it
     const binaryCopy = wasmBinary.slice(0);
     this.workletNode =
       this.mode === "rnnoise"
@@ -332,8 +637,7 @@ export class WasmNoiseTrackProcessor implements LiveConfigurableAudioProcessor {
     this.gainNode.connect(this.workletNode);
     this.workletNode.connect(this.destinationNode);
 
-    const outTrack = this.destinationNode.stream.getAudioTracks()[0];
-    this.processedTrack = outTrack;
+    this.processedTrack = this.destinationNode.stream.getAudioTracks()[0];
   }
 
   async restart(opts: AudioProcessorOptions): Promise<void> {
@@ -549,7 +853,7 @@ export async function createNoiseProcessor(
 
   if (mode === "siq") {
     return {
-      processor: new SiqVoiceTrackProcessor(siqConfig),
+      processor: new SiqAiTrackProcessor(siqConfig),
       effectiveMode: "siq",
     };
   }
@@ -564,9 +868,9 @@ export async function createNoiseProcessor(
   if (mode === "krisp") {
     if (!opts.isLiveKitCloud) {
       return {
-        processor: new SiqVoiceTrackProcessor(siqConfig),
+        processor: new SiqAiTrackProcessor(siqConfig),
         effectiveMode: "siq",
-        notice: "Krisp AI requires LiveKit Cloud; switched automatically to SIQ Cancellation.",
+        notice: "Krisp AI requires LiveKit Cloud; switched automatically to SIQ AI.",
       };
     }
 
@@ -574,8 +878,6 @@ export async function createNoiseProcessor(
       const krispMod = await import("@livekit/krisp-noise-filter");
       if (krispMod.isKrispNoiseFilterSupported()) {
         const krispFilter = krispMod.KrispNoiseFilter();
-        // When input gain is unity (100%), attach Krisp directly with zero extra MediaStream hop.
-        // Only add the zero-latency post-GainNode wrapper when custom gain boost/cut is active.
         if (inputGainPct === 100) {
           return {
             processor: krispFilter as LiveConfigurableAudioProcessor,
@@ -588,15 +890,15 @@ export async function createNoiseProcessor(
         };
       }
       return {
-        processor: new SiqVoiceTrackProcessor(siqConfig),
+        processor: new SiqAiTrackProcessor(siqConfig),
         effectiveMode: "siq",
-        notice: "Krisp is unsupported on this runtime; using SIQ Cancellation instead.",
+        notice: "Krisp is unsupported on this runtime; using SIQ AI instead.",
       };
     } catch {
       return {
-        processor: new SiqVoiceTrackProcessor(siqConfig),
+        processor: new SiqAiTrackProcessor(siqConfig),
         effectiveMode: "siq",
-        notice: "Could not load Krisp AI; using SIQ Cancellation instead.",
+        notice: "Could not load Krisp AI; using SIQ AI instead.",
       };
     }
   }

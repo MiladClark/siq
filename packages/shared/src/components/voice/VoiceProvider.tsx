@@ -44,7 +44,9 @@ import {
   type VoiceAudioSettings,
 } from "@siq/shared/lib/preferences";
 import {
+  DEFAULT_SIQ_DSP_CONFIG,
   SIQ_DSP_PRESETS,
+  type SiqAiEngine,
   type SiqDspConfig,
   type SiqPresetId,
 } from "@siq/shared/lib/siq-audio-worklet";
@@ -113,6 +115,7 @@ interface VoiceContextValue {
   stopScreenShare: () => Promise<void>;
   noiseMode: NoiseCancellationMode;
   activeNoiseEngine: NoiseCancellationMode;
+  activeSiqEngine: SiqAiEngine;
   setNoiseMode: (mode: NoiseCancellationMode) => Promise<void>;
   echoCancellation: boolean;
   setEchoCancellation: (enabled: boolean) => Promise<void>;
@@ -355,6 +358,9 @@ export function VoiceProvider({
   const [noiseMode, setNoiseModeState] = useState<NoiseCancellationMode>("siq");
   const [activeNoiseEngine, setActiveNoiseEngine] =
     useState<NoiseCancellationMode>("siq");
+  const [activeSiqEngine, setActiveSiqEngine] = useState<SiqAiEngine>(
+    DEFAULT_SIQ_DSP_CONFIG.aiEngine
+  );
   const [echoCancellation, setEchoCancellationState] = useState(true);
   const [autoGainControl, setAutoGainControlState] = useState(true);
   const [voiceAudio, setVoiceAudioState] = useState<VoiceAudioSettings>(
@@ -378,6 +384,7 @@ export function VoiceProvider({
     const prefs = loadAppPreferences();
     setNoiseModeState(prefs.noiseMode);
     setActiveNoiseEngine(prefs.noiseMode);
+    setActiveSiqEngine(prefs.voiceAudio.siqDsp.aiEngine);
     setEchoCancellationState(prefs.echoCancellation);
     setAutoGainControlState(prefs.autoGainControl);
     setVoiceAudioState(prefs.voiceAudio);
@@ -547,6 +554,7 @@ export function VoiceProvider({
       if (!room || room.state !== ConnectionState.Connected) {
         activeProcessorRef.current = null;
         setActiveNoiseEngine(targetMode);
+        setActiveSiqEngine(currentAudio.siqDsp.aiEngine);
         return;
       }
 
@@ -596,12 +604,16 @@ export function VoiceProvider({
         if (result.processor) {
           await localTrack.setProcessor(result.processor);
           activeProcessorRef.current = result.processor;
+          if (result.processor.activeSiqEngine) {
+            setActiveSiqEngine(result.processor.activeSiqEngine);
+          }
         } else {
           activeProcessorRef.current = null;
         }
         setActiveNoiseEngine(result.effectiveMode);
-        if (result.notice) {
-          setNotice(result.notice);
+        const noticeMsg = result.processor?.fallbackNotice || result.notice;
+        if (noticeMsg) {
+          setNotice(noticeMsg);
         }
       };
 
@@ -753,28 +765,50 @@ export function VoiceProvider({
     [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation, isDeafened, syncParticipants]
   );
 
-  const updateSiqDsp = useCallback((patch: Partial<SiqDspConfig>) => {
-    const prev = voiceAudioRef.current;
-    const nextSiq: SiqDspConfig = {
-      ...prev.siqDsp,
-      ...patch,
-      inputGainPct: patch.inputGainPct ?? prev.inputGainPct,
-    };
-    const next: VoiceAudioSettings = {
-      ...prev,
-      inputGainPct: nextSiq.inputGainPct,
-      siqDsp: nextSiq,
-    };
-    voiceAudioRef.current = next;
-    setVoiceAudioState(next);
+  const updateSiqDsp = useCallback(
+    (patch: Partial<SiqDspConfig>) => {
+      const prev = voiceAudioRef.current;
+      const nextSiq: SiqDspConfig = {
+        ...prev.siqDsp,
+        ...patch,
+        inputGainPct: patch.inputGainPct ?? prev.inputGainPct,
+      };
+      const next: VoiceAudioSettings = {
+        ...prev,
+        inputGainPct: nextSiq.inputGainPct,
+        siqDsp: nextSiq,
+      };
+      voiceAudioRef.current = next;
+      setVoiceAudioState(next);
 
-    const prefs = loadAppPreferences();
-    saveAppPreferences({ ...prefs, voiceAudio: next });
+      const prefs = loadAppPreferences();
+      saveAppPreferences({ ...prefs, voiceAudio: next });
 
-    if (activeProcessorRef.current?.updateSiqConfig) {
-      activeProcessorRef.current.updateSiqConfig(nextSiq);
-    }
-  }, []);
+      const engineChanged =
+        patch.aiEngine !== undefined && patch.aiEngine !== prev.siqDsp.aiEngine;
+      if (engineChanged) {
+        setActiveSiqEngine(nextSiq.aiEngine);
+        if (
+          roomRef.current?.state === ConnectionState.Connected &&
+          noiseModeRef.current === "siq"
+        ) {
+          void applyNoiseProcessorToCurrentMic(
+            "siq",
+            echoCancellation,
+            autoGainControl,
+            false,
+            next
+          );
+          return;
+        }
+      }
+
+      if (activeProcessorRef.current?.updateSiqConfig) {
+        activeProcessorRef.current.updateSiqConfig(nextSiq);
+      }
+    },
+    [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation]
+  );
 
   const applySiqPreset = useCallback(
     (presetId: SiqPresetId) => {
@@ -1958,6 +1992,7 @@ export function VoiceProvider({
       stopScreenShare,
       noiseMode,
       activeNoiseEngine,
+      activeSiqEngine,
       setNoiseMode,
       echoCancellation,
       setEchoCancellation,
@@ -2016,6 +2051,7 @@ export function VoiceProvider({
       stopScreenShare,
       noiseMode,
       activeNoiseEngine,
+      activeSiqEngine,
       setNoiseMode,
       echoCancellation,
       setEchoCancellation,

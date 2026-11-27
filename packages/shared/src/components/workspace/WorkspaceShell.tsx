@@ -2570,7 +2570,7 @@ function WorkspaceInner({
           {
             id: "settings-voice",
             label: "Voice, Audio & Noise Cancellation",
-            description: "Microphone, speakers, Krisp/RNNoise filter & push-to-talk",
+            description: "Microphone, speakers, SIQ AI noise cancellation & push-to-talk",
             keywords: [
               "voice",
               "audio",

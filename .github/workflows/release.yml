@@ -81,7 +81,7 @@ jobs:
               sha256,
               sizeBytes: buf.length,
               required: false,
-              releaseNotes: `SIQ Desktop ${tag} — SIQ zero-latency voice engine, desktop noise cancellation fixes, pro audio controls, and in-app auto-updates.`,
+              releaseNotes: `SIQ Desktop ${tag} — SIQ AI Engine v2 (local DeepFilterNet3 48kHz neural noise cancellation, Fast AI GTCRN + Air Recovery, De-Esser, Smart Compressor, and live A/B Mic Monitor).`,
               releasedAt: new Date().toISOString(),
               downloadUrl: `https://github.com/${repo}/releases/download/${tag}/SIQ-Windows-Portable.exe`,
             };

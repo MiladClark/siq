@@ -142,6 +142,9 @@ importers:
       '@livekit/krisp-noise-filter':
         specifier: ^0.4.6
         version: 0.4.6(livekit-client@2.25.0(@types/dom-mediacapture-record@1.0.22))
+      '@lofcz/deepfilternet-web':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@sapphi-red/web-noise-suppressor':
         specifier: ^0.4.2
         version: 0.4.2
@@ -902,6 +905,10 @@ packages:
 
   '@livekit/protocol@1.54.1':
     resolution: {integrity: sha512-eW6iAeKQdljAD4aDmANnV2SE0iQ06Atw2F1F4kIiy4lXaD5bNTlfAnH27B+ZKgu49Nrnn172JnRQ3WxXVBhlBQ==}
+
+  '@lofcz/deepfilternet-web@0.1.0':
+    resolution: {integrity: sha512-uKf9IsCd5HUkwLRqZTDmA8gPCsDZTAKUa+9u9GWrtJWRGxVIVj43neNcpGzPkK3DEle1L1tZ+df8GXNJJxEfGA==}
+    engines: {node: '>=18'}
 
   '@neondatabase/serverless@1.2.1':
     resolution: {integrity: sha512-PI2JjuyEFE7oZDTkV/s6WP4KEceCwnjQHClfunhysuIATtvcVTBLdA4UgHTnJo7C0mkK+OZ6U7SV1NDnYa0HgA==}
@@ -3573,6 +3580,8 @@ snapshots:
   '@livekit/protocol@1.54.1':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
+
+  '@lofcz/deepfilternet-web@0.1.0': {}
 
   '@neondatabase/serverless@1.2.1': {}
 

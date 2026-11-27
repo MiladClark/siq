@@ -1,14 +1,18 @@
 "use client";
 
 import { Track } from "livekit-client";
-import { Headphones, Mic, Volume2 } from "lucide-react";
+import { Headphones, Mic, SplitSquareHorizontal, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   createNoiseProcessor,
   type LiveConfigurableAudioProcessor,
   type NoiseCancellationMode,
 } from "@siq/shared/lib/noise-processor";
-import type { SiqAudioTelemetry, SiqDspConfig } from "@siq/shared/lib/siq-audio-worklet";
+import type {
+  SiqAiEngine,
+  SiqAudioTelemetry,
+  SiqDspConfig,
+} from "@siq/shared/lib/siq-audio-worklet";
 
 interface MicOptions {
   deviceId: string;
@@ -25,20 +29,51 @@ function dbToPercent(db: number): number {
   return ((clamped + 70) / 70) * 100;
 }
 
+function formatSiqBadge(mode: NoiseCancellationMode, engine: SiqAiEngine): string {
+  if (mode !== "siq") return mode.toUpperCase();
+  if (engine === "ultra") return "SIQ ULTRA AI";
+  if (engine === "fast") return "SIQ FAST AI";
+  return "SIQ PURE";
+}
+
 export function LiveMicWaveform(options: MicOptions) {
   const [running, setRunning] = useState(false);
   const [hearMyself, setHearMyself] = useState(false);
+  const [rawBypass, setRawBypass] = useState(false);
+
+  const supportsBypass = options.noiseMode === "siq" || options.noiseMode === "krisp";
 
   return (
     <div className="space-y-2.5 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <p className="text-xs font-semibold text-zinc-100">Studio Mic Monitor</p>
-          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-400">
-            {options.noiseMode.toUpperCase()}
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${
+              running && rawBypass
+                ? "bg-amber-500/20 text-amber-300"
+                : "bg-white/[0.06] text-zinc-400"
+            }`}
+          >
+            {running && rawBypass
+              ? "RAW BYPASS"
+              : formatSiqBadge(options.noiseMode, options.siqDsp.aiEngine)}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {supportsBypass && (
+            <button
+              type="button"
+              aria-pressed={rawBypass}
+              disabled={!running}
+              onClick={() => setRawBypass((prev) => !prev)}
+              title="Instant glitch-free A/B compare: toggle between raw mic and SIQ AI processed output"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-amber-400/50 aria-pressed:bg-amber-500/15 aria-pressed:text-amber-200"
+            >
+              <SplitSquareHorizontal className="h-3.5 w-3.5" aria-hidden />
+              {rawBypass ? "A/B: Raw" : "A/B: SIQ AI"}
+            </button>
+          )}
           <button
             type="button"
             aria-pressed={hearMyself}
@@ -58,7 +93,10 @@ export function LiveMicWaveform(options: MicOptions) {
             type="button"
             aria-pressed={running}
             onClick={() => {
-              if (running) setHearMyself(false);
+              if (running) {
+                setHearMyself(false);
+                setRawBypass(false);
+              }
               setRunning((prev) => !prev);
             }}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:text-white aria-pressed:border-rose-400/30 aria-pressed:bg-rose-500/15 aria-pressed:text-rose-300"
@@ -75,11 +113,15 @@ export function LiveMicWaveform(options: MicOptions) {
             options.deviceId,
             options.outputDeviceId,
             options.noiseMode,
+            options.noiseMode === "siq" || options.noiseMode === "krisp"
+              ? options.siqDsp.aiEngine
+              : "",
             options.echoCancellation,
             options.autoGainControl,
           ].join(":")}
           {...options}
           hearMyself={hearMyself}
+          rawBypass={rawBypass}
         />
       ) : (
         <div aria-hidden className="space-y-2">
@@ -87,7 +129,7 @@ export function LiveMicWaveform(options: MicOptions) {
             <span className="h-px bg-white/10" />
           </div>
           <p className="text-[11px] text-zinc-500">
-            Click Mic Test to inspect live input dB, noise gate threshold, and hear your active filter.
+            Click Mic Test to inspect live input dB, AI noise reduction, and A/B compare Raw vs SIQ AI.
           </p>
         </div>
       )}
@@ -104,17 +146,24 @@ function MicPreview({
   inputGainPct,
   siqDsp,
   hearMyself,
-}: MicOptions & { hearMyself: boolean }) {
+  rawBypass,
+}: MicOptions & { hearMyself: boolean; rawBypass: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const processorRef = useRef<LiveConfigurableAudioProcessor | null>(null);
   const monitorGainRef = useRef<GainNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const latestGainRef = useRef(inputGainPct);
   const latestSiqRef = useRef<SiqDspConfig>({ ...siqDsp, inputGainPct });
+  const latestBypassRef = useRef(rawBypass);
   latestGainRef.current = inputGainPct;
   latestSiqRef.current = { ...siqDsp, inputGainPct };
+  latestBypassRef.current = rawBypass;
 
-  const [status, setStatus] = useState("Starting microphone…");
+  const [status, setStatus] = useState(
+    noiseMode === "siq" && siqDsp.aiEngine === "ultra"
+      ? "Loading SIQ Ultra AI (DeepFilterNet3 48kHz)…"
+      : "Starting microphone…"
+  );
   const [error, setError] = useState(false);
   const [telemetry, setTelemetry] = useState<SiqAudioTelemetry | null>(null);
   const [fallbackDb, setFallbackDb] = useState<number>(-70);
@@ -129,6 +178,11 @@ function MicPreview({
       proc.setInputGainPct(inputGainPct);
     }
   }, [siqDsp, inputGainPct]);
+
+  // Glitch-free live A/B Bypass toggle
+  useEffect(() => {
+    processorRef.current?.setBypass?.(rawBypass);
+  }, [rawBypass]);
 
   // Smoothly toggle sidetone monitoring without glitches
   useEffect(() => {
@@ -197,7 +251,7 @@ function MicPreview({
         audioContext = context;
         audioContextRef.current = context;
 
-        // Krisp requires a LiveKit Cloud room token, so preview runs SIQ Cancellation cleanly locally
+        // Krisp requires a LiveKit Cloud room token, so preview runs SIQ AI cleanly locally
         const result = await createNoiseProcessor(noiseMode, {
           isLiveKitCloud: false,
           siqConfig: latestSiqRef.current,
@@ -225,6 +279,9 @@ function MicPreview({
           }
           processor = filter;
           processorRef.current = filter;
+          if (latestBypassRef.current) {
+            filter.setBypass?.(true);
+          }
           if (filter.processedTrack) {
             analysisStream = new MediaStream([filter.processedTrack]);
           }
@@ -266,15 +323,25 @@ function MicPreview({
         if (!active) return;
 
         const samples = new Float32Array(analyser.fftSize);
+        const activeSub = processor?.activeSiqEngine ?? latestSiqRef.current.aiEngine;
+        const srKhz = Math.round(context.sampleRate / 1000);
+        const siqLabel =
+          activeSub === "ultra"
+            ? `SIQ Ultra AI live (DeepFilterNet3 · ${srKhz}kHz Full-Band)`
+            : activeSub === "fast"
+              ? `SIQ Fast AI live (GTCRN + Air · ${srKhz}kHz · ~10ms)`
+              : `SIQ Studio Pure live (${srKhz}kHz · ~2.7ms)`;
         const label =
           result.effectiveMode === "off"
             ? "Raw microphone (no noise filter)"
             : result.effectiveMode === "siq"
-              ? `SIQ Cancellation live (${Math.round(context.sampleRate / 1000)}kHz · ~2.7ms)`
-              : `Active filter: ${result.effectiveMode.toUpperCase()} (${Math.round(context.sampleRate / 1000)}kHz)`;
+              ? processor?.fallbackNotice
+                ? `${siqLabel} — ${processor.fallbackNotice}`
+                : siqLabel
+              : `Active filter: ${result.effectiveMode.toUpperCase()} (${srKhz}kHz)`;
         setStatus(
           noiseMode === "krisp"
-            ? "SIQ preview (Krisp activates live on Cloud voice rooms)"
+            ? `${siqLabel} (Krisp activates live on Cloud voice rooms)`
             : label
         );
 
@@ -289,7 +356,6 @@ function MicPreview({
           if (canvas.height !== height) canvas.height = height;
           analyser.getFloatTimeDomainData(samples);
 
-          // Update fallback RMS meter for non-SIQ engines every ~4 frames (~15 Hz)
           meterTick++;
           if (meterTick % 4 === 0) {
             let sumSq = 0;
@@ -330,10 +396,12 @@ function MicPreview({
       active = false;
       releaseAudio();
     };
-  }, [deviceId, outputDeviceId, echoCancellation, autoGainControl, noiseMode]);
+  }, [deviceId, outputDeviceId, echoCancellation, autoGainControl, noiseMode, siqDsp.aiEngine]);
 
   const levelDb = telemetry ? telemetry.inputDb : fallbackDb;
+  const outputDb = telemetry ? telemetry.outputDb : null;
   const levelPct = dbToPercent(levelDb);
+  const outputPct = outputDb !== null ? dbToPercent(outputDb) : null;
   const floorPct = telemetry ? dbToPercent(telemetry.noiseFloorDb) : null;
   const thresholdDb = telemetry
     ? telemetry.effectiveThresholdDb
@@ -347,32 +415,43 @@ function MicPreview({
       <canvas
         ref={canvasRef}
         aria-hidden="true"
-        className="block h-12 w-full rounded-lg border border-white/[0.05] bg-[#090A0C] text-emerald-400"
+        className={`block h-12 w-full rounded-lg border border-white/[0.05] bg-[#090A0C] ${
+          rawBypass ? "text-amber-400" : "text-emerald-400"
+        }`}
       />
 
-      {/* Live Studio dB VU Meter + Noise Floor + Gate Marker */}
+      {/* Live Studio dB VU Meter + Pre-AI Input vs Clean Output + Gate Marker */}
       <div className="space-y-1">
         <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090A0C] ring-1 ring-white/[0.06]">
           {/* Ambient noise floor marker */}
           {floorPct !== null && (
             <div
-              className="absolute inset-y-0 left-0 bg-zinc-700/50 transition-all duration-150"
+              className="absolute inset-y-0 left-0 bg-zinc-700/45 transition-all duration-150"
               style={{ width: `${floorPct}%` }}
             />
           )}
-          {/* Live input level */}
+          {/* Raw pre-AI input ghost bar (shows how much noise the AI is stripping out) */}
+          {telemetry && !rawBypass && (
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-rose-400/25 transition-[width] duration-75"
+              style={{ width: `${levelPct}%` }}
+            />
+          )}
+          {/* Active output level */}
           <div
             className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-75 ${
-              levelDb > -4
+              (outputDb ?? levelDb) > -4
                 ? "bg-rose-400"
-                : telemetry && !telemetry.gateOpen
-                  ? "bg-zinc-500"
-                  : "bg-emerald-400"
+                : rawBypass
+                  ? "bg-amber-400"
+                  : telemetry && !telemetry.gateOpen
+                    ? "bg-zinc-500"
+                    : "bg-emerald-400"
             }`}
-            style={{ width: `${levelPct}%` }}
+            style={{ width: `${outputPct ?? levelPct}%` }}
           />
           {/* Gate threshold tick */}
-          {thresholdPct !== null && (
+          {thresholdPct !== null && !rawBypass && (
             <div
               className="absolute inset-y-0 w-0.5 bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.7)]"
               style={{ left: `${thresholdPct}%` }}
@@ -382,26 +461,36 @@ function MicPreview({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] tabular-nums text-zinc-400">
-          <div className="flex items-center gap-2">
-            <span>Input: {Math.round(levelDb)} dB</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span>In: {Math.round(levelDb)} dB</span>
+            {outputDb !== null && (
+              <>
+                <span className="text-zinc-600">·</span>
+                <span>Out: {Math.round(outputDb)} dB</span>
+              </>
+            )}
             {telemetry && (
               <>
                 <span className="text-zinc-600">·</span>
-                <span>Floor: {Math.round(telemetry.noiseFloorDb)} dB</span>
-                <span className="text-zinc-600">·</span>
-                <span>NR: -{Math.round(telemetry.gainReductionDb)} dB</span>
+                <span>
+                  {typeof telemetry.aiNoiseReductionDb === "number"
+                    ? `AI NR: -${Math.round(telemetry.aiNoiseReductionDb)} dB`
+                    : `NR: -${Math.round(telemetry.gainReductionDb)} dB`}
+                </span>
               </>
             )}
           </div>
           {telemetry && (
             <span
               className={`rounded px-1.5 py-0.5 font-semibold tracking-wide ${
-                telemetry.gateOpen
-                  ? "bg-emerald-500/20 text-emerald-300"
-                  : "bg-white/[0.06] text-zinc-400"
+                rawBypass
+                  ? "bg-amber-500/20 text-amber-300"
+                  : telemetry.gateOpen
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-white/[0.06] text-zinc-400"
               }`}
             >
-              {telemetry.gateOpen ? "VOICE OPEN" : "GATE CLOSED"}
+              {rawBypass ? "RAW MIC" : telemetry.gateOpen ? "VOICE OPEN" : "GATE CLOSED"}
             </span>
           )}
         </div>
