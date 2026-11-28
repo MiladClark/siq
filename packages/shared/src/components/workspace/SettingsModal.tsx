@@ -88,8 +88,8 @@ const NOISE_MODES: Array<{
   {
     id: "siq",
     title: "SIQ AI",
-    badge: "Flagship · Local 48kHz",
-    desc: "Our hybrid neural + broadcast studio engine: DeepFilterNet3 48kHz AI, Smart Gate, Tone EQ, De-Esser & Limiter. 100% local with zero cloud lock-in.",
+    badge: "Flagship · Engine v3",
+    desc: "SIQ Voice Engine v3: DeepFilterNet3 48 kHz neural AI on its own thread (never stutters your audio), instant spectral fallback, look-ahead voice gate, tone EQ, de-esser and limiter. 100% local.",
   },
   {
     id: "krisp",
@@ -132,20 +132,20 @@ const SIQ_AI_ENGINE_OPTIONS: Array<{
   {
     id: "ultra",
     label: "Ultra AI",
-    spec: "48kHz · DF3",
-    desc: "Krisp-class full-band voice isolation",
+    spec: "DF3 · ~50ms",
+    desc: "Best isolation · full-band 48 kHz",
   },
   {
     id: "fast",
     label: "Fast AI",
-    spec: "~10ms · GTCRN+",
-    desc: "Ultra-light neural + air recovery",
+    spec: "GTCRN · ~35ms",
+    desc: "Light neural · voice band",
   },
   {
     id: "pure",
-    label: "Studio Pure",
-    spec: "~2.7ms · DSP",
-    desc: "Zero-delay 3-band (<0.5% CPU)",
+    label: "Spectral",
+    spec: "~10ms · DSP",
+    desc: "Lowest delay · MCRA + Wiener",
   },
 ];
 
@@ -1146,10 +1146,12 @@ export function SettingsModal({
                               Active:{" "}
                               {voice.activeNoiseEngine === "siq"
                                 ? voice.activeSiqEngine === "ultra"
-                                  ? "SIQ ULTRA AI · 48kHz"
+                                  ? voice.siqNeuralState === "loading" || voice.siqNeuralState === "priming"
+                                    ? "SIQ ULTRA AI · LOADING MODEL"
+                                    : "SIQ ULTRA AI · DF3 48kHz"
                                   : voice.activeSiqEngine === "fast"
-                                    ? "SIQ FAST AI · ~10ms"
-                                    : "SIQ PURE · ~2.7ms"
+                                    ? "SIQ FAST AI · GTCRN"
+                                    : "SIQ SPECTRAL · ~10ms"
                                 : voice.activeNoiseEngine.toUpperCase()}
                             </span>
                           </div>
@@ -1213,10 +1215,10 @@ export function SettingsModal({
                                 </div>
                                 <span className="text-[10px] font-medium tabular-nums text-emerald-300/80">
                                   {voice.voiceAudio.siqDsp.aiEngine === "ultra"
-                                    ? "DeepFilterNet3 · 48kHz Full-Band"
+                                    ? "DeepFilterNet3 · 48kHz · Worker thread"
                                     : voice.voiceAudio.siqDsp.aiEngine === "fast"
-                                      ? "GTCRN + Air Recovery · ~10ms"
-                                      : "Pure Studio DSP · ~2.7ms"}
+                                      ? "GTCRN neural · 16kHz voice band"
+                                      : "SIQ Spectral · MCRA + Wiener · ~10ms"}
                                 </span>
                               </div>
 
@@ -1321,7 +1323,7 @@ export function SettingsModal({
                                     <p className="text-[10px] text-zinc-500">
                                       {voice.voiceAudio.siqDsp.aiEngine === "pure"
                                         ? "Silences background room noise between words without clipping speech."
-                                        : "Neural-guided gate — ignores keyboard clicks & fans, opens only on clean speech."}
+                                        : "Look-ahead gate driven by the AI-cleaned signal — opens before your first syllable, ignores keyboard clicks and fans."}
                                     </p>
                                   </div>
                                   <div className="inline-flex rounded-lg border border-white/[0.08] bg-[#0A0B0E] p-0.5">

@@ -257,9 +257,14 @@ export function VoiceStage({
     };
   }, [focusedSharer?.screenTrack]);
 
+  // Stable identity of the focused stream: participant objects are rebuilt every ~45 ms by the
+  // speaking detector, so effects must not depend on the object itself.
+  const focusedSharerId = focusedSharer?.identity ?? null;
+  const focusedScreenTrack = focusedSharer?.screenTrack ?? null;
+
   // Measure real rendered stream resolution & FPS from <video> element
   useEffect(() => {
-    if (!focusedSharer) {
+    if (!focusedSharerId) {
       setLiveVideoMeta(null);
       return;
     }
@@ -289,18 +294,18 @@ export function VoiceStage({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [focusedSharer]);
+  }, [focusedSharerId, focusedScreenTrack]);
 
   // Auto-hide HUD & cursor on idle mouse in Cinema / Fullscreen modes
   const wakeHud = useCallback(() => {
     setHudVisible(true);
     if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-    if (focusedSharer && (isBrowserFullscreen || isStageMaximized)) {
+    if (focusedSharerId && (isBrowserFullscreen || isStageMaximized)) {
       hudTimerRef.current = setTimeout(() => {
         setHudVisible(false);
       }, 2600);
     }
-  }, [focusedSharer, isBrowserFullscreen, isStageMaximized]);
+  }, [focusedSharerId, isBrowserFullscreen, isStageMaximized]);
 
   useEffect(() => {
     wakeHud();
@@ -407,7 +412,7 @@ export function VoiceStage({
     };
   }
 
-  function handleVideoWheel(e: ReactWheelEvent<HTMLDivElement>) {
+  function handleVideoWheel(e: ReactWheelEvent<HTMLDivElement> | WheelEvent) {
     if (!focusedSharer?.screenTrack) return;
     if (e.ctrlKey || e.metaKey || streamZoom > 1 || isStageMaximized || isBrowserFullscreen) {
       e.preventDefault();
@@ -423,6 +428,16 @@ export function VoiceStage({
       });
     }
   }
+
+  const wheelHandlerRef = useRef(handleVideoWheel);
+  wheelHandlerRef.current = handleVideoWheel;
+  useEffect(() => {
+    const el = videoSurfaceRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => wheelHandlerRef.current(e);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [focusedScreenTrack]);
 
   function handleVideoPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if (e.button !== 0 || streamZoom <= 1) return;
@@ -911,7 +926,6 @@ export function VoiceStage({
               {/* Video Surface (supports zoom, drag-to-pan, double-click fullscreen, idle cursor hide) */}
               <div
                 ref={videoSurfaceRef}
-                onWheel={handleVideoWheel}
                 onPointerDown={handleVideoPointerDown}
                 onPointerMove={handleVideoPointerMove}
                 onPointerUp={handleVideoPointerUp}

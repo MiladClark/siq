@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, gt, ilike, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { dmConversations, messages, users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import { hydrateMessagesList } from "@/lib/server-auth";
+import { hydrateMessagesList, isValidReplyTarget } from "@/lib/server-auth";
 import { createMessageSchema } from "@/lib/validators";
 
 async function verifyDmParticipant(dmId: string, userId: string) {
@@ -16,6 +16,14 @@ async function verifyDmParticipant(dmId: string, userId: string) {
   if (!conv) return null;
   if (conv.userAId !== userId && conv.userBId !== userId) return null;
   return conv;
+}
+
+// Cursors arrive with millisecond precision (JS ISO strings) while Postgres stores microseconds:
+// "after" starts at the next millisecond so the last known message is not re-sent every poll,
+// "before" includes the whole boundary millisecond so no message is ever skipped (the client
+// de-duplicates by id).
+function nextMillisecond(date: Date): Date {
+  return new Date(date.getTime() + 1);
 }
 
 export async function GET(
@@ -103,7 +111,7 @@ export async function GET(
         .from(messages)
         .innerJoin(users, eq(messages.authorId, users.id))
         .where(
-          and(eq(messages.dmConversationId, dmId), gt(messages.createdAt, afterDate))
+          and(eq(messages.dmConversationId, dmId), gte(messages.createdAt, nextMillisecond(afterDate)))
         )
         .orderBy(asc(messages.createdAt))
         .limit(80);
@@ -127,7 +135,7 @@ export async function GET(
         .from(messages)
         .innerJoin(users, eq(messages.authorId, users.id))
         .where(
-          and(eq(messages.dmConversationId, dmId), lt(messages.createdAt, beforeDate))
+          and(eq(messages.dmConversationId, dmId), lt(messages.createdAt, nextMillisecond(beforeDate)))
         )
         .orderBy(desc(messages.createdAt))
         .limit(PAGE_SIZE + 1);
@@ -187,6 +195,13 @@ export async function POST(
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? "Invalid message." },
+        { status: 400 }
+      );
+    }
+
+    if (!(await isValidReplyTarget(parsed.data.replyToId, { dmConversationId: dmId }))) {
+      return NextResponse.json(
+        { error: "The message you replied to is not in this conversation." },
         { status: 400 }
       );
     }

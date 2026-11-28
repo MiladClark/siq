@@ -613,7 +613,7 @@ function WorkspaceInner({
         return changed ? next : prev;
       });
       setToasts((prev) =>
-        prev.filter(
+        filterStable(prev, 
           (t) =>
             t.mentioned || (
               t.channelId !== feedId &&
@@ -856,7 +856,7 @@ function WorkspaceInner({
             )
           );
           setToasts((prev) =>
-            prev.filter(
+            filterStable(prev, 
               (t) => t.channelId !== activeFeedId && t.dmConversationId !== activeFeedId
             )
           );
@@ -922,7 +922,7 @@ function WorkspaceInner({
       setNotifications((prev) =>
         prev.map((n) => (n.channelId === nextChId ? { ...n, read: true } : n))
       );
-      setToasts((prev) => prev.filter((t) => t.channelId !== nextChId));
+      setToasts((prev) => filterStable(prev, (t) => t.channelId !== nextChId));
     }
   }
 
@@ -941,7 +941,7 @@ function WorkspaceInner({
     setNotifications((prev) =>
       prev.map((n) => (n.channelId === channelId ? { ...n, read: true } : n))
     );
-    setToasts((prev) => prev.filter((t) => t.channelId !== channelId));
+    setToasts((prev) => filterStable(prev, (t) => t.channelId !== channelId));
   }
 
   function selectHomeFriends(tab?: FriendsTab, keepDrawerOpen = false) {
@@ -961,7 +961,7 @@ function WorkspaceInner({
     setNotifications((prev) =>
       prev.map((n) => (n.dmConversationId === dmId ? { ...n, read: true } : n))
     );
-    setToasts((prev) => prev.filter((t) => t.dmConversationId !== dmId));
+    setToasts((prev) => filterStable(prev, (t) => t.dmConversationId !== dmId));
   }
 
   function handleOpenNotification(item: NotificationItem) {
@@ -4161,15 +4161,21 @@ function WorkspaceInner({
       <NotificationToasts
         toasts={toasts}
         toastStyle={appPrefs.toastStyle}
-        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+        onDismiss={(id) => setToasts((prev) => filterStable(prev, (t) => t.id !== id))}
         onOpenChannel={(channelId, toastId) => {
           selectChannel(channelId);
-          setToasts((prev) => prev.filter((t) => t.id !== toastId));
+          setToasts((prev) => filterStable(prev, (t) => t.id !== toastId));
         }}
         onOpenNotification={handleOpenNotification}
       />
     </div>
   );
+}
+
+/** Array.filter that returns the original array when nothing was removed (avoids no-op re-renders). */
+function filterStable<T>(list: T[], keep: (item: T) => boolean): T[] {
+  const next = list.filter(keep);
+  return next.length === list.length ? list : next;
 }
 
 export function WorkspaceShell(props: WorkspaceShellProps) {
@@ -4189,6 +4195,8 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
     [notifyRef]
   );
 
+  const handleOccupancyChanged = useCallback(() => presenceRef.current(), [presenceRef]);
+
   const buildFallbackMenu = useCallback((): ContextMenuEntry[] => {
     return [
       {
@@ -4205,7 +4213,7 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
     <MotionConfig reducedMotion="user">
       <SystemNotifyProvider value={notify}>
         <ContextMenuProvider fallbackEntries={buildFallbackMenu}>
-          <VoiceProvider onOccupancyChanged={() => presenceRef.current()}>
+          <VoiceProvider onOccupancyChanged={handleOccupancyChanged}>
             <WorkspaceInner
               {...props}
               onPresenceRef={presenceRef}

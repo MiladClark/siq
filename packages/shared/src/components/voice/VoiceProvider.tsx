@@ -12,9 +12,11 @@ import {
   RemoteTrackPublication,
   Room,
   RoomEvent,
+  ScreenSharePresets,
   Track,
   VideoPresets,
   VideoQuality,
+  type LocalTrack,
 } from "livekit-client";
 import {
   createContext,
@@ -32,9 +34,15 @@ import { RemoteAudioPlayer } from "@siq/shared/components/voice/AudioRenderer";
 import { voiceControls } from "@/lib/voice-controls";
 import {
   createNoiseProcessor,
+  prewarmSiqNeural,
   type LiveConfigurableAudioProcessor,
   type NoiseCancellationMode,
 } from "@siq/shared/lib/noise-processor";
+import {
+  ensurePlaybackRunning,
+  getPlaybackContext,
+  setPlaybackOutputDevice,
+} from "@siq/shared/lib/audio-playback";
 import {
   DEFAULT_SCREEN_SHARE_CONFIG,
   DEFAULT_VOICE_AUDIO_SETTINGS,
@@ -48,6 +56,7 @@ import {
   SIQ_DSP_PRESETS,
   type SiqAiEngine,
   type SiqDspConfig,
+  type SiqNeuralState,
   type SiqPresetId,
 } from "@siq/shared/lib/siq-audio-worklet";
 import { playCallDeclinedSound, playSound } from "@siq/shared/lib/sounds";
@@ -116,6 +125,8 @@ interface VoiceContextValue {
   noiseMode: NoiseCancellationMode;
   activeNoiseEngine: NoiseCancellationMode;
   activeSiqEngine: SiqAiEngine;
+  /** Live DeepFilterNet3 state for SIQ Ultra AI (loading → priming → active, or degraded) */
+  siqNeuralState: SiqNeuralState;
   setNoiseMode: (mode: NoiseCancellationMode) => Promise<void>;
   echoCancellation: boolean;
   setEchoCancellation: (enabled: boolean) => Promise<void>;
@@ -265,6 +276,8 @@ function getResolutionDimensions(res: ScreenShareConfig["resolution"]): {
   }
 }
 
+type MicApplyAction = "attach" | "recapture" | "republish";
+
 function getAudioPublishOptions(voiceAudio: VoiceAudioSettings) {
   const maxBitrate =
     voiceAudio.voiceQuality === "low-bandwidth"
@@ -361,6 +374,7 @@ export function VoiceProvider({
   const [activeSiqEngine, setActiveSiqEngine] = useState<SiqAiEngine>(
     DEFAULT_SIQ_DSP_CONFIG.aiEngine
   );
+  const [siqNeuralState, setSiqNeuralState] = useState<SiqNeuralState>("off");
   const [echoCancellation, setEchoCancellationState] = useState(true);
   const [autoGainControl, setAutoGainControlState] = useState(true);
   const [voiceAudio, setVoiceAudioState] = useState<VoiceAudioSettings>(
@@ -372,6 +386,9 @@ export function VoiceProvider({
   );
 
   const activeProcessorRef = useRef<LiveConfigurableAudioProcessor | null>(null);
+  /** What the attached processor was built for (mode/engine/gain) — avoids needless rebuilds */
+  const attachedSignatureRef = useRef<string>("");
+  const lastStatusMessageRef = useRef<string | null>(null);
   const voiceAudioRef = useRef<VoiceAudioSettings>(voiceAudio);
   voiceAudioRef.current = voiceAudio;
   const noiseModeRef = useRef<NoiseCancellationMode>(noiseMode);
@@ -540,60 +557,96 @@ export function VoiceProvider({
     }
   }, []);
 
-  /** Attach or remove the active Noise / Gain Processor on the live microphone track */
+  /**
+   * Brings the live microphone to the requested processing state.
+   *  - "attach":    (re)build the noise processor only when mode/engine/gain needs changed
+   *  - "recapture": re-open the mic with new browser constraints (AEC / AGC / WebRTC NS);
+   *                 the running processor is kept and just re-binds its source
+   *  - "republish": unpublish + publish again (Opus bitrate / DTX / RED changes)
+   */
   const applyNoiseProcessorToCurrentMic = useCallback(
     async (
       targetMode: NoiseCancellationMode,
       aec: boolean,
       agc: boolean,
-      forceRepublishMic = false,
+      action: MicApplyAction | boolean = "attach",
       audioOverride?: VoiceAudioSettings
     ) => {
+      const mode: MicApplyAction =
+        action === true ? "recapture" : action === false ? "attach" : action;
       const currentAudio = audioOverride ?? voiceAudioRef.current;
       const room = roomRef.current;
       if (!room || room.state !== ConnectionState.Connected) {
         activeProcessorRef.current = null;
+        attachedSignatureRef.current = "";
         setActiveNoiseEngine(targetMode);
         setActiveSiqEngine(currentAudio.siqDsp.aiEngine);
         return;
       }
 
-      const browserNoiseSuppression = targetMode === "standard";
-      const pubOpts = getAudioPublishOptions(currentAudio);
+      const captureOptions = {
+        autoGainControl: agc,
+        echoCancellation: aec,
+        noiseSuppression: targetMode === "standard",
+        deviceId: selectedAudioInput || undefined,
+        channelCount: 1,
+      };
+      const local = room.localParticipant;
 
-      if (forceRepublishMic && room.localParticipant.isMicrophoneEnabled) {
-        await room.localParticipant.setMicrophoneEnabled(false);
-        await room.localParticipant.setMicrophoneEnabled(
-          true,
-          {
-            autoGainControl: agc,
-            echoCancellation: aec,
-            noiseSuppression: browserNoiseSuppression,
-            deviceId: selectedAudioInput || undefined,
-          },
-          pubOpts
-        );
+      if (mode === "republish" && local.isMicrophoneEnabled) {
+        const existing = local.getTrackPublication(Track.Source.Microphone)?.track;
+        activeProcessorRef.current?.setStatusListener?.(null);
+        if (existing) {
+          await local.unpublishTrack(existing as LocalAudioTrack, true).catch(() => undefined);
+        }
+        activeProcessorRef.current = null;
+        attachedSignatureRef.current = "";
+        await local.setMicrophoneEnabled(true, captureOptions, getAudioPublishOptions(currentAudio));
       }
 
-      const micPub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const micPub = local.getTrackPublication(Track.Source.Microphone);
       const localTrack = micPub?.track as LocalAudioTrack | undefined;
       if (!localTrack) {
         activeProcessorRef.current = null;
+        attachedSignatureRef.current = "";
         setActiveNoiseEngine(targetMode);
         return;
       }
 
+      if (mode === "recapture") {
+        await localTrack.restartTrack(captureOptions).catch((err) => {
+          console.warn("[voice] microphone restart failed:", err);
+        });
+      }
+
+      const siqConfig: SiqDspConfig = {
+        ...currentAudio.siqDsp,
+        inputGainPct: currentAudio.inputGainPct,
+      };
+      const usesSiqEngine = targetMode === "siq" || targetMode === "krisp";
+      const signature = [
+        targetMode,
+        usesSiqEngine ? currentAudio.siqDsp.aiEngine : "",
+        !usesSiqEngine && currentAudio.inputGainPct !== 100 ? "gain" : "",
+        targetMode === "krisp" && currentAudio.inputGainPct !== 100 ? "krisp-gain" : "",
+      ].join(":");
+      const attachedNow = (localTrack.getProcessor() ?? null) as LiveConfigurableAudioProcessor | null;
+      if (signature === attachedSignatureRef.current && attachedNow === activeProcessorRef.current) {
+        // Already running the right engine on this track: only refresh live parameters.
+        attachedNow?.updateSiqConfig?.(siqConfig);
+        return;
+      }
+
+      activeProcessorRef.current?.setStatusListener?.(null);
       try {
         await localTrack.stopProcessor();
       } catch {
         // ignore if no previous processor was running
       }
       activeProcessorRef.current = null;
-
-      const siqConfig: SiqDspConfig = {
-        ...currentAudio.siqDsp,
-        inputGainPct: currentAudio.inputGainPct,
-      };
+      attachedSignatureRef.current = "";
+      lastStatusMessageRef.current = null;
+      setSiqNeuralState("off");
 
       const attach = async (modeToAttach: NoiseCancellationMode) => {
         const result = await createNoiseProcessor(modeToAttach, {
@@ -601,19 +654,29 @@ export function VoiceProvider({
           siqConfig,
           inputGainPct: currentAudio.inputGainPct,
         });
-        if (result.processor) {
-          await localTrack.setProcessor(result.processor);
-          activeProcessorRef.current = result.processor;
-          if (result.processor.activeSiqEngine) {
-            setActiveSiqEngine(result.processor.activeSiqEngine);
-          }
+        const processor = result.processor;
+        if (processor) {
+          processor.setStatusListener?.((status) => {
+            if (activeProcessorRef.current && activeProcessorRef.current !== processor) return;
+            setActiveSiqEngine(status.active);
+            setSiqNeuralState(status.neuralState);
+            if (status.message && status.message !== lastStatusMessageRef.current) {
+              lastStatusMessageRef.current = status.message;
+              setNotice(status.message);
+            }
+          });
+          await localTrack.setProcessor(processor);
+          activeProcessorRef.current = processor;
+          if (processor.activeSiqEngine) setActiveSiqEngine(processor.activeSiqEngine);
         } else {
           activeProcessorRef.current = null;
         }
+        attachedSignatureRef.current =
+          modeToAttach === targetMode ? signature : `fallback:${modeToAttach}`;
         setActiveNoiseEngine(result.effectiveMode);
-        const noticeMsg = result.processor?.fallbackNotice || result.notice;
-        if (noticeMsg) {
-          setNotice(noticeMsg);
+        if (result.notice && result.notice !== lastStatusMessageRef.current) {
+          lastStatusMessageRef.current = result.notice;
+          setNotice(result.notice);
         }
       };
 
@@ -645,15 +708,22 @@ export function VoiceProvider({
 
   const setNoiseMode = useCallback(
     async (mode: NoiseCancellationMode) => {
+      const previousMode = noiseModeRef.current;
+      noiseModeRef.current = mode;
       setNoiseModeState(mode);
       const prefs = loadAppPreferences();
       saveAppPreferences({ ...prefs, noiseMode: mode });
       setNotice(null);
+      if (mode === "siq" && voiceAudioRef.current.siqDsp.aiEngine === "ultra") {
+        prewarmSiqNeural(voiceAudioRef.current.siqDsp);
+      }
+      // Only re-open the microphone when the browser's own WebRTC noise suppression flips
+      const browserNsChanged = (previousMode === "standard") !== (mode === "standard");
       await applyNoiseProcessorToCurrentMic(
         mode,
         echoCancellation,
         autoGainControl,
-        mode === "standard" || mode === "off"
+        browserNsChanged ? "recapture" : "attach"
       );
     },
     [applyNoiseProcessorToCurrentMic, autoGainControl, echoCancellation, setNotice]
@@ -757,7 +827,7 @@ export function VoiceProvider({
           noiseModeRef.current,
           echoCancellation,
           autoGainControl,
-          true,
+          "republish",
           next
         );
       }
@@ -788,6 +858,7 @@ export function VoiceProvider({
         patch.aiEngine !== undefined && patch.aiEngine !== prev.siqDsp.aiEngine;
       if (engineChanged) {
         setActiveSiqEngine(nextSiq.aiEngine);
+        if (nextSiq.aiEngine === "ultra") prewarmSiqNeural(nextSiq);
         if (
           roomRef.current?.state === ConnectionState.Connected &&
           noiseModeRef.current === "siq"
@@ -998,7 +1069,7 @@ export function VoiceProvider({
         setError("Network error while kicking user.");
       }
     },
-    [activeChannel?.slug, onOccupancyChanged]
+    [activeChannel?.slug, onOccupancyChanged, setError]
   );
 
   const serverMuteParticipant = useCallback(
@@ -1025,7 +1096,7 @@ export function VoiceProvider({
         setError("Network error while muting user.");
       }
     },
-    [activeChannel?.slug]
+    [activeChannel?.slug, setError]
   );
 
   // Instant low-latency Web Audio RMS Voice Activity Detection (~45ms attack, ~140ms release)
@@ -1037,15 +1108,9 @@ export function VoiceProvider({
       return;
     }
 
-    let audioCtx: AudioContext | null = null;
-    try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      audioCtx = new AudioCtx();
-    } catch {
-      return;
-    }
+    // Speaking meters share the playback context (analysers only, no extra output stream)
+    const audioCtx: AudioContext | null = getPlaybackContext();
+    if (!audioCtx) return;
 
     interface MeterEntry {
       trackId: string;
@@ -1181,9 +1246,6 @@ export function VoiceProvider({
         }
       });
       meters.clear();
-      if (audioCtx && audioCtx.state !== "closed") {
-        void audioCtx.close().catch(() => {});
-      }
     };
   }, [connectionState, syncParticipants]);
 
@@ -1292,6 +1354,11 @@ export function VoiceProvider({
 
       const attemptId = ++joinAttemptIdRef.current;
       joinRequestRef.current?.controller.abort();
+      // Start fetching/compiling the neural model in parallel with token + connect
+      if (noiseModeRef.current === "siq" && voiceAudioRef.current.siqDsp.aiEngine === "ultra") {
+        prewarmSiqNeural(voiceAudioRef.current.siqDsp);
+      }
+      ensurePlaybackRunning();
       const request = { channelId: channel.id, controller: new AbortController() };
       joinRequestRef.current = request;
       setError(null);
@@ -1385,13 +1452,16 @@ export function VoiceProvider({
 
         const pubAudioDefaults = getAudioPublishOptions(voiceAudioRef.current);
         const room = new Room({
-          adaptiveStream: false,
+          // Subscribe to the video layer that matches each tile's real on-screen size
+          // (and pause video nobody can see) instead of always pulling full quality.
+          adaptiveStream: { pixelDensity: "screen" },
           dynacast: true,
           audioCaptureDefaults: {
             autoGainControl,
             echoCancellation,
             noiseSuppression: noiseMode === "standard",
             deviceId: selectedAudioInput || undefined,
+            channelCount: 1,
           },
           videoCaptureDefaults: {
             resolution: VideoPresets.h720.resolution,
@@ -1537,6 +1607,7 @@ export function VoiceProvider({
               echoCancellation,
               noiseSuppression: noiseMode === "standard",
               deviceId: selectedAudioInput || undefined,
+              channelCount: 1,
             },
             getAudioPublishOptions(voiceAudioRef.current)
           );
@@ -1603,6 +1674,8 @@ export function VoiceProvider({
       refreshDevices,
       selectedAudioInput,
       selectedVideoInput,
+      setError,
+      setNotice,
       syncParticipants,
       syncTrackSubscriptions,
     ]
@@ -1623,10 +1696,12 @@ export function VoiceProvider({
           echoCancellation,
           noiseSuppression: noiseMode === "standard",
           deviceId: selectedAudioInput || undefined,
+          channelCount: 1,
         },
         getAudioPublishOptions(voiceAudioRef.current)
       );
       if (nextEnabled) {
+        // Keeps the running engine on unmute (no rebuild, no audio gap); attaches only if missing
         await applyNoiseProcessorToCurrentMic(
           noiseMode,
           echoCancellation,
@@ -1646,6 +1721,7 @@ export function VoiceProvider({
     isDeafened,
     noiseMode,
     selectedAudioInput,
+    setError,
     syncParticipants,
   ]);
 
@@ -1789,8 +1865,18 @@ export function VoiceProvider({
           facingMode: facing,
           resolution: VideoPresets.h720.resolution,
         });
-        const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
-        const settings = track?.mediaStreamTrack?.getSettings?.();
+        const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track as
+          | LocalVideoTrack
+          | undefined;
+        let settings = track?.mediaStreamTrack?.getSettings?.();
+        // Re-enabling a muted camera only unmutes it with its old constraints; honour the
+        // requested lens (e.g. "Share Rear Camera") by restarting it when it differs.
+        if (track && settings?.facingMode && settings.facingMode !== facing) {
+          await track
+            .restartTrack({ facingMode: facing, resolution: VideoPresets.h720.resolution })
+            .catch(() => undefined);
+          settings = track.mediaStreamTrack?.getSettings?.();
+        }
         setCameraFacingMode(
           settings?.facingMode === "environment" || settings?.facingMode === "user"
             ? settings.facingMode
@@ -1823,22 +1909,22 @@ export function VoiceProvider({
       }
 
       const cfg: ScreenShareConfig = { ...screenShareConfig, ...(override ?? {}) };
-      updateScreenShareConfig(cfg);
 
       try {
-        // If already sharing, disable previous track cleanly first so browser re-prompts for source/settings
-        if (room.localParticipant.isScreenShareEnabled) {
-          await room.localParticipant.setScreenShareEnabled(false);
-        }
+        // "Native" keeps the source size (downscaled only above 4K) but still honours the FPS
+        const dims = getResolutionDimensions(cfg.resolution) ?? { width: 3840, height: 2160 };
+        const resolution = { width: dims.width, height: dims.height, frameRate: cfg.fps };
 
-        const dims = getResolutionDimensions(cfg.resolution);
-        const resolution = dims
-          ? { width: dims.width, height: dims.height, frameRate: cfg.fps }
-          : undefined;
+        // LiveKit forces contentHint="motion" for SVC codecs (VP9/AV1), which would silently
+        // defeat the text/detail mode, so detail shares use H.264 (hardware encoders, sharp text).
+        const videoCodec = cfg.mode === "detail" && cfg.codec === "vp9" ? "h264" : cfg.codec;
+        const supportsLowLayer = videoCodec === "h264" || videoCodec === "vp8";
 
         const publishOpts = {
-          simulcast: false,
-          videoCodec: cfg.codec,
+          // A 360p layer lets hover previews and small tiles avoid pulling the full stream
+          simulcast: supportsLowLayer,
+          screenShareSimulcastLayers: supportsLowLayer ? [ScreenSharePresets.h360fps15] : [],
+          videoCodec,
           degradationPreference:
             cfg.mode === "detail"
               ? ("maintain-resolution" as const)
@@ -1849,33 +1935,43 @@ export function VoiceProvider({
           },
         };
 
+        // Pick the new source FIRST: cancelling the picker must not end an existing stream
+        let newTracks: LocalTrack[];
         try {
-          await room.localParticipant.setScreenShareEnabled(
-            true,
-            {
-              audio: cfg.shareAudio,
-              resolution,
-              contentHint: cfg.mode,
-              selfBrowserSurface: "exclude",
-              systemAudio: cfg.shareAudio ? "include" : "exclude",
-              suppressLocalAudioPlayback: true,
-            },
-            publishOpts
-          );
+          newTracks = await room.localParticipant.createScreenTracks({
+            audio: cfg.shareAudio,
+            resolution,
+            contentHint: cfg.mode,
+            selfBrowserSurface: "exclude",
+            systemAudio: cfg.shareAudio ? "include" : "exclude",
+            suppressLocalAudioPlayback: true,
+          });
         } catch (innerErr) {
           if (innerErr instanceof Error && innerErr.name === "NotAllowedError") {
             throw innerErr;
           }
-          // Mobile browsers sometimes reject desktop-only displaySurface/audio hints — retry with safe constraints
-          await room.localParticipant.setScreenShareEnabled(
-            true,
-            {
-              audio: cfg.shareAudio,
-              resolution,
-            },
-            publishOpts
-          );
+          // Mobile browsers sometimes reject desktop-only displaySurface/audio hints — retry safely
+          newTracks = await room.localParticipant.createScreenTracks({
+            audio: cfg.shareAudio,
+            resolution,
+          });
         }
+        if (roomRef.current !== room) {
+          newTracks.forEach((t) => t.stop());
+          return false;
+        }
+
+        // Swap: retire the previous share only now that the new source is ready
+        for (const source of [Track.Source.ScreenShare, Track.Source.ScreenShareAudio]) {
+          const previous = room.localParticipant.getTrackPublication(source)?.track;
+          if (previous) {
+            await room.localParticipant.unpublishTrack(previous as LocalTrack, true).catch(() => undefined);
+          }
+        }
+        for (const track of newTracks) {
+          await room.localParticipant.publishTrack(track, publishOpts);
+        }
+        updateScreenShareConfig(cfg);
 
         playSound("stream-start");
         syncParticipants();
@@ -1913,7 +2009,13 @@ export function VoiceProvider({
 
   const setAudioOutput = useCallback((deviceId: string) => {
     setSelectedAudioOutput(deviceId);
+    void setPlaybackOutputDevice(deviceId);
   }, []);
+
+  // Route all voice playback (shared context) to the chosen output device
+  useEffect(() => {
+    void setPlaybackOutputDevice(selectedAudioOutput);
+  }, [selectedAudioOutput]);
 
   const setVideoInput = useCallback(async (deviceId: string) => {
     setSelectedVideoInput(deviceId);
@@ -1993,6 +2095,7 @@ export function VoiceProvider({
       noiseMode,
       activeNoiseEngine,
       activeSiqEngine,
+      siqNeuralState,
       setNoiseMode,
       echoCancellation,
       setEchoCancellation,
@@ -2052,6 +2155,7 @@ export function VoiceProvider({
       noiseMode,
       activeNoiseEngine,
       activeSiqEngine,
+      siqNeuralState,
       setNoiseMode,
       echoCancellation,
       setEchoCancellation,

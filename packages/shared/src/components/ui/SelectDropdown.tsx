@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -59,6 +60,7 @@ export function SelectDropdown({
   className = "",
 }: SelectDropdownProps) {
   const [open, setOpen] = useState(false);
+  const listboxId = useId();
   const [mounted, setMounted] = useState(false);
   const [coords, setCoords] = useState<MenuCoords | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -225,6 +227,7 @@ export function SelectDropdown({
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={listboxId}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => {
@@ -280,6 +283,7 @@ export function SelectDropdown({
             {open && coords && (
               <motion.div
                 ref={menuRef}
+                id={listboxId}
                 role="listbox"
                 aria-label={ariaLabel}
                 onPointerDown={(e) => e.stopPropagation()}

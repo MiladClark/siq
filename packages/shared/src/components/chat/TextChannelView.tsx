@@ -32,6 +32,7 @@ import {
   FormEvent,
   Fragment,
   KeyboardEvent,
+  memo,
   ReactNode,
   useCallback,
   useEffect,
@@ -94,15 +95,70 @@ interface ChannelCacheEntry {
   hydrated: boolean;
 }
 
+const EMPTY_MEMBER_PROFILES = new Map<string, never>();
+
+const MAX_CACHED_CHANNELS = 30;
+const MAX_CACHED_MESSAGES = 400;
+
+/**
+ * LRU message cache: the most recently used conversations stay instant on switch, while
+ * memory stays bounded (oldest conversations are evicted, long histories keep their newest
+ * messages and are marked hasMore so older pages can be fetched again).
+ */
+class ChannelMessageCache extends Map<string, ChannelCacheEntry> {
+  override get(channelId: string): ChannelCacheEntry | undefined {
+    const entry = super.get(channelId);
+    if (entry) {
+      super.delete(channelId);
+      super.set(channelId, entry);
+    }
+    return entry;
+  }
+
+  override set(channelId: string, entry: ChannelCacheEntry): this {
+    super.delete(channelId);
+    super.set(channelId, entry);
+    // Trim only conversations that are not the one being written (i.e. not on screen), so
+    // history the user scrolled up to load never vanishes while they read it.
+    for (const [id, other] of this) {
+      if (id !== channelId && other.messages.length > MAX_CACHED_MESSAGES) {
+        super.set(id, {
+          ...other,
+          messages: other.messages.slice(-MAX_CACHED_MESSAGES),
+          hasMore: true,
+        });
+      }
+    }
+    while (this.size > MAX_CACHED_CHANNELS) {
+      const oldest = this.keys().next().value;
+      if (oldest === undefined) break;
+      super.delete(oldest);
+    }
+    return this;
+  }
+}
+
 /** Persistent in-memory cache across channel switches — zero skeleton flash, race-safe */
-const messageCaches = new Map<string, Map<string, ChannelCacheEntry>>();
+const messageCaches = new Map<string, ChannelMessageCache>();
 
 function getMessageCache(userId: string) {
-  const cache = messageCaches.get(userId) ?? new Map<string, ChannelCacheEntry>();
+  const cache = messageCaches.get(userId) ?? new ChannelMessageCache();
   messageCaches.set(userId, cache);
   return cache;
 }
 const COMPOSER_MAX_HEIGHT = 132;
+
+/** Per-conversation composer drafts (text + finished uploads), kept across channel/DM switches */
+interface ComposerDraft {
+  text: string;
+  attachments: MessageAttachment[];
+}
+const composerDrafts = new Map<string, ComposerDraft>();
+/** Bumped around every local mutation so a poll that overlapped it never applies a stale snapshot */
+const mutationEpochs = new Map<string, number>();
+function draftKey(userId: string, channelId: string) {
+  return `${userId}:${channelId}`;
+}
 
 function sortMessagesChronologically(items: MessageItem[]): MessageItem[] {
   const byId = new Map<string, MessageItem>();
@@ -114,6 +170,68 @@ function sortMessagesChronologically(items: MessageItem[]): MessageItem[] {
     if (dt !== 0) return dt;
     return a.id.localeCompare(b.id);
   });
+}
+
+function sameReactions(a: MessageItem["reactions"], b: MessageItem["reactions"]): boolean {
+  const ra = a ?? [];
+  const rb = b ?? [];
+  if (ra.length !== rb.length) return false;
+  for (let i = 0; i < ra.length; i++) {
+    const x = ra[i];
+    const y = rb[i];
+    if (
+      x.emoji !== y.emoji ||
+      x.count !== y.count ||
+      x.reactedByMe !== y.reactedByMe ||
+      x.userIds.length !== y.userIds.length ||
+      x.userIds.some((id, j) => id !== y.userIds[j])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** True when a server copy carries nothing new compared to the cached message. */
+function sameMessage(a: MessageItem, b: MessageItem): boolean {
+  if (a === b) return true;
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.createdAt === b.createdAt &&
+    a.editedAt === b.editedAt &&
+    a.pinned === b.pinned &&
+    a.pinnedAt === b.pinnedAt &&
+    a.author.id === b.author.id &&
+    a.author.username === b.author.username &&
+    a.author.displayName === b.author.displayName &&
+    a.author.avatarColor === b.author.avatarColor &&
+    a.author.avatarUrl === b.author.avatarUrl &&
+    a.author.bannerUrl === b.author.bannerUrl &&
+    a.author.role === b.author.role &&
+    (a.replyTo?.id ?? null) === (b.replyTo?.id ?? null) &&
+    (a.replyTo?.content ?? null) === (b.replyTo?.content ?? null) &&
+    (a.replyTo?.authorDisplayName ?? null) === (b.replyTo?.authorDisplayName ?? null) &&
+    a.attachments.length === b.attachments.length &&
+    a.attachments.every((att, i) => att.url === b.attachments[i].url) &&
+    sameReactions(a.reactions, b.reactions)
+  );
+}
+
+/**
+ * Keeps the cached object for every message the server returned unchanged (so memoized rows
+ * skip re-rendering) and returns the previous array itself when nothing changed at all.
+ */
+function reuseUnchanged(previous: MessageItem[], next: MessageItem[]): MessageItem[] {
+  const prevById = new Map(previous.map((m) => [m.id, m]));
+  let identical = previous.length === next.length;
+  const out = next.map((m, i) => {
+    const old = prevById.get(m.id);
+    const keep = old && sameMessage(old, m) ? old : m;
+    if (identical && previous[i] !== keep) identical = false;
+    return keep;
+  });
+  return identical ? previous : out;
 }
 
 /** Reconcile a fresh tail (latest 80 from server) with any older paginated messages in cache.
@@ -131,7 +249,10 @@ function reconcileWithFreshTail(
   const preservedOlder = existing.filter(
     (m) => !tailIds.has(m.id) && new Date(m.createdAt).getTime() < tailStartMs
   );
-  const merged = sortMessagesChronologically([...preservedOlder, ...freshTail]);
+  const merged = reuseUnchanged(
+    existing,
+    sortMessagesChronologically([...preservedOlder, ...freshTail])
+  );
   // If we already preserved older pages beyond the tail, keep previous hasMore knowledge
   return {
     messages: merged,
@@ -312,6 +433,456 @@ function renderMessageText(text: string, memberHandles: Set<string>): ReactNode[
   });
 }
 
+export interface MessageRowActions {
+  contextMenu: (e: React.MouseEvent<HTMLElement>, msg: MessageItem, canDelete: boolean) => void;
+  toggleReaction: (messageId: string, emoji: string) => void;
+  openReactionPicker: (e: React.MouseEvent<HTMLElement>, messageId: string) => void;
+  reply: (msg: MessageItem) => void;
+  startEdit: (msg: MessageItem) => void;
+  togglePin: (msg: MessageItem) => void;
+  copyText: (msg: MessageItem) => void;
+  deleteMessage: (messageId: string) => void;
+  openAuthorProfile: (e: React.MouseEvent<HTMLElement>, author: MessageItem["author"]) => void;
+  setEditDraft: (value: string) => void;
+  saveEdit: (messageId: string) => void;
+  cancelEdit: () => void;
+  imageContextMenu: (e: React.MouseEvent<HTMLElement>, att: MessageAttachment) => void;
+  openLightbox: (att: MessageAttachment) => void;
+  download: (att: MessageAttachment) => void;
+}
+
+/** The member fields a message row actually displays */
+type MemberProfile = Pick<PublicUser, "displayName" | "avatarColor" | "avatarUrl" | "bannerUrl" | "role">;
+
+interface MessageRowProps {
+  msg: MessageItem;
+  /** Live profile of the author (fresh name/avatar); identity only changes when those fields do */
+  liveMember: MemberProfile | undefined;
+  membersById: Map<string, MemberProfile>;
+  memberHandles: Set<string>;
+  showDateDivider: boolean;
+  isGrouped: boolean;
+  currentUserId: string;
+  currentUserRole: PublicUser["role"];
+  isDm: boolean;
+  canManageMessages: boolean;
+  highlighted: boolean;
+  copied: boolean;
+  isEditing: boolean;
+  /** Only meaningful while editing (kept "" otherwise so other rows never re-render) */
+  editDraft: string;
+  savingEdit: boolean;
+  density: MessageDensity;
+  textSizeClass: string;
+  actions: MessageRowActions;
+}
+
+/**
+ * One chat message. Memoized: typing in the composer, polling, or editing another message
+ * does not re-render rows whose own data did not change (actions is a stable object).
+ */
+const MessageRow = memo(function MessageRow({
+  msg,
+  liveMember,
+  membersById,
+  memberHandles,
+  showDateDivider,
+  isGrouped,
+  currentUserId,
+  currentUserRole,
+  isDm,
+  canManageMessages,
+  highlighted,
+  copied,
+  isEditing,
+  editDraft,
+  savingEdit,
+  density,
+  textSizeClass,
+  actions,
+}: MessageRowProps) {
+  const author = useMemo(
+    () =>
+      liveMember
+        ? {
+            ...msg.author,
+            displayName: liveMember.displayName,
+            avatarColor: liveMember.avatarColor,
+            avatarUrl: liveMember.avatarUrl,
+            bannerUrl: liveMember.bannerUrl,
+            role: liveMember.role,
+          }
+        : msg.author,
+    [liveMember, msg.author]
+  );
+  const canDelete =
+    msg.author.id === currentUserId ||
+    (!isDm && (currentUserRole === "admin" || canManageMessages));
+  const canPin = isDm || canDelete;
+  const renderedText = useMemo(
+    () => (msg.content ? renderMessageText(msg.content, memberHandles) : null),
+    [msg.content, memberHandles]
+  );
+
+  return (
+    <Fragment>
+      {/* Discord-style Day Separator */}
+      {showDateDivider && (
+        <div
+          role="separator"
+          className="my-4 flex items-center gap-3 select-none"
+        >
+          <div className="h-px flex-1 bg-white/[0.07]" />
+          <span className="rounded-full border border-white/[0.07] bg-[#16171C] px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
+            {formatDateDivider(msg.createdAt)}
+          </span>
+          <div className="h-px flex-1 bg-white/[0.07]" />
+        </div>
+      )}
+
+      <article
+        id={`msg-${msg.id}`}
+        onContextMenu={(e) => actions.contextMenu(e, msg, canDelete)}
+        className={`group relative flex gap-3 rounded-lg px-2 transition-all hover:bg-white/[0.025] ${
+          highlighted
+            ? "bg-emerald-500/10 ring-1 ring-emerald-500/45"
+            : ""
+        } ${
+          density === "compact"
+            ? isGrouped
+              ? "mt-0 py-0.5"
+              : "mt-1.5 py-0.5"
+            : isGrouped
+              ? "mt-0 py-1"
+              : "mt-2.5 py-1 pt-1.5"
+        }`}
+      >
+        {/* Hover Action Bar (Quick Reactions + Picker + Reply + Edit + Pin + Copy + Delete) */}
+        <div className="absolute -top-3.5 right-2 z-10 hidden max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 [scrollbar-width:none] group-hover:flex">
+          {QUICK_REACTION_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => actions.toggleReaction(msg.id, emoji)}
+              title={`React ${emoji}`}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-sm transition-transform hover:scale-110 hover:bg-white/[0.07]"
+            >
+              {emoji}
+            </button>
+          ))}
+          <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+          <button
+            type="button"
+            onClick={(e) => actions.openReactionPicker(e, msg.id)}
+            title="Add reaction"
+            className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+          >
+            <SmilePlus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => actions.reply(msg)}
+            title="Reply"
+            className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+          >
+            <Reply className="h-3.5 w-3.5" />
+          </button>
+          {msg.author.id === currentUserId && msg.content && (
+            <button
+              type="button"
+              onClick={() => actions.startEdit(msg)}
+              title="Edit message"
+              className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canPin && (
+            <button
+              type="button"
+              onClick={() => actions.togglePin(msg)}
+              title={msg.pinned ? "Unpin message" : "Pin message"}
+              className={`rounded-md p-1.5 transition-colors hover:bg-white/[0.06] ${
+                msg.pinned
+                  ? "text-emerald-400 hover:text-emerald-300"
+                  : "text-zinc-400 hover:text-zinc-100"
+              }`}
+            >
+              <Pin className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {msg.content && (
+            <AnimatedIconButton
+              type="button"
+              icon={copied ? CheckIcon : CopyIcon}
+              iconSize={14}
+              onClick={() => actions.copyText(msg)}
+              title={copied ? "Copied" : "Copy text"}
+              className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+            />
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => actions.deleteMessage(msg.id)}
+              title="Delete message"
+              className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-rose-500/15 hover:text-rose-400"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Left Avatar Column (NO hover timestamp here — prevents height jumps) */}
+        <div className="w-8 shrink-0 pt-0.5">
+          {!isGrouped && (
+            <button
+              type="button"
+              onClick={(e) => actions.openAuthorProfile(e, author)}
+              className="inline-flex rounded-full transition-transform hover:scale-105 focus:outline-none"
+            >
+              <Avatar
+                name={author.displayName}
+                color={author.avatarColor}
+                avatarUrl={author.avatarUrl}
+                size="md"
+              />
+            </button>
+          )}
+        </div>
+
+        {/* Message Body */}
+        <div className="min-w-0 flex-1">
+          {msg.replyTo && (
+            <div className="mb-1 flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <Reply className="h-3 w-3 shrink-0 text-emerald-400" />
+              <span dir="auto" className="font-medium text-zinc-300">
+                {msg.replyTo.authorDisplayName}
+              </span>
+              <span dir="auto" className="truncate text-zinc-500">
+                {msg.replyTo.content ||
+                  (msg.replyTo.hasAttachments ? "Attachment" : "Message")}
+              </span>
+            </div>
+          )}
+
+          {!isGrouped && (
+            <div className="flex items-baseline gap-2">
+              <button
+                type="button"
+                onClick={(e) => actions.openAuthorProfile(e, author)}
+                dir="auto"
+                className="text-sm font-semibold text-zinc-100 hover:underline"
+              >
+                {author.displayName}
+              </button>
+              <span className="text-[11px] font-medium tabular-nums text-zinc-500">
+                {formatTime(msg.createdAt)}
+              </span>
+              {msg.pinned && (
+                <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
+                  <Pin className="h-2.5 w-2.5" />
+                  Pinned
+                </span>
+              )}
+            </div>
+          )}
+
+          {isEditing ? (
+            <div className="mt-1 space-y-1.5">
+              <textarea
+                rows={2}
+                dir="auto"
+                autoFocus
+                value={editDraft}
+                onChange={(e) => actions.setEditDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    actions.saveEdit(msg.id);
+                  } else if (e.key === "Escape") {
+                    actions.cancelEdit();
+                  }
+                }}
+                className="w-full resize-none rounded-lg border border-emerald-500/50 bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:outline-none"
+              />
+              <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                <span>Press Enter to save · Esc to cancel</span>
+                <AnimatedIconButton
+                  type="button"
+                  icon={CheckIcon}
+                  iconSize={12}
+                  disabled={savingEdit}
+                  onClick={() => actions.saveEdit(msg.id)}
+                  className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                >
+                  <span>Save</span>
+                </AnimatedIconButton>
+                <button
+                  type="button"
+                  onClick={() => {
+                    actions.cancelEdit();
+                  }}
+                  className="rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            msg.content && (
+              <div
+                dir="auto"
+                className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
+              >
+                {renderedText}
+                {msg.editedAt && (
+                  <span
+                    title={`Edited ${formatTime(msg.editedAt)}`}
+                    className="ml-1.5 text-[10px] text-zinc-500 select-none"
+                  >
+                    (edited)
+                  </span>
+                )}
+              </div>
+            )
+          )}
+
+          {msg.attachments.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2.5">
+              {msg.attachments.map((att, i) => {
+                const isImage = att.contentType.startsWith("image/");
+                if (isImage) {
+                  return (
+                    <div
+                      key={`${att.url}-${i}`}
+                      onContextMenu={(e) => actions.imageContextMenu(e, att)}
+                      className="group/img relative overflow-hidden rounded-xl border border-white/[0.08] bg-[#0E0F12] transition-colors hover:border-emerald-500/40"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => actions.openLightbox(att)}
+                        className="block focus:outline-none"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={mediaUrl(att.url)}
+                          alt={att.name}
+                          loading="lazy"
+                          className="max-h-72 max-w-xs object-contain transition-transform duration-200 group-hover/img:scale-[1.01] sm:max-w-sm"
+                        />
+                      </button>
+
+                      {/* Direct download pill on image hover */}
+                      <AnimatedIconButton
+                        type="button"
+                        icon={DownloadIcon}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          actions.download(att);
+                        }}
+                        title="Download image"
+                        className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.15] bg-black/70 text-zinc-200 opacity-0 backdrop-blur-sm transition-all hover:bg-black hover:text-emerald-300 group-hover/img:opacity-100"
+                      />
+                    </div>
+                  );
+                }
+
+                const isAudio =
+                  att.contentType.toLowerCase().startsWith("audio/") ||
+                  /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i.test(att.name);
+                if (isAudio) {
+                  return (
+                    <AudioWaveformPlayer
+                      key={`${att.url}-${i}`}
+                      src={mediaUrl(att.url)}
+                      name={att.name}
+                      onDownload={() => actions.download(att)}
+                    />
+                  );
+                }
+
+                const cat = getFileCategory(att);
+                return (
+                  <div
+                    key={`${att.url}-${i}`}
+                    className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-2.5 pr-3 transition-colors hover:border-white/[0.16]"
+                  >
+                    <div
+                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${cat.accent}`}
+                    >
+                      {cat.icon}
+                    </div>
+                    <div className="min-w-0 max-w-[200px]">
+                      <p className="truncate text-xs font-medium text-zinc-100">
+                        {att.name}
+                      </p>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium tabular-nums text-zinc-500">
+                        <span className="rounded bg-white/[0.06] px-1.5 py-0.25 text-zinc-400">
+                          {cat.badge}
+                        </span>
+                        <span>{formatBytes(att.size)}</span>
+                      </div>
+                    </div>
+                    <AnimatedIconButton
+                      type="button"
+                      icon={DownloadIcon}
+                      onClick={() => actions.download(att)}
+                      title={`Download ${att.name}`}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#18191E] text-zinc-300 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Emoji Reactions Bar beneath message (clickable for others' & own messages) */}
+          {msg.reactions && msg.reactions.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {msg.reactions.map((reaction) => {
+                const reactorNames = reaction.userIds
+                  .map((uid) => {
+                    if (uid === currentUserId) return "You";
+                    return (
+                      membersById.get(uid)?.displayName ?? "Member"
+                    );
+                  })
+                  .join(", ");
+                return (
+                  <button
+                    key={reaction.emoji}
+                    type="button"
+                    onClick={() => actions.toggleReaction(msg.id, reaction.emoji)}
+                    title={`${reaction.emoji} reacted by ${reactorNames}`}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-medium tabular-nums transition-all active:scale-95 ${
+                      reaction.reactedByMe
+                        ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20"
+                        : "border-white/[0.08] bg-[#18191E] text-zinc-300 hover:border-white/[0.16] hover:text-white"
+                    }`}
+                  >
+                    <span className="text-sm leading-none">{reaction.emoji}</span>
+                    <span>{reaction.count}</span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={(e) => actions.openReactionPicker(e, msg.id)}
+                title="Add reaction"
+                className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg border border-white/[0.07] bg-[#18191E] text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-100"
+              >
+                <SmilePlus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </article>
+    </Fragment>
+
+  );
+});
+
 export function TextChannelView({
   channel,
   currentUser,
@@ -375,10 +946,57 @@ export function TextChannelView({
   }, [currentUser.id, mentionMembers, mentionQuery]);
   const activeMentionIndex = Math.min(mentionIndex, mentionOptions.length - 1);
   const activeMention = mentionOptions[activeMentionIndex];
-  const memberHandles = useMemo(
-    () => new Set(members.map((member) => `@${member.username.toLowerCase()}`)),
+  // Presence polling replaces `members` with fresh objects every few seconds. Key the derived
+  // lookups on the fields messages actually display so memoized rows are not re-rendered by
+  // status/last-seen changes.
+  const memberProfilesKey = useMemo(
+    () =>
+      members
+        .map((m) =>
+          [m.id, m.username, m.displayName, m.avatarColor, m.avatarUrl ?? "", m.bannerUrl ?? "", m.role].join("\u0001")
+        )
+        .join("\u0002"),
     [members]
   );
+  const membersRef = useRef(members);
+  membersRef.current = members;
+  const memberHandlesKey = useMemo(
+    () => members.map((m) => m.username.toLowerCase()).sort().join(" "),
+    [members]
+  );
+  const memberHandles = useMemo(
+    () => new Set(memberHandlesKey ? memberHandlesKey.split(" ").map((u) => `@${u}`) : []),
+    [memberHandlesKey]
+  );
+  const previousProfilesRef = useRef<Map<string, MemberProfile>>(new Map());
+  const membersById = useMemo(() => {
+    // Reuse each unchanged profile object so only the renamed/re-avatared author's rows update
+    const previous = previousProfilesRef.current;
+    const next = new Map<string, MemberProfile>();
+    for (const m of membersRef.current) {
+      const old = previous.get(m.id);
+      next.set(
+        m.id,
+        old &&
+          old.displayName === m.displayName &&
+          old.avatarColor === m.avatarColor &&
+          old.avatarUrl === m.avatarUrl &&
+          old.bannerUrl === m.bannerUrl &&
+          old.role === m.role
+          ? old
+          : {
+              displayName: m.displayName,
+              avatarColor: m.avatarColor,
+              avatarUrl: m.avatarUrl,
+              bannerUrl: m.bannerUrl,
+              role: m.role,
+            }
+      );
+    }
+    previousProfilesRef.current = next;
+    return next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberProfilesKey]);
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [sending, setSending] = useState(false);
@@ -433,6 +1051,46 @@ export function TextChannelView({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const activeChannelIdRef = useRef<string>(channel.id);
   activeChannelIdRef.current = channel.id;
+  const composerTextRef = useRef(composerText);
+  composerTextRef.current = composerText;
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  pendingAttachmentsRef.current = pendingAttachments;
+
+  const bumpMutation = useCallback(
+    (channelId: string) => {
+      const key = draftKey(currentUser.id, channelId);
+      mutationEpochs.set(key, (mutationEpochs.get(key) ?? 0) + 1);
+    },
+    [currentUser.id]
+  );
+  const mutateFetch = useCallback(
+    async (channelId: string, url: string, init: RequestInit) => {
+      bumpMutation(channelId);
+      try {
+        return await apiFetch(url, init);
+      } finally {
+        bumpMutation(channelId);
+      }
+    },
+    [bumpMutation]
+  );
+
+  // Each channel/DM keeps its own draft: nothing typed for one conversation leaks into another
+  useEffect(() => {
+    const key = draftKey(currentUser.id, channel.id);
+    const draft = composerDrafts.get(key);
+    setComposerText(draft?.text ?? "");
+    setPendingAttachments(draft?.attachments ?? []);
+    setEditingMessageId(null);
+    setEditDraft("");
+    setEmojiPicker(null);
+    return () => {
+      const text = composerTextRef.current;
+      const attachments = pendingAttachmentsRef.current;
+      if (text.trim() || attachments.length > 0) composerDrafts.set(key, { text, attachments });
+      else composerDrafts.delete(key);
+    };
+  }, [channel.id, currentUser.id]);
 
   const onMessagesSeenRef = useRef(onMessagesSeen);
   onMessagesSeenRef.current = onMessagesSeen;
@@ -591,7 +1249,7 @@ export function TextChannelView({
       active = false;
       controller.abort();
     };
-  }, [channel.id, channelMessageCache, reportSeenIfVisible, scrollToBottom]);
+  }, [channel.id, channelMessageCache, getMessagesBaseUrl, reportSeenIfVisible, scrollToBottom, setError]);
 
   // Incremental background poll every 2.2s + periodic full-tail reconciliation for reactions/edits/pins
   useEffect(() => {
@@ -618,6 +1276,8 @@ export function TextChannelView({
       inFlightController?.abort();
       const controller = new AbortController();
       inFlightController = controller;
+      const epochKey = draftKey(currentUser.id, targetChannelId);
+      const epochAtStart = mutationEpochs.get(epochKey) ?? 0;
 
       try {
         const res = await apiFetch(url, {
@@ -629,6 +1289,9 @@ export function TextChannelView({
         const data = await res.json();
         const incoming: MessageItem[] = data.messages ?? [];
         if (!active || targetChannelId !== activeChannelIdRef.current) return;
+        // A send/edit/delete/reaction/pin happened while this request was in flight:
+        // its snapshot may predate that change, so let the next tick pick up the truth.
+        if ((mutationEpochs.get(epochKey) ?? 0) !== epochAtStart) return;
 
         // Always merge against the target channel's own cache entry (NEVER React prev state!)
         const latestEntry = channelMessageCache.get(targetChannelId);
@@ -641,6 +1304,8 @@ export function TextChannelView({
             incoming,
             Boolean(data.hasMore)
           );
+          // Nothing changed on the server: no state update, no re-render, no "seen" report
+          if (reconciled.messages === latestEntry.messages) return;
           const newLastId = reconciled.messages[reconciled.messages.length - 1]?.id ?? null;
           const hasNewAtBottom = Boolean(newLastId && newLastId !== prevLastId);
           const nearBottom = isNearBottom();
@@ -698,7 +1363,7 @@ export function TextChannelView({
       inFlightController?.abort();
       clearInterval(interval);
     };
-  }, [channel.id, channelMessageCache, isNearBottom, reportSeenIfVisible, scrollToBottom]);
+  }, [channel.id, channelMessageCache, currentUser.id, getMessagesBaseUrl, isNearBottom, reportSeenIfVisible, scrollToBottom]);
 
   // Smooth jump-to-message from Pinned drawer or In-Channel Search
   useEffect(() => {
@@ -800,7 +1465,7 @@ export function TextChannelView({
         setLoadingOlder(false);
       }
     }
-  }, [channelMessageCache, loadingOlder]);
+  }, [channelMessageCache, getMessagesBaseUrl, loadingOlder]);
 
   // Handle scroll events (auto-load older near top + clear unseen badge at bottom)
   function handleFeedScroll() {
@@ -827,6 +1492,7 @@ export function TextChannelView({
   const uploadFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
+    const uploadChannelId = activeChannelIdRef.current;
 
     setError(null);
     setUploadingCount((c) => c + fileArray.length);
@@ -838,15 +1504,36 @@ export function TextChannelView({
         const formData = new FormData();
         formData.append("file", file);
 
+        if (file.size > 15 * 1024 * 1024) {
+          setError(`${file.name} is too large. Maximum size is 15 MB.`);
+          continue;
+        }
+
         const res = await apiFetch("/api/upload", {
           method: "POST",
           body: formData,
         });
-        const data = await res.json();
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          attachment?: MessageAttachment;
+        };
         if (!res.ok) {
-          setError(data.error ?? `Failed to upload ${file.name}.`);
+          setError(
+            data.error ??
+              (res.status === 413
+                ? `${file.name} is larger than this server accepts.`
+                : `Failed to upload ${file.name}.`)
+          );
         } else if (data.attachment) {
-          setPendingAttachments((prev) => [...prev, data.attachment]);
+          const attachment = data.attachment;
+          if (uploadChannelId === activeChannelIdRef.current) {
+            setPendingAttachments((prev) => [...prev, attachment]);
+          } else {
+            // User switched conversations mid-upload: file it under the conversation it was meant for
+            const key = draftKey(currentUser.id, uploadChannelId);
+            const draft = composerDrafts.get(key) ?? { text: "", attachments: [] };
+            composerDrafts.set(key, { ...draft, attachments: [...draft.attachments, attachment] });
+          }
         }
       } catch {
         setError(`Network error uploading ${rawFile.name}.`);
@@ -854,7 +1541,7 @@ export function TextChannelView({
         setUploadingCount((c) => Math.max(0, c - 1));
       }
     }
-  }, []);
+  }, [currentUser.id, setError]);
 
   async function handleSend(event?: FormEvent) {
     event?.preventDefault();
@@ -874,7 +1561,7 @@ export function TextChannelView({
     };
 
     try {
-      const res = await apiFetch(getMessagesBaseUrl(targetChannelId), {
+      const res = await mutateFetch(targetChannelId, getMessagesBaseUrl(targetChannelId), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -896,13 +1583,17 @@ export function TextChannelView({
         });
 
         if (targetChannelId === activeChannelIdRef.current) {
-          setComposerText("");
-          setMentionCaret(null);
-          if (textareaRef.current) {
-            textareaRef.current.style.height = "auto";
-            textareaRef.current.style.overflowY = "hidden";
+          // Keep anything typed while the request was in flight
+          const stillSame = composerTextRef.current.trim() === content;
+          if (stillSame) {
+            setComposerText("");
+            setMentionCaret(null);
+            if (textareaRef.current) {
+              textareaRef.current.style.height = "auto";
+              textareaRef.current.style.overflowY = "hidden";
+            }
           }
-          setPendingAttachments([]);
+          setPendingAttachments((prev) => prev.filter((a) => !payload.attachments.includes(a)));
           setReplyingTo(null);
           setMessages(merged);
           reportSeenIfVisible(targetChannelId, merged);
@@ -921,7 +1612,7 @@ export function TextChannelView({
   async function handleDeleteMessage(messageId: string) {
     const targetChannelId = channel.id;
     try {
-      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
+      const res = await mutateFetch(targetChannelId, `${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -1069,14 +1760,26 @@ export function TextChannelView({
     channelMessageCache.set(targetChannelId, { ...entry, messages: optimistic });
     setMessages(optimistic);
 
+    const rollbackReaction = () => {
+      const original = entry.messages.find((m) => m.id === messageId);
+      const latest = channelMessageCache.get(targetChannelId);
+      if (!original || !latest) return;
+      const restored = latest.messages.map((m) =>
+        m.id === messageId ? { ...m, reactions: original.reactions } : m
+      );
+      channelMessageCache.set(targetChannelId, { ...latest, messages: restored });
+      if (targetChannelId === activeChannelIdRef.current) setMessages(restored);
+    };
+
     try {
-      const res = await apiFetch(`/api/messages/${messageId}/reactions`, {
+      const res = await mutateFetch(targetChannelId, `/api/messages/${messageId}/reactions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emoji }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        rollbackReaction();
         setError(data.error ?? "Failed to update reaction.");
         return;
       }
@@ -1091,6 +1794,7 @@ export function TextChannelView({
         }
       }
     } catch {
+      rollbackReaction();
       setError("Network error while updating reaction.");
     }
   }
@@ -1107,7 +1811,7 @@ export function TextChannelView({
     setSavingEdit(true);
 
     try {
-      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
+      const res = await mutateFetch(targetChannelId, `${getMessagesBaseUrl(targetChannelId)}/${messageId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: trimmed }),
@@ -1147,7 +1851,7 @@ export function TextChannelView({
     const targetChannelId = activeChannelIdRef.current;
     const nextPinned = !msg.pinned;
     try {
-      const res = await apiFetch(`${getMessagesBaseUrl(targetChannelId)}/${msg.id}`, {
+      const res = await mutateFetch(targetChannelId, `${getMessagesBaseUrl(targetChannelId)}/${msg.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pinned: nextPinned }),
@@ -1373,6 +2077,58 @@ export function TextChannelView({
     });
   }
 
+  // Rows receive one stable actions object; each call forwards to the latest handler,
+  // so handler identity changes never invalidate the memoized rows.
+  const latestRowActions = useRef<MessageRowActions | null>(null);
+  latestRowActions.current = {
+    contextMenu: handleMessageContextMenu,
+    toggleReaction: (messageId, emoji) => void handleToggleReaction(messageId, emoji),
+    openReactionPicker,
+    reply: (msg) => setReplyingTo(msg),
+    startEdit: startEditingMessage,
+    togglePin: (msg) => void handleTogglePin(msg),
+    copyText: (msg) => {
+      void navigator.clipboard
+        .writeText(msg.content)
+        .then(() => {
+          setCopiedMessageId(msg.id);
+          playSound("copy");
+        })
+        .catch(() => setError("Clipboard access denied."));
+    },
+    deleteMessage: (messageId) => void handleDeleteMessage(messageId),
+    openAuthorProfile,
+    setEditDraft,
+    saveEdit: (messageId) => void handleSaveEdit(messageId),
+    cancelEdit: () => {
+      setEditingMessageId(null);
+      setEditDraft("");
+    },
+    imageContextMenu: handleImageContextMenu,
+    openLightbox: (att) => setLightboxImage(att),
+    download: triggerDirectDownload,
+  };
+  const rowActions = useMemo<MessageRowActions>(
+    () => ({
+      contextMenu: (...a) => latestRowActions.current!.contextMenu(...a),
+      toggleReaction: (...a) => latestRowActions.current!.toggleReaction(...a),
+      openReactionPicker: (...a) => latestRowActions.current!.openReactionPicker(...a),
+      reply: (...a) => latestRowActions.current!.reply(...a),
+      startEdit: (...a) => latestRowActions.current!.startEdit(...a),
+      togglePin: (...a) => latestRowActions.current!.togglePin(...a),
+      copyText: (...a) => latestRowActions.current!.copyText(...a),
+      deleteMessage: (...a) => latestRowActions.current!.deleteMessage(...a),
+      openAuthorProfile: (...a) => latestRowActions.current!.openAuthorProfile(...a),
+      setEditDraft: (...a) => latestRowActions.current!.setEditDraft(...a),
+      saveEdit: (...a) => latestRowActions.current!.saveEdit(...a),
+      cancelEdit: () => latestRowActions.current!.cancelEdit(),
+      imageContextMenu: (...a) => latestRowActions.current!.imageContextMenu(...a),
+      openLightbox: (...a) => latestRowActions.current!.openLightbox(...a),
+      download: (...a) => latestRowActions.current!.download(...a),
+    }),
+    []
+  );
+
   return (
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#121316]"
@@ -1470,403 +2226,41 @@ export function TextChannelView({
             )}
 
             {messages.map((msg, idx) => {
-            const prev = messages[idx - 1];
-            const currentDayKey = getCalendarDayKey(msg.createdAt);
-            const prevDayKey = prev ? getCalendarDayKey(prev.createdAt) : null;
-            const showDateDivider = currentDayKey !== prevDayKey;
-
-            const liveMember = members.find((m) => m.id === msg.author.id);
-            const author = liveMember
-              ? {
-                  ...msg.author,
-                  displayName: liveMember.displayName,
-                  avatarColor: liveMember.avatarColor,
-                  avatarUrl: liveMember.avatarUrl,
-                  bannerUrl: liveMember.bannerUrl,
-                  role: liveMember.role,
-                }
-              : msg.author;
-
-            const isGrouped =
-              Boolean(prev) &&
-              !showDateDivider &&
-              prev.author.id === msg.author.id &&
-              !msg.replyTo &&
-              new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() <
-                5 * 60 * 1000;
-
-            const canDelete =
-              msg.author.id === currentUser.id ||
-              (!isDm && (currentUser.role === "admin" || canManageMessages));
-            const canPin = isDm || canDelete;
-
-            return (
-              <Fragment key={msg.id}>
-                {/* Discord-style Day Separator */}
-                {showDateDivider && (
-                  <div
-                    role="separator"
-                    className="my-4 flex items-center gap-3 select-none"
-                  >
-                    <div className="h-px flex-1 bg-white/[0.07]" />
-                    <span className="rounded-full border border-white/[0.07] bg-[#16171C] px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
-                      {formatDateDivider(msg.createdAt)}
-                    </span>
-                    <div className="h-px flex-1 bg-white/[0.07]" />
-                  </div>
-                )}
-
-                <article
-                  id={`msg-${msg.id}`}
-                  onContextMenu={(e) => handleMessageContextMenu(e, msg, canDelete)}
-                  className={`group relative flex gap-3 rounded-lg px-2 transition-all hover:bg-white/[0.025] ${
-                    highlightedMessageId === msg.id
-                      ? "bg-emerald-500/10 ring-1 ring-emerald-500/45"
-                      : ""
-                  } ${
-                    density === "compact"
-                      ? isGrouped
-                        ? "mt-0 py-0.5"
-                        : "mt-1.5 py-0.5"
-                      : isGrouped
-                        ? "mt-0 py-1"
-                        : "mt-2.5 py-1 pt-1.5"
-                  }`}
-                >
-                  {/* Hover Action Bar (Quick Reactions + Picker + Reply + Edit + Pin + Copy + Delete) */}
-                  <div className="absolute -top-3.5 right-2 z-10 hidden max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 [scrollbar-width:none] group-hover:flex">
-                    {QUICK_REACTION_EMOJIS.map((emoji) => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        onClick={() => void handleToggleReaction(msg.id, emoji)}
-                        title={`React ${emoji}`}
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-sm transition-transform hover:scale-110 hover:bg-white/[0.07]"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                    <div className="mx-0.5 h-4 w-px bg-white/[0.08]" />
-                    <button
-                      type="button"
-                      onClick={(e) => openReactionPicker(e, msg.id)}
-                      title="Add reaction"
-                      className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
-                    >
-                      <SmilePlus className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReplyingTo(msg)}
-                      title="Reply"
-                      className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                    >
-                      <Reply className="h-3.5 w-3.5" />
-                    </button>
-                    {msg.author.id === currentUser.id && msg.content && (
-                      <button
-                        type="button"
-                        onClick={() => startEditingMessage(msg)}
-                        title="Edit message"
-                        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {canPin && (
-                      <button
-                        type="button"
-                        onClick={() => void handleTogglePin(msg)}
-                        title={msg.pinned ? "Unpin message" : "Pin message"}
-                        className={`rounded-md p-1.5 transition-colors hover:bg-white/[0.06] ${
-                          msg.pinned
-                            ? "text-emerald-400 hover:text-emerald-300"
-                            : "text-zinc-400 hover:text-zinc-100"
-                        }`}
-                      >
-                        <Pin className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {msg.content && (
-                      <AnimatedIconButton
-                        type="button"
-                        icon={copiedMessageId === msg.id ? CheckIcon : CopyIcon}
-                        iconSize={14}
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(msg.content);
-                            setCopiedMessageId(msg.id);
-                            playSound("copy");
-                          } catch {
-                            setError("Clipboard access denied.");
-                          }
-                        }}
-                        title={copiedMessageId === msg.id ? "Copied" : "Copy text"}
-                        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                      />
-                    )}
-                    {canDelete && (
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteMessage(msg.id)}
-                        title="Delete message"
-                        className="rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-rose-500/15 hover:text-rose-400"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Left Avatar Column (NO hover timestamp here — prevents height jumps) */}
-                  <div className="w-8 shrink-0 pt-0.5">
-                    {!isGrouped && (
-                      <button
-                        type="button"
-                        onClick={(e) => openAuthorProfile(e, author)}
-                        className="inline-flex rounded-full transition-transform hover:scale-105 focus:outline-none"
-                      >
-                        <Avatar
-                          name={author.displayName}
-                          color={author.avatarColor}
-                          avatarUrl={author.avatarUrl}
-                          size="md"
-                        />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Message Body */}
-                  <div className="min-w-0 flex-1">
-                    {msg.replyTo && (
-                      <div className="mb-1 flex items-center gap-1.5 text-[11px] text-zinc-400">
-                        <Reply className="h-3 w-3 shrink-0 text-emerald-400" />
-                        <span dir="auto" className="font-medium text-zinc-300">
-                          {msg.replyTo.authorDisplayName}
-                        </span>
-                        <span dir="auto" className="truncate text-zinc-500">
-                          {msg.replyTo.content ||
-                            (msg.replyTo.hasAttachments ? "Attachment" : "Message")}
-                        </span>
-                      </div>
-                    )}
-
-                    {!isGrouped && (
-                      <div className="flex items-baseline gap-2">
-                        <button
-                          type="button"
-                          onClick={(e) => openAuthorProfile(e, author)}
-                          dir="auto"
-                          className="text-sm font-semibold text-zinc-100 hover:underline"
-                        >
-                          {author.displayName}
-                        </button>
-                        <span className="text-[11px] font-medium tabular-nums text-zinc-500">
-                          {formatTime(msg.createdAt)}
-                        </span>
-                        {msg.pinned && (
-                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
-                            <Pin className="h-2.5 w-2.5" />
-                            Pinned
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {editingMessageId === msg.id ? (
-                      <div className="mt-1 space-y-1.5">
-                        <textarea
-                          rows={2}
-                          dir="auto"
-                          autoFocus
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                              e.preventDefault();
-                              void handleSaveEdit(msg.id);
-                            } else if (e.key === "Escape") {
-                              setEditingMessageId(null);
-                              setEditDraft("");
-                            }
-                          }}
-                          className="w-full resize-none rounded-lg border border-emerald-500/50 bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:outline-none"
-                        />
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                          <span>Press Enter to save · Esc to cancel</span>
-                          <AnimatedIconButton
-                            type="button"
-                            icon={CheckIcon}
-                            iconSize={12}
-                            disabled={savingEdit}
-                            onClick={() => void handleSaveEdit(msg.id)}
-                            className="ml-auto inline-flex items-center gap-1 rounded-md bg-emerald-500 px-2.5 py-1 text-[11px] font-semibold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
-                          >
-                            <span>Save</span>
-                          </AnimatedIconButton>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingMessageId(null);
-                              setEditDraft("");
-                            }}
-                            className="rounded-md px-2 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      msg.content && (
-                        <div
-                          dir="auto"
-                          className={`whitespace-pre-wrap break-words leading-relaxed text-zinc-200 ${textSizeClass}`}
-                        >
-                          {renderMessageText(msg.content, memberHandles)}
-                          {msg.editedAt && (
-                            <span
-                              title={`Edited ${formatTime(msg.editedAt)}`}
-                              className="ml-1.5 text-[10px] text-zinc-500 select-none"
-                            >
-                              (edited)
-                            </span>
-                          )}
-                        </div>
-                      )
-                    )}
-
-                    {msg.attachments.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2.5">
-                        {msg.attachments.map((att, i) => {
-                          const isImage = att.contentType.startsWith("image/");
-                          if (isImage) {
-                            return (
-                              <div
-                                key={`${att.url}-${i}`}
-                                onContextMenu={(e) => handleImageContextMenu(e, att)}
-                                className="group/img relative overflow-hidden rounded-xl border border-white/[0.08] bg-[#0E0F12] transition-colors hover:border-emerald-500/40"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => setLightboxImage(att)}
-                                  className="block focus:outline-none"
-                                >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={mediaUrl(att.url)}
-                                    alt={att.name}
-                                    loading="lazy"
-                                    className="max-h-72 max-w-xs object-contain transition-transform duration-200 group-hover/img:scale-[1.01] sm:max-w-sm"
-                                  />
-                                </button>
-
-                                {/* Direct download pill on image hover */}
-                                <AnimatedIconButton
-                                  type="button"
-                                  icon={DownloadIcon}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    triggerDirectDownload(att);
-                                  }}
-                                  title="Download image"
-                                  className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.15] bg-black/70 text-zinc-200 opacity-0 backdrop-blur-sm transition-all hover:bg-black hover:text-emerald-300 group-hover/img:opacity-100"
-                                />
-                              </div>
-                            );
-                          }
-
-                          const isAudio =
-                            att.contentType.toLowerCase().startsWith("audio/") ||
-                            /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i.test(att.name);
-                          if (isAudio) {
-                            return (
-                              <AudioWaveformPlayer
-                                key={`${att.url}-${i}`}
-                                src={mediaUrl(att.url)}
-                                name={att.name}
-                                onDownload={() => triggerDirectDownload(att)}
-                              />
-                            );
-                          }
-
-                          const cat = getFileCategory(att);
-                          return (
-                            <div
-                              key={`${att.url}-${i}`}
-                              className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-2.5 pr-3 transition-colors hover:border-white/[0.16]"
-                            >
-                              <div
-                                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${cat.accent}`}
-                              >
-                                {cat.icon}
-                              </div>
-                              <div className="min-w-0 max-w-[200px]">
-                                <p className="truncate text-xs font-medium text-zinc-100">
-                                  {att.name}
-                                </p>
-                                <div className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium tabular-nums text-zinc-500">
-                                  <span className="rounded bg-white/[0.06] px-1.5 py-0.25 text-zinc-400">
-                                    {cat.badge}
-                                  </span>
-                                  <span>{formatBytes(att.size)}</span>
-                                </div>
-                              </div>
-                              <AnimatedIconButton
-                                type="button"
-                                icon={DownloadIcon}
-                                onClick={() => triggerDirectDownload(att)}
-                                title={`Download ${att.name}`}
-                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#18191E] text-zinc-300 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Emoji Reactions Bar beneath message (clickable for others' & own messages) */}
-                    {msg.reactions && msg.reactions.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        {msg.reactions.map((reaction) => {
-                          const reactorNames = reaction.userIds
-                            .map((uid) => {
-                              if (uid === currentUser.id) return "You";
-                              return (
-                                members.find((m) => m.id === uid)?.displayName ?? "Member"
-                              );
-                            })
-                            .join(", ");
-                          return (
-                            <button
-                              key={reaction.emoji}
-                              type="button"
-                              onClick={() => void handleToggleReaction(msg.id, reaction.emoji)}
-                              title={`${reaction.emoji} reacted by ${reactorNames}`}
-                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-medium tabular-nums transition-all active:scale-95 ${
-                                reaction.reactedByMe
-                                  ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20"
-                                  : "border-white/[0.08] bg-[#18191E] text-zinc-300 hover:border-white/[0.16] hover:text-white"
-                              }`}
-                            >
-                              <span className="text-sm leading-none">{reaction.emoji}</span>
-                              <span>{reaction.count}</span>
-                            </button>
-                          );
-                        })}
-                        <button
-                          type="button"
-                          onClick={(e) => openReactionPicker(e, msg.id)}
-                          title="Add reaction"
-                          className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg border border-white/[0.07] bg-[#18191E] text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-100"
-                        >
-                          <SmilePlus className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              </Fragment>
-            );
-          })}
+              const prev = messages[idx - 1];
+              const showDateDivider =
+                !prev || getCalendarDayKey(msg.createdAt) !== getCalendarDayKey(prev.createdAt);
+              const isGrouped =
+                Boolean(prev) &&
+                !showDateDivider &&
+                prev.author.id === msg.author.id &&
+                !msg.replyTo &&
+                new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() <
+                  5 * 60 * 1000;
+              const isEditing = editingMessageId === msg.id;
+              return (
+                <MessageRow
+                  key={msg.id}
+                  msg={msg}
+                  liveMember={membersById.get(msg.author.id)}
+                  membersById={msg.reactions.length > 0 ? membersById : EMPTY_MEMBER_PROFILES}
+                  memberHandles={memberHandles}
+                  showDateDivider={showDateDivider}
+                  isGrouped={isGrouped}
+                  currentUserId={currentUser.id}
+                  currentUserRole={currentUser.role}
+                  isDm={isDm}
+                  canManageMessages={canManageMessages}
+                  highlighted={highlightedMessageId === msg.id}
+                  copied={copiedMessageId === msg.id}
+                  isEditing={isEditing}
+                  editDraft={isEditing ? editDraft : ""}
+                  savingEdit={isEditing ? savingEdit : false}
+                  density={density}
+                  textSizeClass={textSizeClass}
+                  actions={rowActions}
+                />
+              );
+            })}
           </>
         )}
       </div>

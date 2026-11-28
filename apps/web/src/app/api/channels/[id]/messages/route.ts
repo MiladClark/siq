@@ -1,121 +1,17 @@
-import { and, asc, desc, eq, gt, ilike, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
-import { channels, messageReactions, messages, users } from "@/db/schema";
+import { messages, users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import type {
-  MessageItem,
-  MessageReactionSummary,
-  MessageReplyPreview,
-} from "@siq/shared/lib/types";
+import { getChannelAccess, hydrateMessagesList, isValidReplyTarget } from "@/lib/server-auth";
 import { createMessageSchema } from "@/lib/validators";
 
-async function hydrateMessages(
-  rows: Array<{
-    message: typeof messages.$inferSelect;
-    author: {
-      id: string;
-      username: string;
-      displayName: string;
-      avatarColor: string;
-      avatarUrl: string | null;
-      bannerUrl: string | null;
-      role: "admin" | "member";
-    };
-  }>,
-  currentUserId: string
-): Promise<MessageItem[]> {
-  if (rows.length === 0) return [];
-
-  const db = getDb();
-  const messageIds = rows.map((r) => r.message.id);
-  const replyIds = Array.from(
-    new Set(
-      rows
-        .map((r) => r.message.replyToId)
-        .filter((id): id is string => Boolean(id))
-    )
-  );
-
-  const [replyRows, reactionRows] = await Promise.all([
-    replyIds.length > 0
-      ? db
-          .select({
-            id: messages.id,
-            content: messages.content,
-            attachments: messages.attachments,
-            authorDisplayName: users.displayName,
-          })
-          .from(messages)
-          .innerJoin(users, eq(messages.authorId, users.id))
-          .where(inArray(messages.id, replyIds))
-      : Promise.resolve([]),
-    db
-      .select({
-        messageId: messageReactions.messageId,
-        userId: messageReactions.userId,
-        emoji: messageReactions.emoji,
-        createdAt: messageReactions.createdAt,
-      })
-      .from(messageReactions)
-      .where(inArray(messageReactions.messageId, messageIds))
-      .orderBy(asc(messageReactions.createdAt)),
-  ]);
-
-  const replyMap = new Map<string, MessageReplyPreview>();
-  for (const r of replyRows) {
-    replyMap.set(r.id, {
-      id: r.id,
-      content: r.content,
-      authorDisplayName: r.authorDisplayName,
-      hasAttachments: (r.attachments?.length ?? 0) > 0,
-    });
-  }
-
-  const reactionsByMessage = new Map<string, MessageReactionSummary[]>();
-  const bucketMap = new Map<string, Map<string, MessageReactionSummary>>();
-
-  for (const row of reactionRows) {
-    let byEmoji = bucketMap.get(row.messageId);
-    if (!byEmoji) {
-      byEmoji = new Map();
-      bucketMap.set(row.messageId, byEmoji);
-    }
-    let summary = byEmoji.get(row.emoji);
-    if (!summary) {
-      summary = {
-        emoji: row.emoji,
-        count: 0,
-        userIds: [],
-        reactedByMe: false,
-      };
-      byEmoji.set(row.emoji, summary);
-    }
-    summary.count += 1;
-    summary.userIds.push(row.userId);
-    if (row.userId === currentUserId) {
-      summary.reactedByMe = true;
-    }
-  }
-
-  bucketMap.forEach((byEmoji, msgId) => {
-    reactionsByMessage.set(msgId, Array.from(byEmoji.values()));
-  });
-
-  return rows.map(({ message, author }) => ({
-    id: message.id,
-    channelId: message.channelId,
-    content: message.content,
-    replyToId: message.replyToId,
-    replyTo: message.replyToId ? (replyMap.get(message.replyToId) ?? null) : null,
-    attachments: message.attachments ?? [],
-    pinned: Boolean(message.pinned),
-    pinnedAt: message.pinnedAt ? message.pinnedAt.toISOString() : null,
-    reactions: reactionsByMessage.get(message.id) ?? [],
-    editedAt: message.editedAt ? message.editedAt.toISOString() : null,
-    createdAt: message.createdAt.toISOString(),
-    author,
-  }));
+// Cursors arrive with millisecond precision (JS ISO strings) while Postgres stores microseconds:
+// "after" starts at the next millisecond so the last known message is not re-sent every poll,
+// "before" includes the whole boundary millisecond so no message is ever skipped (the client
+// de-duplicates by id).
+function nextMillisecond(date: Date): Date {
+  return new Date(date.getTime() + 1);
 }
 
 export async function GET(
@@ -132,6 +28,10 @@ export async function GET(
   }
 
   const { id: channelId } = await context.params;
+  const access = await getChannelAccess(channelId, user);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   const { searchParams } = new URL(request.url);
   const afterParam = searchParams.get("after");
   const beforeParam = searchParams.get("before");
@@ -161,7 +61,7 @@ export async function GET(
         .orderBy(desc(messages.pinnedAt), desc(messages.createdAt))
         .limit(50);
 
-      const items = await hydrateMessages(rows, user.id);
+      const items = await hydrateMessagesList(rows, user.id);
       return NextResponse.json(
         { messages: items },
         { headers: { "Cache-Control": "no-store" } }
@@ -194,7 +94,7 @@ export async function GET(
         .orderBy(desc(messages.createdAt))
         .limit(40);
 
-      const items = await hydrateMessages(rows, user.id);
+      const items = await hydrateMessagesList(rows, user.id);
       return NextResponse.json(
         { messages: items },
         { headers: { "Cache-Control": "no-store" } }
@@ -222,11 +122,11 @@ export async function GET(
         })
         .from(messages)
         .innerJoin(users, eq(messages.authorId, users.id))
-        .where(and(eq(messages.channelId, channelId), gt(messages.createdAt, afterDate)))
+        .where(and(eq(messages.channelId, channelId), gte(messages.createdAt, nextMillisecond(afterDate))))
         .orderBy(asc(messages.createdAt))
         .limit(80);
 
-      const items = await hydrateMessages(rows, user.id);
+      const items = await hydrateMessagesList(rows, user.id);
       return NextResponse.json(
         { messages: items },
         { headers: { "Cache-Control": "no-store" } }
@@ -255,13 +155,13 @@ export async function GET(
         })
         .from(messages)
         .innerJoin(users, eq(messages.authorId, users.id))
-        .where(and(eq(messages.channelId, channelId), lt(messages.createdAt, beforeDate)))
+        .where(and(eq(messages.channelId, channelId), lt(messages.createdAt, nextMillisecond(beforeDate))))
         .orderBy(desc(messages.createdAt))
         .limit(PAGE_SIZE + 1);
 
       const hasMore = olderDesc.length > PAGE_SIZE;
       const slice = hasMore ? olderDesc.slice(0, PAGE_SIZE) : olderDesc;
-      const items = await hydrateMessages(slice.reverse(), user.id);
+      const items = await hydrateMessagesList(slice.reverse(), user.id);
       return NextResponse.json(
         { messages: items, hasMore },
         { headers: { "Cache-Control": "no-store" } }
@@ -290,7 +190,7 @@ export async function GET(
 
     const hasMore = latestDesc.length > INITIAL_LIMIT;
     const slice = hasMore ? latestDesc.slice(0, INITIAL_LIMIT) : latestDesc;
-    const items = await hydrateMessages(slice.reverse(), user.id);
+    const items = await hydrateMessagesList(slice.reverse(), user.id);
     return NextResponse.json(
       { messages: items, hasMore },
       { headers: { "Cache-Control": "no-store" } }
@@ -326,17 +226,21 @@ export async function POST(
       );
     }
 
-    const db = getDb();
-    const [channel] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(eq(channels.id, channelId))
-      .limit(1);
-
-    if (!channel) {
-      return NextResponse.json({ error: "Channel not found." }, { status: 404 });
+    const access = await getChannelAccess(channelId, user);
+    if (!access.ok) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+    if (!access.canSend) {
+      return NextResponse.json(
+        { error: "Your role does not have permission to send messages here." },
+        { status: 403 }
+      );
+    }
+    if (!(await isValidReplyTarget(parsed.data.replyToId, { channelId }))) {
+      return NextResponse.json({ error: "The message you replied to is not in this channel." }, { status: 400 });
     }
 
+    const db = getDb();
     const [created] = await db
       .insert(messages)
       .values({
@@ -353,7 +257,7 @@ export async function POST(
       .set({ lastSeenAt: new Date() })
       .where(eq(users.id, user.id));
 
-    const [hydrated] = await hydrateMessages(
+    const [hydrated] = await hydrateMessagesList(
       [
         {
           message: created,

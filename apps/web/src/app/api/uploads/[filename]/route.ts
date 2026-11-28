@@ -40,11 +40,22 @@ export async function GET(
     const data = await readFile(filePath);
     const ext = path.extname(safeName).toLowerCase();
     const contentType = MIME_BY_EXT[ext] ?? "application/octet-stream";
-    const headers = {
+    // User-uploaded files are served from the app origin, so they must never be able to run
+    // script here: a sandbox CSP neuters SVG/HTML payloads, nosniff stops MIME guessing, and
+    // anything that is not plain media is forced to download instead of rendering.
+    const inlineSafe =
+      /^(image\/(png|jpeg|gif|webp)|video\/|audio\/)/.test(contentType) ||
+      contentType === "application/pdf";
+    const headers: Record<string, string> = {
       "Accept-Ranges": "bytes",
       "Content-Type": contentType,
       "Cache-Control": "public, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox",
     };
+    if (!inlineSafe) {
+      headers["Content-Disposition"] = `attachment; filename="${encodeURIComponent(safeName)}"`;
+    }
     const range = /^bytes=(\d*)-(\d*)$/i.exec(request.headers.get("Range") ?? "");
 
     if (range && (range[1] || range[2])) {

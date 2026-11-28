@@ -117,8 +117,21 @@ export const updateChannelSchema = z.object({
   allowedRoleIds: z.array(z.string().uuid()).optional(),
 });
 
+const attachmentUrlSchema = z
+  .string()
+  .max(1000)
+  .refine((val) => {
+    if (val.startsWith("/api/uploads/")) return true;
+    try {
+      const parsed = new URL(val);
+      return parsed.protocol === "https:" && parsed.hostname.endsWith(".public.blob.vercel-storage.com");
+    } catch {
+      return false;
+    }
+  }, "Attachments must be uploaded through SIQ.");
+
 export const attachmentSchema = z.object({
-  url: mediaUrlSchema,
+  url: attachmentUrlSchema,
   name: z.string().min(1).max(200),
   contentType: z.string().min(1).max(120),
   size: z.number().int().min(0).max(25 * 1024 * 1024),

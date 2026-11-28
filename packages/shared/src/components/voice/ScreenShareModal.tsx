@@ -59,7 +59,7 @@ const QUICK_PRESETS: Array<{
     label: "Coding / Text",
     sub: "1080p · 30fps · Sharp",
     icon: "crisp",
-    config: { resolution: "1080p", fps: 30, mode: "detail", codec: "vp9", bitrateMbps: 4 },
+    config: { resolution: "1080p", fps: 30, mode: "detail", codec: "h264", bitrateMbps: 4 },
   },
   {
     id: "ultra",
@@ -98,6 +98,8 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Reset only when the sheet opens: re-running on config changes would clear "busy" while
+  // the OS source picker is still open and re-enable Go Live.
   useEffect(() => {
     if (open) {
       setDraft(screenShareConfig);
@@ -105,7 +107,8 @@ export function ScreenShareModal({ open, onClose }: ScreenShareModalProps) {
       // Keep bottom sheet compact by default on phones, expanded on desktop
       setShowAdvanced(typeof window !== "undefined" ? window.innerWidth >= 640 : true);
     }
-  }, [open, screenShareConfig]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

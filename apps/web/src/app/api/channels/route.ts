@@ -5,6 +5,7 @@ import { getDb, isDatabaseConfigured } from "@/db";
 import { channels, servers, users } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { getServerMemberPermissions } from "@/lib/server-auth";
+import { canUserAccessChannel } from "@siq/shared/lib/permissions";
 import { createChannelSchema } from "@/lib/validators";
 
 function makeSlug(name: string): string {
@@ -42,8 +43,33 @@ export async function GET(request: Request) {
         .from(channels)
         .orderBy(asc(channels.type), asc(channels.position), asc(channels.createdAt));
 
+  // Only list channels the caller can actually see (server member + private-channel roles)
+  const permsByServer = new Map<string, Awaited<ReturnType<typeof getServerMemberPermissions>>>();
+  const visible = [];
+  for (const ch of rows) {
+    if (!ch.serverId) {
+      visible.push(ch);
+      continue;
+    }
+    let perms = permsByServer.get(ch.serverId);
+    if (!perms) {
+      perms = await getServerMemberPermissions(ch.serverId, user.id);
+      permsByServer.set(ch.serverId, perms);
+    }
+    if (!perms.isMember) continue;
+    if (
+      canUserAccessChannel({
+        channel: { isPrivate: Boolean(ch.isPrivate), allowedRoleIds: ch.allowedRoleIds ?? [] },
+        permissions: perms.permissions,
+        assignedRoleIds: perms.assignedRoleIds,
+      })
+    ) {
+      visible.push(ch);
+    }
+  }
+
   return NextResponse.json({
-    channels: rows.map((ch) => ({
+    channels: visible.map((ch) => ({
       id: ch.id,
       serverId: ch.serverId,
       categoryId: ch.categoryId,

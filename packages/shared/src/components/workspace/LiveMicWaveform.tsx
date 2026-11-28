@@ -7,6 +7,7 @@ import {
   createNoiseProcessor,
   type LiveConfigurableAudioProcessor,
   type NoiseCancellationMode,
+  type SiqEngineStatus,
 } from "@siq/shared/lib/noise-processor";
 import type {
   SiqAiEngine,
@@ -33,7 +34,7 @@ function formatSiqBadge(mode: NoiseCancellationMode, engine: SiqAiEngine): strin
   if (mode !== "siq") return mode.toUpperCase();
   if (engine === "ultra") return "SIQ ULTRA AI";
   if (engine === "fast") return "SIQ FAST AI";
-  return "SIQ PURE";
+  return "SIQ SPECTRAL";
 }
 
 export function LiveMicWaveform(options: MicOptions) {
@@ -159,11 +160,8 @@ function MicPreview({
   latestSiqRef.current = { ...siqDsp, inputGainPct };
   latestBypassRef.current = rawBypass;
 
-  const [status, setStatus] = useState(
-    noiseMode === "siq" && siqDsp.aiEngine === "ultra"
-      ? "Loading SIQ Ultra AI (DeepFilterNet3 48kHz)…"
-      : "Starting microphone…"
-  );
+  const [status, setStatus] = useState("Starting microphone…");
+  const [engineStatus, setEngineStatus] = useState<SiqEngineStatus | null>(null);
   const [error, setError] = useState(false);
   const [telemetry, setTelemetry] = useState<SiqAudioTelemetry | null>(null);
   const [fallbackDb, setFallbackDb] = useState<number>(-70);
@@ -266,6 +264,9 @@ function MicPreview({
           filter.setTelemetryListener?.((t) => {
             if (active) setTelemetry(t);
           });
+          filter.setStatusListener?.((s) => {
+            if (active) setEngineStatus(s);
+          });
           try {
             await filter.init({ kind: Track.Kind.Audio, track, audioContext: context });
           } catch (err) {
@@ -323,27 +324,16 @@ function MicPreview({
         if (!active) return;
 
         const samples = new Float32Array(analyser.fftSize);
-        const activeSub = processor?.activeSiqEngine ?? latestSiqRef.current.aiEngine;
         const srKhz = Math.round(context.sampleRate / 1000);
-        const siqLabel =
-          activeSub === "ultra"
-            ? `SIQ Ultra AI live (DeepFilterNet3 · ${srKhz}kHz Full-Band)`
-            : activeSub === "fast"
-              ? `SIQ Fast AI live (GTCRN + Air · ${srKhz}kHz · ~10ms)`
-              : `SIQ Studio Pure live (${srKhz}kHz · ~2.7ms)`;
         const label =
           result.effectiveMode === "off"
             ? "Raw microphone (no noise filter)"
             : result.effectiveMode === "siq"
-              ? processor?.fallbackNotice
-                ? `${siqLabel} — ${processor.fallbackNotice}`
-                : siqLabel
-              : `Active filter: ${result.effectiveMode.toUpperCase()} (${srKhz}kHz)`;
-        setStatus(
-          noiseMode === "krisp"
-            ? `${siqLabel} (Krisp activates live on Cloud voice rooms)`
-            : label
-        );
+              ? noiseMode === "krisp"
+                ? "Previewing with SIQ — Krisp activates live in LiveKit Cloud voice rooms"
+                : ""
+              : `Active filter: ${result.effectiveMode.toUpperCase()} (${srKhz} kHz)`;
+        setStatus(label);
 
         let meterTick = 0;
         function draw() {
@@ -396,7 +386,11 @@ function MicPreview({
       active = false;
       releaseAudio();
     };
+    // hearMyself is applied live through monitorGainRef; restarting the mic for it would glitch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, outputDeviceId, echoCancellation, autoGainControl, noiseMode, siqDsp.aiEngine]);
+
+  const engineLine = describeEngine(engineStatus, telemetry);
 
   const levelDb = telemetry ? telemetry.inputDb : fallbackDb;
   const outputDb = telemetry ? telemetry.outputDb : null;
@@ -496,9 +490,34 @@ function MicPreview({
         </div>
       </div>
 
-      <p role="status" className={error ? "text-[11px] text-rose-300" : "text-[11px] text-zinc-400"}>
-        {status}
-      </p>
+      {(engineLine || status) && (
+        <p role="status" className={error ? "text-[11px] text-rose-300" : "text-[11px] text-zinc-400"}>
+          {error ? status : [engineLine, status].filter(Boolean).join(" · ")}
+        </p>
+      )}
+      {!error && engineStatus?.message && (
+        <p className="text-[11px] text-amber-300/90">{engineStatus.message}</p>
+      )}
     </div>
   );
+}
+
+function describeEngine(
+  status: SiqEngineStatus | null,
+  telemetry: SiqAudioTelemetry | null
+): string {
+  if (!status) return "";
+  const latency =
+    telemetry?.latencyMs !== undefined ? ` · ${Math.round(telemetry.latencyMs)} ms` : "";
+  if (status.active === "ultra") {
+    if (status.neuralState === "loading") return "SIQ Ultra AI · loading DeepFilterNet3 (Spectral covers meanwhile)";
+    if (status.neuralState === "priming") return "SIQ Ultra AI · warming up";
+    const load =
+      telemetry?.neuralLoadPct !== undefined && telemetry.neuralLoadPct > 0
+        ? ` · AI load ${telemetry.neuralLoadPct}%`
+        : "";
+    return `SIQ Ultra AI · DeepFilterNet3 48 kHz${latency}${load}`;
+  }
+  if (status.active === "fast") return `SIQ Fast AI · GTCRN${latency}`;
+  return `SIQ Spectral · MCRA + Wiener${latency}`;
 }

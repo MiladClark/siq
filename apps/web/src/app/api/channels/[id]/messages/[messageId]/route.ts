@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { messages } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getChannelAccess } from "@/lib/server-auth";
 import { updateMessageSchema } from "@/lib/validators";
 
 export async function PATCH(
@@ -19,6 +20,10 @@ export async function PATCH(
   }
 
   const { id: channelId, messageId } = await context.params;
+  const access = await getChannelAccess(channelId, user);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
 
   try {
     const body = await request.json();
@@ -55,9 +60,9 @@ export async function PATCH(
     }
 
     if (parsed.data.pinned !== undefined) {
-      if (existing.authorId !== user.id && user.role !== "admin") {
+      if (existing.authorId !== user.id && !access.canModerate) {
         return NextResponse.json(
-          { error: "Only admins or the author can pin this message." },
+          { error: "Only the author or members with Manage Messages can pin this message." },
           { status: 403 }
         );
       }
@@ -101,6 +106,10 @@ export async function DELETE(
   }
 
   const { id: channelId, messageId } = await context.params;
+  const access = await getChannelAccess(channelId, user);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   const db = getDb();
 
   const [existing] = await db
@@ -113,7 +122,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Message not found." }, { status: 404 });
   }
 
-  if (existing.authorId !== user.id && user.role !== "admin") {
+  if (existing.authorId !== user.id && !access.canModerate) {
     return NextResponse.json(
       { error: "You can only delete your own messages." },
       { status: 403 }

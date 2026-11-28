@@ -48,23 +48,33 @@ const existing = await readFile(destination).catch((error) => {
   throw error;
 });
 
+// The static copy is only a fallback for /api/desktop/download (which streams from GitHub),
+// so a slow or unreachable GitHub must never fail a dev start or a production build.
 if (!existing || !matchesHash(existing, target.sha256)) {
-  const response = await fetch(target.downloadUrl, { signal: AbortSignal.timeout(60_000) });
-  if (!response.ok) {
-    throw new Error(`Could not fetch SIQ v${target.version} (${response.status})`);
-  }
-
-  const file = Buffer.from(await response.arrayBuffer());
-  if (!matchesHash(file, target.sha256)) {
-    throw new Error(`Checksum mismatch for SIQ v${target.version}`);
-  }
-
-  await mkdir(downloadDirectory, { recursive: true });
-  const temporary = new URL(`${fileName}.${randomUUID()}.tmp`, downloadDirectory);
   try {
-    await writeFile(temporary, file);
-    await rename(temporary, destination);
-  } finally {
-    await rm(temporary, { force: true });
+    const response = await fetch(target.downloadUrl, { signal: AbortSignal.timeout(90_000) });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const file = Buffer.from(await response.arrayBuffer());
+    if (!matchesHash(file, target.sha256)) {
+      throw new Error("checksum mismatch");
+    }
+
+    await mkdir(downloadDirectory, { recursive: true });
+    const temporary = new URL(`${fileName}.${randomUUID()}.tmp`, downloadDirectory);
+    try {
+      await writeFile(temporary, file);
+      await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[sync-desktop-release] Could not mirror SIQ v${target.version} (${reason}); ` +
+        (existing ? "keeping the previous static copy." : "the download route will stream from GitHub.")
+    );
   }
 }

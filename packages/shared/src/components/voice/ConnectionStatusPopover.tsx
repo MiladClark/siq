@@ -5,6 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HeaderPanel } from "@siq/shared/components/ui/HeaderPanel";
+import { useVoice } from "@siq/shared/components/voice/VoiceProvider";
+import type { NoiseCancellationMode } from "@siq/shared/lib/noise-processor";
+import type { SiqAiEngine, SiqNeuralState } from "@siq/shared/lib/siq-audio-worklet";
 import type { VoiceNetworkStats } from "@siq/shared/lib/types";
 
 interface ConnectionStatusButtonProps {
@@ -38,6 +41,31 @@ function getSignalStyle(pingMs: number | null) {
   };
 }
 
+function describeNoiseEngine(
+  mode: NoiseCancellationMode,
+  siq: SiqAiEngine,
+  neural: SiqNeuralState
+): { label: string; tone: string } {
+  if (mode === "siq") {
+    if (siq === "ultra") {
+      return neural === "loading" || neural === "priming"
+        ? { label: "SIQ Ultra AI · loading model", tone: "text-amber-300" }
+        : { label: "SIQ Ultra AI · DeepFilterNet3", tone: "text-emerald-300" };
+    }
+    if (siq === "fast") return { label: "SIQ Fast AI · GTCRN", tone: "text-emerald-300" };
+    return { label: "SIQ Spectral", tone: "text-emerald-300" };
+  }
+  const labels: Record<NoiseCancellationMode, string> = {
+    siq: "SIQ",
+    krisp: "Krisp AI",
+    gtcrn: "GTCRN",
+    rnnoise: "RNNoise",
+    standard: "Browser (WebRTC)",
+    off: "Off",
+  };
+  return { label: labels[mode], tone: mode === "off" ? "text-zinc-400" : "text-zinc-100" };
+}
+
 function formatTickTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], {
     hour: "numeric",
@@ -52,6 +80,8 @@ export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStat
   const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
 
   const signal = getSignalStyle(stats.lastPingMs);
+  const { activeNoiseEngine, activeSiqEngine, siqNeuralState } = useVoice();
+  const engine = describeNoiseEngine(activeNoiseEngine, activeSiqEngine, siqNeuralState);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -248,6 +278,10 @@ export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStat
                       <p>
                         Transport{" "}
                         <span className="font-semibold text-zinc-100">{stats.transport ?? "—"}</span>
+                      </p>
+                      <p>
+                        Noise cancellation{" "}
+                        <span className={`font-semibold ${engine.tone}`}>{engine.label}</span>
                       </p>
                       {stats.joinTiming && (
                         <p className="tabular-nums">

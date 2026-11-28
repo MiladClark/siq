@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb, isDatabaseConfigured } from "@/db";
 import { messageReactions, messages } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getChannelAccess, verifyDmParticipant } from "@/lib/server-auth";
 import type { MessageReactionSummary } from "@siq/shared/lib/types";
 import { toggleReactionSchema } from "@/lib/validators";
 
@@ -33,12 +34,27 @@ export async function POST(
 
     const db = getDb();
     const [msg] = await db
-      .select({ id: messages.id })
+      .select({
+        id: messages.id,
+        channelId: messages.channelId,
+        dmConversationId: messages.dmConversationId,
+      })
       .from(messages)
       .where(eq(messages.id, messageId))
       .limit(1);
 
     if (!msg) {
+      return NextResponse.json({ error: "Message not found." }, { status: 404 });
+    }
+
+    // Only people who can see the message may react to it (or learn who reacted)
+    let canSee = false;
+    if (msg.dmConversationId) {
+      canSee = Boolean(await verifyDmParticipant(msg.dmConversationId, user.id));
+    } else if (msg.channelId) {
+      canSee = (await getChannelAccess(msg.channelId, user)).ok;
+    }
+    if (!canSee) {
       return NextResponse.json({ error: "Message not found." }, { status: 404 });
     }
 

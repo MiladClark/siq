@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { isBlobStorageConfigured, uploadChatAttachment } from "@/lib/storage";
+import { isBlobStorageConfigured, MAX_UPLOAD_BYTES, uploadChatAttachment } from "@/lib/storage";
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -15,6 +15,14 @@ export async function POST(request: Request) {
           "Vercel Blob is not configured yet. Add a Blob store in Vercel Storage (BLOB_READ_WRITE_TOKEN).",
       },
       { status: 503 }
+    );
+  }
+
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (declaredLength > MAX_UPLOAD_BYTES + 64 * 1024) {
+    return NextResponse.json(
+      { error: `File is too large. Maximum size is ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.` },
+      { status: 413 }
     );
   }
 
