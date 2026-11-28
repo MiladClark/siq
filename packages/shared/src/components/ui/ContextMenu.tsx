@@ -7,7 +7,7 @@ import {
   TextSelect,
   Volume2,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, type Variants } from "motion/react";
 import {
   createContext,
   ReactNode,
@@ -19,6 +19,36 @@ import {
   useState,
 } from "react";
 import { playSound } from "@siq/shared/lib/sounds";
+
+// Glass menu pops out of the exact cursor point, then its rows cascade in
+const MENU_VARIANTS: Variants = {
+  hidden: { opacity: 0, scale: 0.9 },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    transition: {
+      type: "spring",
+      stiffness: 480,
+      damping: 32,
+      staggerChildren: 0.016,
+      delayChildren: 0.02,
+    },
+  },
+  exit: {
+    opacity: 0,
+    scale: 0.96,
+    transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
+  },
+};
+
+const MENU_ROW_VARIANTS: Variants = {
+  hidden: { opacity: 0, x: -6 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { type: "spring", stiffness: 560, damping: 36 },
+  },
+};
 
 export type ContextMenuEntry =
   | {
@@ -76,6 +106,7 @@ export function ContextMenuProvider({
 }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [hovered, setHovered] = useState<{ menuKey: string; id: string } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const closeMenu = useCallback(() => {
@@ -260,6 +291,9 @@ export function ContextMenuProvider({
     setPos({ x: Math.max(pad, nextX), y: Math.max(pad, nextY) });
   }, [menu]);
 
+  const menuKey = menu ? `${menu.x}-${menu.y}` : null;
+  const hoveredId = hovered && hovered.menuKey === menuKey ? hovered.id : null;
+
   return (
     <ContextMenuContext.Provider value={{ openMenu, closeMenu }}>
       {children}
@@ -269,20 +303,27 @@ export function ContextMenuProvider({
           <motion.div
             ref={menuRef}
             key={`${menu.x}-${menu.y}`}
-            initial={{ opacity: 0, scale: 0.95, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -2 }}
-            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-            style={{ left: pos.x, top: pos.y }}
+            variants={MENU_VARIANTS}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            onMouseLeave={() => setHovered(null)}
+            style={{
+              left: pos.x,
+              top: pos.y,
+              // Grow out of the cursor point, even when the menu was clamped into view
+              transformOrigin: `${menu.x - pos.x}px ${menu.y - pos.y}px`,
+            }}
             role="menu"
-            className="fixed z-[90] min-w-[210px] max-w-[260px] origin-top-left rounded-xl border border-white/[0.11] bg-[#14151A]/98 p-1.5 shadow-2xl shadow-black/75 backdrop-blur-md"
+            className="siq-glass fixed z-[90] min-w-[220px] max-w-[270px] rounded-2xl p-1.5"
           >
             {menu.entries.map((entry) => {
               if (entry.type === "divider") {
                 return (
-                  <div
+                  <motion.div
                     key={entry.id}
-                    className="my-1.5 h-px bg-white/[0.07]"
+                    variants={MENU_ROW_VARIANTS}
+                    className="mx-2 my-1.5 h-px bg-gradient-to-r from-transparent via-white/[0.1] to-transparent"
                     role="separator"
                   />
                 );
@@ -290,52 +331,92 @@ export function ContextMenuProvider({
 
               if (entry.type === "header") {
                 return (
-                  <div
+                  <motion.div
                     key={entry.id}
+                    variants={MENU_ROW_VARIANTS}
                     dir="auto"
-                    className="truncate px-2.5 py-1 text-[11px] font-medium text-zinc-500"
+                    className="flex min-w-0 items-center gap-2 px-2.5 pb-1.5 pt-1 text-[11px] font-semibold text-zinc-400"
                   >
-                    {entry.label}
-                  </div>
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgb(var(--siq-accent-rgb)/0.9)]"
+                    />
+                    <span className="truncate">{entry.label}</span>
+                  </motion.div>
                 );
               }
 
               if (entry.type === "slider") {
                 return (
-                  <ContextMenuSliderRow key={entry.id} entry={entry} />
+                  <motion.div key={entry.id} variants={MENU_ROW_VARIANTS}>
+                    <ContextMenuSliderRow entry={entry} />
+                  </motion.div>
                 );
               }
 
+              const isHovered = hoveredId === entry.id && !entry.disabled;
+
               return (
-                <button
+                <motion.button
                   key={entry.id}
+                  variants={MENU_ROW_VARIANTS}
                   type="button"
                   role="menuitem"
                   disabled={entry.disabled}
+                  onMouseEnter={() => {
+                    if (menuKey) setHovered({ menuKey, id: entry.id });
+                  }}
+                  onFocus={() => {
+                    if (menuKey) setHovered({ menuKey, id: entry.id });
+                  }}
                   onClick={() => {
                     entry.onSelect();
                     closeMenu();
                   }}
-                  className={`flex w-full items-center justify-between gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 ${
+                  className={`group relative isolate flex min-h-8 w-full items-center justify-between gap-3 rounded-[10px] px-2 py-1 text-left text-[12.5px] font-medium outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-emerald-400/50 disabled:pointer-events-none disabled:opacity-40 ${
                     entry.danger
-                      ? "text-rose-400 hover:bg-rose-500/15 hover:text-rose-300"
-                      : "text-zinc-200 hover:bg-white/[0.07] hover:text-white"
+                      ? "text-rose-400 hover:text-rose-300"
+                      : "text-zinc-300 hover:text-white"
                   }`}
                 >
-                  <span className="flex items-center gap-2 truncate">
+                  {isHovered && (
+                    <motion.span
+                      layoutId={`siq-context-menu-hl-${menuKey}`}
+                      aria-hidden="true"
+                      transition={{ type: "spring", stiffness: 640, damping: 44, mass: 0.6 }}
+                      className={`absolute inset-0 -z-10 rounded-[inherit] ring-1 ring-inset ${
+                        entry.danger
+                          ? "bg-gradient-to-r from-rose-500/[0.2] to-rose-500/[0.08] ring-rose-500/25"
+                          : "bg-gradient-to-r from-white/[0.09] to-white/[0.045] ring-white/[0.07]"
+                      }`}
+                    />
+                  )}
+                  <span className="flex min-w-0 items-center gap-2.5">
                     {entry.icon && (
-                      <span className="shrink-0 opacity-80">{entry.icon}</span>
+                      <span
+                        className={`grid h-6 w-6 shrink-0 place-items-center rounded-[7px] ring-1 ring-inset transition-colors duration-150 ${
+                          entry.danger
+                            ? "bg-rose-500/10 text-rose-400 ring-rose-500/15 group-hover:bg-rose-500/20 group-hover:text-rose-300"
+                            : "bg-white/[0.04] text-zinc-400 ring-white/[0.05] group-hover:bg-emerald-500/15 group-hover:text-emerald-300 group-hover:ring-emerald-500/25"
+                        }`}
+                      >
+                        {entry.icon}
+                      </span>
                     )}
                     <span className="truncate">{entry.label}</span>
                   </span>
                   {entry.shortcut && (
-                    <span className="shrink-0 text-[10px] font-medium text-zinc-500">
+                    <span className="shrink-0 rounded-md border border-white/[0.07] bg-white/[0.03] px-1.5 py-px text-[10px] font-medium tracking-wide text-zinc-500 transition-colors duration-150 group-hover:border-white/[0.12] group-hover:text-zinc-300">
                       {entry.shortcut}
                     </span>
                   )}
-                </button>
+                </motion.button>
               );
             })}
+            <span
+              aria-hidden="true"
+              className="siq-edge-light pointer-events-none !absolute -inset-px rounded-[inherit]"
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -350,13 +431,13 @@ function ContextMenuSliderRow({
 }) {
   const [val, setVal] = useState(entry.value);
   return (
-    <div className="space-y-1.5 rounded-lg px-2.5 py-2">
+    <div className="my-0.5 space-y-2 rounded-[10px] bg-white/[0.025] px-2.5 py-2 ring-1 ring-inset ring-white/[0.05]">
       <div className="flex items-center justify-between text-[11px]">
         <span className="flex items-center gap-1.5 font-medium text-zinc-300">
-          <Volume2 className="h-3.5 w-3.5 text-zinc-400" />
+          <Volume2 className="h-3.5 w-3.5 text-emerald-400" />
           {entry.label}
         </span>
-        <span className="text-[11px] font-semibold tabular-nums text-zinc-400">
+        <span className="rounded-md bg-emerald-500/10 px-1.5 py-px text-[11px] font-semibold tabular-nums text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
           {Math.round(val * 100)}%
         </span>
       </div>

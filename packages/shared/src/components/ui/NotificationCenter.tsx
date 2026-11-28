@@ -4,6 +4,7 @@ import {
   AlertCircle,
   AlertTriangle,
   AtSign,
+  Bell,
   CheckCheck,
   CheckCircle2,
   Hash,
@@ -67,7 +68,7 @@ function SystemKindBadge({
     case "error":
       return (
         <span
-          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/15 text-rose-400`}
+          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/15 text-rose-400 shadow-[0_0_16px_-4px_rgba(244,63,94,0.65)]`}
         >
           <AlertCircle className={iconSize} />
         </span>
@@ -75,7 +76,7 @@ function SystemKindBadge({
     case "warning":
       return (
         <span
-          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400`}
+          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400 shadow-[0_0_16px_-4px_rgba(245,158,11,0.6)]`}
         >
           <AlertTriangle className={iconSize} />
         </span>
@@ -83,7 +84,7 @@ function SystemKindBadge({
     case "info":
       return (
         <span
-          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-400`}
+          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-400 shadow-[0_0_16px_-4px_rgba(56,189,248,0.6)]`}
         >
           <Info className={iconSize} />
         </span>
@@ -91,7 +92,7 @@ function SystemKindBadge({
     case "success":
       return (
         <span
-          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-400`}
+          className={`inline-flex ${boxSize} shrink-0 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/15 text-emerald-400 shadow-[0_0_16px_-4px_rgb(var(--siq-accent-rgb)/0.65)]`}
         >
           <CheckCircle2 className={iconSize} />
         </span>
@@ -102,13 +103,27 @@ function SystemKindBadge({
 function getProgressBarClass(kind?: NotificationKind): string {
   switch (kind) {
     case "error":
-      return "bg-rose-500";
+      return "bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.85)]";
     case "warning":
-      return "bg-amber-400";
+      return "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]";
     case "info":
-      return "bg-sky-400";
+      return "bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.8)]";
     default:
-      return "bg-emerald-400";
+      return "bg-emerald-400 shadow-[0_0_10px_rgb(var(--siq-accent-rgb)/0.85)]";
+  }
+}
+
+// Kind-tinted light that washes in from the toast's leading edge
+function getToastGlowClass(kind?: NotificationKind): string {
+  switch (kind) {
+    case "error":
+      return "bg-[radial-gradient(70%_130%_at_0%_0%,rgba(244,63,94,0.14),transparent_70%)]";
+    case "warning":
+      return "bg-[radial-gradient(70%_130%_at_0%_0%,rgba(245,158,11,0.12),transparent_70%)]";
+    case "info":
+      return "bg-[radial-gradient(70%_130%_at_0%_0%,rgba(56,189,248,0.12),transparent_70%)]";
+    default:
+      return "bg-[radial-gradient(70%_130%_at_0%_0%,rgb(var(--siq-accent-rgb)/0.12),transparent_70%)]";
   }
 }
 
@@ -166,7 +181,7 @@ export function NotificationBell({
         className={`siq-header-trigger flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
           open
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-            : "border-white/[0.1] bg-[#16171D] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+            : "border-white/[0.1] bg-white/[0.04] text-zinc-300 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white"
         }`}
       >
         <BellIcon
@@ -188,20 +203,32 @@ export function NotificationBell({
       <AnimatePresence>
         {open && (
           <HeaderPanel kind="notifications" label="Notifications">
-            <div className="flex items-center justify-between border-b border-white/[0.07] px-3.5 py-2.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-zinc-100">Notifications</span>
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-3.5 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="grid h-7 w-7 place-items-center rounded-[9px] bg-emerald-500/10 text-emerald-300 shadow-[0_0_18px_-6px_rgb(var(--siq-accent-rgb)/0.75)] ring-1 ring-inset ring-emerald-500/25"
+                >
+                  <Bell className="h-3.5 w-3.5" />
+                </span>
+                <span className="text-[13px] font-semibold tracking-tight text-zinc-50">Notifications</span>
                 {unreadCount > 0 && (
-                  <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-rose-300">
+                  <motion.span
+                    key={unreadCount}
+                    initial={{ scale: 0.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 520, damping: 20 }}
+                    className="rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-rose-300 ring-1 ring-inset ring-rose-500/30"
+                  >
                     {unreadCount}
-                  </span>
+                  </motion.span>
                 )}
               </div>
               {unreadCount > 0 && (
                 <button
                   type="button"
                   onClick={onMarkAllRead}
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                  className="siq-press inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-zinc-400 hover:bg-emerald-500/10 hover:text-emerald-300"
                 >
                   <CheckCheck className="h-3.5 w-3.5" />
                   <span>Mark read</span>
@@ -209,98 +236,160 @@ export function NotificationBell({
               )}
             </div>
 
-            <div className="divide-y divide-white/[0.05]">
-              {visibleItems.length === 0 ? (
-                <div className="px-4 py-8 text-center text-xs text-zinc-500">
-                  You&apos;re all caught up.
-                </div>
-              ) : (
-                visibleItems.map((item) => {
-                  const sysKind = isSystemKind(item.kind) ? item.kind : null;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        if (sysKind) {
-                          onMarkItemRead?.(item.id);
-                        } else if (onSelectNotification) {
-                          onSelectNotification(item);
-                        } else if (item.channelId) {
-                          onSelectChannel(item.channelId);
-                        }
-                        onClose();
-                      }}
-                      className={`flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.04] ${
-                        !item.read ? getUnreadTintClass(item.kind) : ""
-                      }`}
-                    >
-                      {sysKind ? (
-                        <SystemKindBadge kind={sysKind} size="sm" />
-                      ) : (
-                        <Avatar
-                          name={item.authorDisplayName}
-                          color={item.authorAvatarColor}
-                          avatarUrl={item.authorAvatarUrl}
-                          size="sm"
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            dir="auto"
-                            className="truncate text-xs font-semibold text-zinc-100"
-                          >
-                            {item.authorDisplayName}
-                          </span>
-                          <span className="shrink-0 text-[10px] font-medium tabular-nums text-zinc-500">
-                            {formatShortTime(item.createdAt)}
-                          </span>
-                        </div>
-                        <p
-                          dir="auto"
-                          className={`mt-0.5 text-xs text-zinc-400 ${
-                            sysKind ? "line-clamp-2 leading-relaxed" : "truncate"
-                          }`}
-                        >
-                          {item.mentioned && <span className="mr-1 text-emerald-300">Mentioned you</span>}
-                          {sysKind
-                            ? item.content
-                            : item.content
-                              ? truncatePreview(item.content, 44)
-                              : item.hasAttachments
-                                ? "Sent an attachment"
-                                : "New message"}
-                        </p>
-                        {item.channelName && (
-                          <span className="mt-1 inline-flex items-center gap-0.5 text-[10px] font-medium text-zinc-500">
-                            {!sysKind &&
-                              (item.dmConversationId ? (
-                                <AtSign className="h-2.5 w-2.5" />
-                              ) : (
-                                <Hash className="h-2.5 w-2.5" />
-                              ))}
-                            <span dir="auto">{item.channelName}</span>
-                          </span>
-                        )}
-                      </div>
-                      {!item.read && (
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
+            <NotificationPanelList
+              items={visibleItems}
+              onClose={onClose}
+              onSelectChannel={onSelectChannel}
+              onSelectNotification={onSelectNotification}
+              onMarkItemRead={onMarkItemRead}
+            />
 
             {overflowCount > 0 && (
-              <div className="border-t border-white/[0.07] bg-[#0E0F12] px-3.5 py-2 text-center text-[11px] font-medium tabular-nums text-zinc-500">
+              <div className="border-t border-white/[0.06] bg-black/20 px-3.5 py-2 text-center text-[11px] font-medium tabular-nums text-zinc-500">
                 … and {overflowCount} more {overflowCount === 1 ? "notification" : "notifications"}
               </div>
             )}
           </HeaderPanel>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// Lives inside the panel so its hover highlight resets every time the panel opens
+function NotificationPanelList({
+  items,
+  onClose,
+  onSelectChannel,
+  onSelectNotification,
+  onMarkItemRead,
+}: {
+  items: NotificationItem[];
+  onClose: () => void;
+  onSelectChannel: (channelId: string) => void;
+  onSelectNotification?: (item: NotificationItem) => void;
+  onMarkItemRead?: (id: string) => void;
+}) {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-0.5 p-1.5" onMouseLeave={() => setHoveredId(null)}>
+      {items.length === 0 ? (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 380, damping: 30, delay: 0.08 }}
+          className="flex flex-col items-center gap-3 px-4 py-7 text-center text-xs text-zinc-500"
+        >
+          <span aria-hidden="true" className="siq-hero-tile h-12 w-12 !rounded-2xl">
+            <CheckCheck className="h-5 w-5" />
+          </span>
+          <span>You&apos;re all caught up.</span>
+        </motion.div>
+      ) : (
+        items.map((item, index) => {
+          const sysKind = isSystemKind(item.kind) ? item.kind : null;
+          return (
+            <motion.button
+              key={item.id}
+              type="button"
+              onMouseEnter={() => setHoveredId(item.id)}
+              onFocus={() => setHoveredId(item.id)}
+              onClick={() => {
+                if (sysKind) {
+                  onMarkItemRead?.(item.id);
+                } else if (onSelectNotification) {
+                  onSelectNotification(item);
+                } else if (item.channelId) {
+                  onSelectChannel(item.channelId);
+                }
+                onClose();
+              }}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                type: "spring",
+                stiffness: 460,
+                damping: 32,
+                delay: 0.06 + index * 0.045,
+              }}
+              className={`relative isolate flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-emerald-400/50 ${
+                !item.read ? getUnreadTintClass(item.kind) : ""
+              }`}
+            >
+              {hoveredId === item.id && (
+                <motion.span
+                  layoutId="siq-notification-row-hl"
+                  aria-hidden="true"
+                  transition={{ type: "spring", stiffness: 620, damping: 44, mass: 0.6 }}
+                  className="absolute inset-0 -z-10 rounded-[inherit] bg-white/[0.05] ring-1 ring-inset ring-white/[0.07]"
+                />
+              )}
+              {!item.read && (
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-3 left-0 w-[2px] rounded-r-full bg-rose-400/80 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                />
+              )}
+              {sysKind ? (
+                <SystemKindBadge kind={sysKind} size="sm" />
+              ) : (
+                <Avatar
+                  name={item.authorDisplayName}
+                  color={item.authorAvatarColor}
+                  avatarUrl={item.authorAvatarUrl}
+                  size="sm"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    dir="auto"
+                    className="truncate text-xs font-semibold text-zinc-100"
+                  >
+                    {item.authorDisplayName}
+                  </span>
+                  <span className="shrink-0 text-[10px] font-medium tabular-nums text-zinc-500">
+                    {formatShortTime(item.createdAt)}
+                  </span>
+                </div>
+                <p
+                  dir="auto"
+                  className={`mt-0.5 text-xs text-zinc-400 ${
+                    sysKind ? "line-clamp-2 leading-relaxed" : "truncate"
+                  }`}
+                >
+                  {item.mentioned && <span className="mr-1 font-medium text-emerald-300">Mentioned you</span>}
+                  {sysKind
+                    ? item.content
+                    : item.content
+                      ? truncatePreview(item.content, 44)
+                      : item.hasAttachments
+                        ? "Sent an attachment"
+                        : "New message"}
+                </p>
+                {item.channelName && (
+                  <span className="mt-1.5 inline-flex items-center gap-0.5 rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 ring-1 ring-inset ring-white/[0.05]">
+                    {!sysKind &&
+                      (item.dmConversationId ? (
+                        <AtSign className="h-2.5 w-2.5" />
+                      ) : (
+                        <Hash className="h-2.5 w-2.5" />
+                      ))}
+                    <span dir="auto">{item.channelName}</span>
+                  </span>
+                )}
+              </div>
+              {!item.read && (
+                <span className="relative mt-1.5 flex h-1.5 w-1.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-60 motion-reduce:animate-none" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.85)]" />
+                </span>
+              )}
+            </motion.button>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -557,20 +646,24 @@ function ToastCard({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 22, scale: 0.94 }}
+      initial={{ opacity: 0, y: 24, scale: 0.92 }}
       animate={{
         opacity: stackOpacity,
         y: 0,
         scale: stackScale,
         marginBottom: stacked ? -56 : depthFromFront === 0 ? 0 : 10,
       }}
-      exit={{ opacity: 0, x: 36, scale: 0.94 }}
+      exit={{ opacity: 0, x: 44, scale: 0.94 }}
       transition={{ type: "spring", stiffness: 420, damping: 32 }}
       style={{ zIndex: 20 - depthFromFront }}
-      className={`siq-bezel pointer-events-auto relative w-full origin-bottom overflow-hidden rounded-2xl border bg-[#121319]/96 backdrop-blur-xl transition-colors ${
-        paused ? "border-white/[0.18]" : "border-white/[0.11] md:border-[color:var(--workspace-outline)]"
+      className={`siq-glass pointer-events-auto relative w-full origin-bottom overflow-hidden rounded-2xl transition-colors ${
+        paused ? "!border-white/[0.18]" : ""
       }`}
     >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 -z-10 ${getToastGlowClass(toast.kind)}`}
+      />
       <div
         onClick={onOpen}
         role="button"
@@ -578,7 +671,7 @@ function ToastCard({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") onOpen();
         }}
-        className="flex cursor-pointer items-start gap-3 px-3.5 py-3 pr-8 transition-colors hover:bg-white/[0.03]"
+        className="flex cursor-pointer items-start gap-3 px-3.5 py-3 pr-8 outline-none transition-colors hover:bg-white/[0.035] focus-visible:bg-white/[0.04] focus-visible:shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.45)]"
       >
         {sysKind ? (
           <SystemKindBadge kind={sysKind} size="md" />
@@ -596,7 +689,7 @@ function ToastCard({
               {toast.authorDisplayName}
             </span>
             {toast.channelName && (
-              <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+              <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-inset ring-white/[0.06]">
                 {!sysKind &&
                   (toast.dmConversationId ? (
                     <AtSign className="h-2.5 w-2.5" />
@@ -638,13 +731,13 @@ function ToastCard({
           onDismissRef.current();
         }}
         aria-label="Dismiss notification"
-        className="absolute right-2 top-2 rounded-md p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+        className="siq-press absolute right-2 top-2 rounded-lg p-1 text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-200"
       >
         <X className="h-3.5 w-3.5" />
       </button>
 
       {/* Precision RAF Progress Bar (pauses cleanly on hover, resumes smoothly on unhover) */}
-      <div className="h-[2.5px] w-full bg-white/[0.05]">
+      <div className="h-[2.5px] w-full bg-white/[0.04]">
         <div
           ref={progressBarRef}
           style={{ transform: "scaleX(1)" }}

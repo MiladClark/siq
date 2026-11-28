@@ -81,7 +81,7 @@ jobs:
               sha256,
               sizeBytes: buf.length,
               required: false,
-              releaseNotes: `SIQ Desktop ${tag} — SIQ AI Engine v2 (local DeepFilterNet3 48kHz neural noise cancellation, Fast AI GTCRN + Air Recovery, De-Esser, Smart Compressor, and live A/B Mic Monitor).`,
+              releaseNotes: `SIQ Desktop ${tag} — SIQ Voice Engine v3 (lag-free AI noise cancellation on a background worker, cleaner speech, faster chat) and the new Nocturne UI with liquid header panels and smoother animations.`,
               releasedAt: new Date().toISOString(),
               downloadUrl: `https://github.com/${repo}/releases/download/${tag}/SIQ-Windows-Portable.exe`,
             };

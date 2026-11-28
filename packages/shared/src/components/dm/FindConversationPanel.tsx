@@ -140,6 +140,26 @@ function formatMsgDate(iso: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Result rows cascade in by their position in the keyboard order
+function rowEnter(idx: number) {
+  return {
+    type: "spring" as const,
+    stiffness: 520,
+    damping: 38,
+    delay: 0.04 + Math.min(idx, 14) * 0.018,
+  };
+}
+
+const ROW_INITIAL = { opacity: 0, y: 6 };
+const ROW_ANIMATE = { opacity: 1, y: 0 };
+const ACTIVE_ROW_SPRING = { type: "spring" as const, stiffness: 560, damping: 42, mass: 0.7 };
+
+const ROW_CLASS =
+  "group relative isolate flex w-full rounded-xl px-2.5 py-2 text-left outline-none transition-colors duration-150";
+
+const SECTION_LABEL_CLASS =
+  "mb-1.5 flex items-center gap-1.5 px-2 text-[10.5px] font-bold uppercase tracking-[0.09em] text-zinc-500";
+
 export function FindConversationPanel({
   open,
   initialCategory = "all",
@@ -380,12 +400,14 @@ export function FindConversationPanel({
       {open && (
         <HeaderPanel kind="search" label="Universal Smart Search">
             {/* Unified Search Input */}
-            <div className="flex shrink-0 items-center gap-2.5 border-b border-white/[0.08] px-3.5 py-3">
-              {msgLoading ? (
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-400" />
-              ) : (
-                <Search className="h-4 w-4 shrink-0 text-emerald-400" />
-              )}
+            <div className="group/search flex shrink-0 items-center gap-3 border-b border-white/[0.07] px-3.5 py-3">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-emerald-500/10 shadow-[0_0_20px_-6px_rgb(var(--siq-accent-rgb)/0.75)] ring-1 ring-inset ring-emerald-500/25 transition-shadow duration-300 group-focus-within/search:shadow-[0_0_26px_-4px_rgb(var(--siq-accent-rgb)/0.85)]">
+                {msgLoading ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-300" />
+                ) : (
+                  <Search className="h-4 w-4 shrink-0 text-emerald-300" />
+                )}
+              </span>
               <input
                 ref={inputRef}
                 type="text"
@@ -401,28 +423,34 @@ export function FindConversationPanel({
                       ? `Search ${activeChatContext.label} or workspace…`
                       : "Search workspace…"
                 }
-                className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+                className="min-w-0 flex-1 bg-transparent text-[15px] font-medium tracking-tight text-zinc-50 placeholder:font-normal placeholder:text-zinc-500 focus:outline-none"
               />
               {query && (
-                <button
+                <motion.button
                   type="button"
                   onClick={() => {
                     setQuery("");
                     inputRef.current?.focus();
                   }}
                   aria-label="Clear search"
-                  className="rounded-md p-1 text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200"
+                  initial={{ opacity: 0, scale: 0.6, rotate: -45 }}
+                  animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 520, damping: 26 }}
+                  className="rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.07] hover:text-zinc-200"
                 >
                   <X className="h-3.5 w-3.5" />
-                </button>
+                </motion.button>
               )}
-              <kbd className="hidden rounded-md border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 sm:inline">
+              <kbd className="hidden rounded-md border border-white/[0.1] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 shadow-[inset_0_-1px_0_rgba(255,255,255,0.06)] sm:inline">
                 ESC
               </kbd>
             </div>
 
             {/* Category Filter Pill Bar */}
-            <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-white/[0.07] bg-[#0E0F12] px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <motion.div
+              layoutScroll
+              className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-white/[0.06] bg-black/20 px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
               {availableCategories.map((cat) => {
                 const active = category === cat.id;
                 const count =
@@ -438,42 +466,55 @@ export function FindConversationPanel({
                       setCategory(cat.id);
                       inputRef.current?.focus();
                     }}
-                    className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                      active ? "text-zinc-50" : "text-zinc-400 hover:text-zinc-200"
+                    className={`relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-emerald-400/50 ${
+                      active ? "text-emerald-100" : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
                     }`}
                   >
                     {active && (
                       <motion.span
                         layoutId="smart-search-cat-pill"
-                        transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                        className="absolute inset-0 rounded-lg border border-emerald-500/35 bg-emerald-500/[0.14]"
-                      />
+                        transition={{ type: "spring", stiffness: 500, damping: 36 }}
+                        className="absolute inset-0 rounded-lg bg-gradient-to-b from-emerald-500/[0.22] to-emerald-500/[0.08] shadow-[0_0_18px_-6px_rgb(var(--siq-accent-rgb)/0.8)] ring-1 ring-inset ring-emerald-500/35"
+                      >
+                        <span className="absolute inset-x-3 -bottom-2 h-[2px] rounded-full bg-emerald-400 shadow-[0_0_10px_rgb(var(--siq-accent-rgb)/0.9)]" />
+                      </motion.span>
                     )}
                     <span className="relative z-10">{cat.label}</span>
                     {count !== null && (
-                      <span className="relative z-10 rounded-full bg-emerald-500/20 px-1.5 text-[9px] font-bold tabular-nums text-emerald-300">
+                      <motion.span
+                        key={count}
+                        initial={{ scale: 0.5, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: "spring", stiffness: 520, damping: 22 }}
+                        className="relative z-10 rounded-full bg-emerald-500/20 px-1.5 text-[9px] font-bold tabular-nums text-emerald-300"
+                      >
                         {count}
-                      </span>
+                      </motion.span>
                     )}
                   </button>
                 );
               })}
-            </div>
+            </motion.div>
 
             {/* Categorized Results Viewport */}
-            <div
+            <motion.div
               ref={listRef}
+              layoutScroll
               className="min-h-0 max-h-[420px] space-y-4 overflow-y-auto p-3"
             >
               {/* Messages Section */}
               {showMessages && (visibleMessages.length > 0 || category === "messages") && (
                 <div>
                   <div className="mb-1.5 flex items-center justify-between px-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                      Messages in {activeChatContext?.label}
+                    <p className="flex min-w-0 items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.09em] text-zinc-500">
+                      <MessageSquare className="h-3 w-3 shrink-0 text-zinc-600" />
+                      <span className="truncate">Messages in {activeChatContext?.label}</span>
                     </p>
                     {msgLoading && (
-                      <span className="text-[10px] text-emerald-400">Searching...</span>
+                      <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-emerald-400">
+                        <span aria-hidden="true" className="siq-live-dot !h-1.5 !w-1.5" />
+                        Searching...
+                      </span>
                     )}
                   </div>
                   {!q && category === "messages" ? (
@@ -495,19 +536,23 @@ export function FindConversationPanel({
                         const avatarColor = authorMember?.avatarColor ?? msg.author.avatarColor;
                         const avatarUrl = authorMember ? authorMember.avatarUrl : msg.author.avatarUrl;
                         return (
-                          <button
+                          <motion.button
                             key={msg.id}
                             type="button"
                             data-cmd-idx={idx}
+                            data-selected={selected}
                             onMouseEnter={() => setActiveIndex(idx)}
                             onClick={() => executeItem({ kind: "message", key: `m-${msg.id}`, message: msg })}
-                            className="relative flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors"
+                            initial={ROW_INITIAL}
+                            animate={ROW_ANIMATE}
+                            transition={rowEnter(idx)}
+                            className={`${ROW_CLASS} items-start gap-2.5`}
                           >
                             {selected && (
                               <motion.span
                                 layoutId="cmdk-active-row"
-                                transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                                className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.07]"
+                                transition={ACTIVE_ROW_SPRING}
+                                className="siq-nav-highlight"
                               />
                             )}
                             <span className="relative z-10 mt-0.5">
@@ -515,14 +560,14 @@ export function FindConversationPanel({
                             </span>
                             <div className="relative z-10 min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
-                                <span dir="auto" className="truncate text-xs font-semibold text-zinc-100">
+                                <span dir="auto" className="truncate text-xs font-semibold text-zinc-100 group-data-[selected=true]:text-white">
                                   {name}
                                 </span>
                                 <span className="shrink-0 text-[10px] tabular-nums text-zinc-500">
                                   {formatMsgDate(msg.createdAt)}
                                 </span>
                               </div>
-                              <p dir="auto" className="mt-0.5 line-clamp-2 text-xs text-zinc-400">
+                              <p dir="auto" className="mt-0.5 line-clamp-2 text-xs text-zinc-400 group-data-[selected=true]:text-zinc-300">
                                 {msg.content || (
                                   <span className="inline-flex items-center gap-1 text-zinc-500">
                                     <Paperclip className="h-3 w-3" /> Attachment
@@ -530,7 +575,7 @@ export function FindConversationPanel({
                                 )}
                               </p>
                             </div>
-                          </button>
+                          </motion.button>
                         );
                       })}
                     </div>
@@ -541,7 +586,8 @@ export function FindConversationPanel({
               {/* Channels Section */}
               {matchingChannels.length > 0 && (
                 <div>
-                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <p className={SECTION_LABEL_CLASS}>
+                    <Hash className="h-3 w-3 text-zinc-600" />
                     Channels
                   </p>
                   <div className="space-y-0.5">
@@ -549,10 +595,11 @@ export function FindConversationPanel({
                       const idx = cursor++;
                       const selected = idx === activeIndex;
                       return (
-                        <button
+                        <motion.button
                           key={channel.id}
                           type="button"
                           data-cmd-idx={idx}
+                          data-selected={selected}
                           onMouseEnter={() => setActiveIndex(idx)}
                           onClick={() =>
                             executeItem({
@@ -562,32 +609,37 @@ export function FindConversationPanel({
                               channel,
                             })
                           }
-                          className="relative flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors"
+                          initial={ROW_INITIAL}
+                          animate={ROW_ANIMATE}
+                          transition={rowEnter(idx)}
+                          className={`${ROW_CLASS} items-center justify-between gap-2.5`}
                         >
                           {selected && (
                             <motion.span
                               layoutId="cmdk-active-row"
-                              transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                              className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.07]"
+                              transition={ACTIVE_ROW_SPRING}
+                              className="siq-nav-highlight"
                             />
                           )}
-                          <div className="relative z-10 flex min-w-0 items-center gap-2">
-                            {channel.type === "text" ? (
-                              <Hash className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                            ) : (
-                              <Volume2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                            )}
-                            <span dir="auto" className="truncate text-xs font-medium text-zinc-100">
+                          <div className="relative z-10 flex min-w-0 items-center gap-2.5">
+                            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white/[0.04] ring-1 ring-inset ring-white/[0.06] transition-colors duration-150 group-data-[selected=true]:bg-emerald-500/10 group-data-[selected=true]:ring-emerald-500/25">
+                              {channel.type === "text" ? (
+                                <Hash className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-data-[selected=true]:text-emerald-300" />
+                              ) : (
+                                <Volume2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                              )}
+                            </span>
+                            <span dir="auto" className="truncate text-xs font-medium text-zinc-100 group-data-[selected=true]:text-white">
                               {channel.name}
                             </span>
                             {channel.isPrivate && (
                               <Lock className="h-3 w-3 shrink-0 text-amber-400/80" />
                             )}
                           </div>
-                          <span className="relative z-10 shrink-0 rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                          <span className="relative z-10 shrink-0 rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-inset ring-white/[0.05] transition-colors group-data-[selected=true]:bg-white/[0.08] group-data-[selected=true]:text-zinc-300">
                             {server.name}
                           </span>
-                        </button>
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -597,7 +649,8 @@ export function FindConversationPanel({
               {/* People & Direct Messages Section */}
               {matchingUsers.length > 0 && (
                 <div>
-                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <p className={SECTION_LABEL_CLASS}>
+                    <Users className="h-3 w-3 text-zinc-600" />
                     People &amp; Direct Messages
                   </p>
                   <div className="space-y-0.5">
@@ -606,19 +659,23 @@ export function FindConversationPanel({
                       const selected = idx === activeIndex;
                       const online = onlineMemberIds.has(person.id);
                       return (
-                        <button
+                        <motion.button
                           key={person.id}
                           type="button"
                           data-cmd-idx={idx}
+                          data-selected={selected}
                           onMouseEnter={() => setActiveIndex(idx)}
                           onClick={() => executeItem({ kind: "user", key: `u-${person.id}`, person })}
-                          className="relative flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors"
+                          initial={ROW_INITIAL}
+                          animate={ROW_ANIMATE}
+                          transition={rowEnter(idx)}
+                          className={`${ROW_CLASS} items-center justify-between gap-2.5`}
                         >
                           {selected && (
                             <motion.span
                               layoutId="cmdk-active-row"
-                              transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                              className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.07]"
+                              transition={ACTIVE_ROW_SPRING}
+                              className="siq-nav-highlight"
                             />
                           )}
                           <div className="relative z-10 flex min-w-0 items-center gap-2.5">
@@ -628,12 +685,12 @@ export function FindConversationPanel({
                               avatarUrl={person.avatarUrl}
                               size="sm"
                               status={resolveDisplayStatus(online, person.presenceStatus)}
-                              ringClassName="ring-[#101117]"
+                              ringClassName="ring-[#14151a]"
                             />
                             <div className="min-w-0">
                               <span
                                 dir="auto"
-                                className="block truncate text-xs font-semibold text-zinc-100"
+                                className="block truncate text-xs font-semibold text-zinc-100 group-data-[selected=true]:text-white"
                               >
                                 {person.displayName}
                               </span>
@@ -643,8 +700,8 @@ export function FindConversationPanel({
                               </span>
                             </div>
                           </div>
-                          <MessageSquare className="relative z-10 h-3.5 w-3.5 shrink-0 text-zinc-500" />
-                        </button>
+                          <MessageSquare className="relative z-10 h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors duration-200 group-data-[selected=true]:text-emerald-300" />
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -654,7 +711,8 @@ export function FindConversationPanel({
               {/* Servers Section */}
               {matchingServers.length > 0 && (
                 <div>
-                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <p className={SECTION_LABEL_CLASS}>
+                    <Server className="h-3 w-3 text-zinc-600" />
                     Servers
                   </p>
                   <div className="space-y-0.5">
@@ -662,24 +720,28 @@ export function FindConversationPanel({
                       const idx = cursor++;
                       const selected = idx === activeIndex;
                       return (
-                        <button
+                        <motion.button
                           key={srv.id}
                           type="button"
                           data-cmd-idx={idx}
+                          data-selected={selected}
                           onMouseEnter={() => setActiveIndex(idx)}
                           onClick={() => executeItem({ kind: "server", key: `s-${srv.id}`, server: srv })}
-                          className="relative flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors"
+                          initial={ROW_INITIAL}
+                          animate={ROW_ANIMATE}
+                          transition={rowEnter(idx)}
+                          className={`${ROW_CLASS} items-center justify-between gap-2.5`}
                         >
                           {selected && (
                             <motion.span
                               layoutId="cmdk-active-row"
-                              transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                              className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.07]"
+                              transition={ACTIVE_ROW_SPRING}
+                              className="siq-nav-highlight"
                             />
                           )}
                           <div className="relative z-10 flex min-w-0 items-center gap-2.5">
                             <span
-                              className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-lg text-[10px] font-bold text-zinc-950"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-[9px] text-[10px] font-bold text-zinc-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] ring-1 ring-inset ring-white/10"
                               style={!srv.iconUrl ? { backgroundColor: srv.accentColor } : undefined}
                             >
                               {srv.iconUrl ? (
@@ -689,11 +751,11 @@ export function FindConversationPanel({
                                 srv.name.slice(0, 2).toUpperCase()
                               )}
                             </span>
-                            <span dir="auto" className="truncate text-xs font-semibold text-zinc-100">
+                            <span dir="auto" className="truncate text-xs font-semibold text-zinc-100 group-data-[selected=true]:text-white">
                               {srv.name}
                             </span>
                             {srv.tag && (
-                              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">
+                              <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
                                 {srv.tag}
                               </span>
                             )}
@@ -702,7 +764,7 @@ export function FindConversationPanel({
                             <Server className="h-3 w-3" />
                             {srv.channels.length} ch
                           </span>
-                        </button>
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -712,7 +774,8 @@ export function FindConversationPanel({
               {/* Settings & Quick Actions Section */}
               {matchingActions.length > 0 && (
                 <div>
-                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <p className={SECTION_LABEL_CLASS}>
+                    <Settings className="h-3 w-3 text-zinc-600" />
                     Settings &amp; Actions
                   </p>
                   <div className="space-y-0.5">
@@ -720,29 +783,33 @@ export function FindConversationPanel({
                       const idx = cursor++;
                       const selected = idx === activeIndex;
                       return (
-                        <button
+                        <motion.button
                           key={action.id}
                           type="button"
                           data-cmd-idx={idx}
+                          data-selected={selected}
                           onMouseEnter={() => setActiveIndex(idx)}
                           onClick={() =>
                             executeItem({ kind: "action", key: `a-${action.id}`, action })
                           }
-                          className="relative flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors"
+                          initial={ROW_INITIAL}
+                          animate={ROW_ANIMATE}
+                          transition={rowEnter(idx)}
+                          className={`${ROW_CLASS} items-center justify-between gap-2.5`}
                         >
                           {selected && (
                             <motion.span
                               layoutId="cmdk-active-row"
-                              transition={{ type: "spring", stiffness: 460, damping: 34 }}
-                              className="absolute inset-0 rounded-xl border border-white/[0.08] bg-white/[0.07]"
+                              transition={ACTIVE_ROW_SPRING}
+                              className="siq-nav-highlight"
                             />
                           )}
                           <div className="relative z-10 flex min-w-0 items-center gap-2.5">
-                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#171820]">
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.04] transition-[background-color,border-color,box-shadow] duration-150 group-data-[selected=true]:border-emerald-500/30 group-data-[selected=true]:bg-emerald-500/10 group-data-[selected=true]:shadow-[0_0_16px_-6px_rgb(var(--siq-accent-rgb)/0.8)]">
                               <ActionIcon icon={action.icon} />
                             </span>
                             <div className="min-w-0">
-                              <span className="block truncate text-xs font-medium text-zinc-100">
+                              <span className="block truncate text-xs font-medium text-zinc-100 group-data-[selected=true]:text-white">
                                 {action.label}
                               </span>
                               {action.description && (
@@ -753,11 +820,11 @@ export function FindConversationPanel({
                             </div>
                           </div>
                           {action.hint && (
-                            <span className="relative z-10 shrink-0 rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-zinc-400">
+                            <span className="relative z-10 shrink-0 rounded-md border border-white/[0.07] bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors group-data-[selected=true]:border-white/[0.12] group-data-[selected=true]:text-zinc-200">
                               {action.hint}
                             </span>
                           )}
-                        </button>
+                        </motion.button>
                       );
                     })}
                   </div>
@@ -765,23 +832,36 @@ export function FindConversationPanel({
               )}
 
               {flatItems.length === 0 && !msgLoading && category !== "messages" && (
-                <p className="py-10 text-center text-xs text-zinc-500">
-                  No results found for &ldquo;{query.trim()}&rdquo;.
-                </p>
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  className="flex flex-col items-center gap-3 py-9"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="grid h-11 w-11 place-items-center rounded-2xl bg-white/[0.04] text-zinc-500 ring-1 ring-inset ring-white/[0.07]"
+                  >
+                    <Search className="h-5 w-5" />
+                  </span>
+                  <p className="text-center text-xs text-zinc-500">
+                    No results found for &ldquo;{query.trim()}&rdquo;.
+                  </p>
+                </motion.div>
               )}
-            </div>
+            </motion.div>
 
             {/* Keyboard Footer */}
-            <div className="flex shrink-0 items-center border-t border-white/[0.07] bg-[#0E0F12] px-3.5 py-2 text-[11px] text-zinc-500">
+            <div className="flex shrink-0 items-center border-t border-white/[0.06] bg-black/20 px-3.5 py-2 text-[11px] text-zinc-500">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="inline-flex items-center gap-1">
-                  <kbd className="rounded border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 font-mono text-[9px] text-zinc-300">
+                <span className="inline-flex items-center gap-1.5">
+                  <kbd className="rounded-md border border-white/[0.1] bg-white/[0.05] px-1 py-0.5 font-mono text-[9px] text-zinc-300 shadow-[inset_0_-1px_0_rgba(255,255,255,0.06)]">
                     ↑↓
                   </kbd>
                   <span>Navigate</span>
                 </span>
-                <span className="inline-flex items-center gap-1">
-                  <kbd className="inline-flex items-center rounded border border-white/[0.1] bg-white/[0.04] px-1 py-0.5 font-mono text-[9px] text-zinc-300">
+                <span className="inline-flex items-center gap-1.5">
+                  <kbd className="inline-flex items-center rounded-md border border-white/[0.1] bg-white/[0.05] px-1 py-0.5 font-mono text-[9px] text-zinc-300 shadow-[inset_0_-1px_0_rgba(255,255,255,0.06)]">
                     <CornerDownLeft className="h-2.5 w-2.5" />
                   </kbd>
                   <span>Open</span>

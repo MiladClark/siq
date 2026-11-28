@@ -241,10 +241,10 @@ export function SelectDropdown({
             setOpen(true);
           }
         }}
-        className={`siq-bezel-sm group flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${
+        className={`group flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs font-medium transition-all duration-200 focus:outline-none focus-visible:border-emerald-500/50 focus-visible:ring-2 focus-visible:ring-emerald-500/15 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 ${
           open
-            ? "border-emerald-500/55 bg-[#191B23] text-zinc-50 ring-2 ring-emerald-500/15"
-            : "border-white/[0.1] bg-[#16171E] text-zinc-100 hover:border-white/[0.18] hover:bg-[#1A1C24]"
+            ? "border-emerald-500/55 bg-gradient-to-b from-emerald-500/[0.09] to-emerald-500/[0.03] text-zinc-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_24px_-10px_rgb(var(--siq-accent-rgb)/0.75)] ring-2 ring-emerald-500/15"
+            : "border-white/[0.1] bg-white/[0.04] text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.045),0_4px_14px_-6px_rgba(0,0,0,0.6)] hover:border-white/[0.18] hover:bg-white/[0.065]"
         } ${className}`}
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -289,18 +289,20 @@ export function SelectDropdown({
                 onPointerDown={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
+                layoutScroll
                 initial={{
                   opacity: 0,
                   y: coords.placement === "top" ? 6 : -6,
-                  scale: 0.97,
+                  scale: 0.95,
                 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{
                   opacity: 0,
                   y: coords.placement === "top" ? 4 : -4,
                   scale: 0.97,
+                  transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
                 }}
-                transition={{ type: "spring", stiffness: 480, damping: 34 }}
+                transition={{ type: "spring", stiffness: 480, damping: 32 }}
                 style={{
                   position: "fixed",
                   left: coords.left,
@@ -311,7 +313,7 @@ export function SelectDropdown({
                   transformOrigin:
                     coords.placement === "top" ? "bottom center" : "top center",
                 }}
-                className="siq-bezel z-[200] overflow-y-auto rounded-xl border border-white/[0.12] bg-[#111218]/98 p-1.5 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.9)] backdrop-blur-xl"
+                className="siq-glass z-[200] overflow-y-auto rounded-2xl p-1.5"
               >
                 {options.length === 0 ? (
                   <div className="px-3 py-2.5 text-center text-xs text-zinc-500">
@@ -323,7 +325,7 @@ export function SelectDropdown({
                       const isSelected = opt.value === value;
                       const isHighlighted = idx === highlightedIndex;
                       return (
-                        <button
+                        <motion.button
                           key={opt.value}
                           type="button"
                           role="option"
@@ -337,21 +339,47 @@ export function SelectDropdown({
                             setOpen(false);
                             triggerRef.current?.focus();
                           }}
-                          className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          initial={{ opacity: 0, x: -4 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 560,
+                            damping: 36,
+                            delay: 0.025 + Math.min(idx, 10) * 0.016,
+                          }}
+                          className={`relative isolate flex w-full items-center justify-between gap-2 rounded-[10px] px-2.5 py-2 text-left text-xs transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
                             isSelected
-                              ? "bg-emerald-500/[0.12] font-semibold text-emerald-200"
+                              ? "bg-emerald-500/[0.1] font-semibold text-emerald-200"
                               : isHighlighted
-                                ? "bg-white/[0.07] text-zinc-50"
-                                : "text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-100"
+                                ? "text-zinc-50"
+                                : "text-zinc-300 hover:text-zinc-100"
                           }`}
                         >
+                          {isHighlighted && !opt.disabled && (
+                            <motion.span
+                              layoutId={`${listboxId}-highlight`}
+                              aria-hidden="true"
+                              transition={{ type: "spring", stiffness: 640, damping: 44, mass: 0.6 }}
+                              className={`absolute inset-0 -z-10 rounded-[inherit] ring-1 ring-inset ${
+                                isSelected
+                                  ? "bg-emerald-500/[0.08] ring-emerald-500/30"
+                                  : "bg-white/[0.065] ring-white/[0.07]"
+                              }`}
+                            />
+                          )}
+                          {isSelected && (
+                            <span
+                              aria-hidden="true"
+                              className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-emerald-400 shadow-[0_0_10px_rgb(var(--siq-accent-rgb)/0.9)]"
+                            />
+                          )}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span dir="auto" className="truncate">
                                 {opt.label}
                               </span>
                               {opt.badge && (
-                                <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                                <span className="shrink-0 rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-inset ring-white/[0.05]">
                                   {opt.badge}
                                 </span>
                               )}
@@ -366,15 +394,15 @@ export function SelectDropdown({
                           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                             {isSelected && (
                               <motion.span
-                                initial={{ scale: 0.6, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                transition={{ type: "spring", stiffness: 500, damping: 28 }}
+                                initial={{ scale: 0.4, opacity: 0, rotate: -20 }}
+                                animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                                transition={{ type: "spring", stiffness: 500, damping: 22 }}
                               >
-                                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                <Check className="h-3.5 w-3.5 text-emerald-400 drop-shadow-[0_0_6px_rgb(var(--siq-accent-rgb)/0.8)]" />
                               </motion.span>
                             )}
                           </span>
-                        </button>
+                        </motion.button>
                       );
                     })}
                   </div>

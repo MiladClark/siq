@@ -45,7 +45,7 @@ export function LiveMicWaveform(options: MicOptions) {
   const supportsBypass = options.noiseMode === "siq" || options.noiseMode === "krisp";
 
   return (
-    <div className="space-y-2.5 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3.5">
+    <div className="space-y-2.5 rounded-xl border border-white/[0.08] bg-black/25 p-3.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <p className="text-xs font-semibold text-zinc-100">Studio Mic Monitor</p>
@@ -69,7 +69,7 @@ export function LiveMicWaveform(options: MicOptions) {
               disabled={!running}
               onClick={() => setRawBypass((prev) => !prev)}
               title="Instant glitch-free A/B compare: toggle between raw mic and SIQ AI processed output"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-amber-400/50 aria-pressed:bg-amber-500/15 aria-pressed:text-amber-200"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.05] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-amber-400/50 aria-pressed:bg-amber-500/15 aria-pressed:text-amber-200"
             >
               <SplitSquareHorizontal className="h-3.5 w-3.5" aria-hidden />
               {rawBypass ? "A/B: Raw" : "A/B: SIQ AI"}
@@ -81,7 +81,7 @@ export function LiveMicWaveform(options: MicOptions) {
             disabled={!running}
             onClick={() => setHearMyself((prev) => !prev)}
             title="Play processed microphone audio back to your headset"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-emerald-400/40 aria-pressed:bg-emerald-500/15 aria-pressed:text-emerald-300"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.05] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-emerald-400/40 aria-pressed:bg-emerald-500/15 aria-pressed:text-emerald-300"
           >
             {hearMyself ? (
               <Volume2 className="h-3.5 w-3.5" aria-hidden />
@@ -100,7 +100,7 @@ export function LiveMicWaveform(options: MicOptions) {
               }
               setRunning((prev) => !prev);
             }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#16171D] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:text-white aria-pressed:border-rose-400/30 aria-pressed:bg-rose-500/15 aria-pressed:text-rose-300"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.05] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:text-white aria-pressed:border-rose-400/30 aria-pressed:bg-rose-500/15 aria-pressed:text-rose-300"
           >
             <Mic className="h-3.5 w-3.5" aria-hidden />
             {running ? "Stop Test" : "Mic Test"}
@@ -126,7 +126,7 @@ export function LiveMicWaveform(options: MicOptions) {
         />
       ) : (
         <div aria-hidden className="space-y-2">
-          <div className="grid h-12 items-center rounded-lg border border-white/[0.05] bg-[#090A0C] px-2">
+          <div className="grid h-12 items-center rounded-lg border border-white/[0.05] bg-black/40 px-2">
             <span className="h-px bg-white/10" />
           </div>
           <p className="text-[11px] text-zinc-500">
@@ -409,14 +409,14 @@ function MicPreview({
       <canvas
         ref={canvasRef}
         aria-hidden="true"
-        className={`block h-12 w-full rounded-lg border border-white/[0.05] bg-[#090A0C] ${
+        className={`block h-12 w-full rounded-lg border border-white/[0.05] bg-black/40 ${
           rawBypass ? "text-amber-400" : "text-emerald-400"
         }`}
       />
 
       {/* Live Studio dB VU Meter + Pre-AI Input vs Clean Output + Gate Marker */}
       <div className="space-y-1">
-        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090A0C] ring-1 ring-white/[0.06]">
+        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-black/40 ring-1 ring-white/[0.06]">
           {/* Ambient noise floor marker */}
           {floorPct !== null && (
             <div

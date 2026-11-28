@@ -89,7 +89,15 @@ html[data-theme="violet"] {
 
 :root {
   --siq-shell-radius: 18px;
-  --siq-shell-surface: color-mix(in srgb, var(--color-emerald-500) 9%, #0c0c11);
+  --siq-shell-surface: color-mix(in srgb, var(--color-emerald-500) 6%, #08080c);
+  --siq-canvas: #060609;
+  --siq-panel: rgb(11 12 17 / 0.7);
+  --siq-panel-solid: #0c0d12;
+  --siq-content: rgb(15 16 21 / 0.72);
+  --siq-hairline: rgb(255 255 255 / 0.075);
+  --siq-hairline-strong: rgb(255 255 255 / 0.13);
+  --siq-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --siq-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 html[data-theme="coral"] {
@@ -287,10 +295,12 @@ body {
 
 .siq-workspace {
   --workspace-radius: var(--siq-shell-radius);
-  --workspace-tab-width: 52px;
-  --workspace-sidebar: #0e0f12;
+  --workspace-tab-width: 60px;
+  --workspace-sidebar: var(--siq-panel);
+  position: relative;
+  isolation: isolate;
   border-radius: var(--workspace-radius);
-  background: var(--siq-shell-surface);
+  background: var(--siq-canvas);
 }
 
 .siq-workspace[data-stage-maximized="true"] {
@@ -396,13 +406,17 @@ body {
 
 .siq-workspace-sidebar {
   border-radius: var(--workspace-radius) 0 0 var(--workspace-radius);
-  background: var(--workspace-sidebar);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.028), transparent 160px),
+    var(--workspace-sidebar);
 }
 
 .siq-workspace-content {
   border-left: 0;
   border-radius: 0 var(--workspace-radius) var(--workspace-radius) 0;
-  background: #121316;
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgb(var(--siq-accent-rgb) / 0.05), transparent 60%),
+    var(--siq-content);
 }
 
 .siq-workspace-header {
@@ -414,6 +428,8 @@ body {
 
 .siq-header-trigger {
   position: relative;
+  /* Always above its liquid panel, so the closing pill never covers the icon */
+  z-index: 2;
 }
 
 .siq-voice-dock-button {
@@ -825,5 +841,802 @@ body {
 @media (width >= 48rem) {
   .siq-workspace [data-sileo-svg] {
     filter: url(#siq-toast-outline);
+  }
+}
+
+/* ============================================================================
+ * SIQ Nocturne — living ambient light, depth, motion & micro-interactions
+ * (evolves Obsidian Studio: accent-tinted light instead of neon blobs, glass
+ *  only on floating surfaces, every state change animated)
+ * ============================================================================ */
+
+::selection {
+  background: rgb(var(--siq-accent-rgb) / 0.32);
+  color: #fff;
+}
+
+/* Ambient light field drifting behind every panel (tinted by the active theme) */
+.siq-workspace::before,
+.siq-ambient::before {
+  position: absolute;
+  z-index: -1;
+  inset: -25%;
+  pointer-events: none;
+  content: "";
+  background:
+    radial-gradient(34% 30% at 14% 10%, rgb(var(--siq-accent-rgb) / 0.24), transparent 70%),
+    radial-gradient(30% 34% at 88% 92%, rgb(var(--siq-accent-rgb) / 0.16), transparent 72%),
+    radial-gradient(26% 22% at 62% 4%, rgb(var(--siq-accent-rgb) / 0.07), transparent 70%),
+    radial-gradient(40% 40% at 40% 60%, rgb(255 255 255 / 0.018), transparent 70%);
+  animation: siq-aurora 42s var(--siq-ease-out) infinite alternate;
+  will-change: transform;
+}
+
+/* Film grain for tactile depth */
+.siq-workspace::after,
+.siq-ambient::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.09'/%3E%3C/svg%3E");
+}
+
+.siq-ambient {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+}
+
+/* clip (not hidden): the oversized ambient layer must never make the shell
+   programmatically scrollable (focus/scrollIntoView would shift the whole app) */
+.siq-workspace {
+  overflow: clip;
+}
+
+@keyframes siq-aurora {
+  0% { transform: translate3d(0, 0, 0) scale(1) rotate(0deg); }
+  50% { transform: translate3d(3%, 2%, 0) scale(1.06) rotate(2deg); }
+  100% { transform: translate3d(-2%, 3%, 0) scale(1.02) rotate(-1.5deg); }
+}
+
+/* Panel chrome: top-lit hairlines so panels read as layered hardware */
+.siq-workspace-sidebar,
+.siq-workspace-content {
+  border-color: var(--siq-hairline);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.siq-workspace-header > header {
+  position: relative;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent);
+}
+
+.siq-workspace-header > header::after {
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 1px;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgb(var(--siq-accent-rgb) / 0.28) 18%, rgb(255 255 255 / 0.08) 50%, transparent);
+}
+
+/* ---------------------------------------------------------------- Glass */
+.siq-glass {
+  border: 1px solid rgb(255 255 255 / 0.085);
+  background: linear-gradient(180deg, rgb(30 31 39 / 0.86), rgb(15 16 21 / 0.94));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 0 0 1px rgb(0 0 0 / 0.35),
+    0 28px 64px -24px rgb(0 0 0 / 0.85),
+    0 10px 24px -12px rgb(0 0 0 / 0.6);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+/* Accent edge light: gradient hairline that catches the theme colour */
+/* Accent edge light — the host sets its own position (relative/absolute/fixed) */
+.siq-edge-light::before {
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(140deg, rgb(var(--siq-accent-rgb) / 0.55), rgb(255 255 255 / 0.06) 32%, transparent 60%, rgb(var(--siq-accent-rgb) / 0.22));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.siq-backdrop {
+  background:
+    radial-gradient(60% 50% at 50% 40%, rgb(var(--siq-accent-rgb) / 0.08), transparent 70%),
+    rgb(3 3 6 / 0.72);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+}
+
+/* ---------------------------------------------------------------- Nav items */
+.siq-nav-item {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 10px;
+  padding: 0.42rem 0.65rem;
+  color: rgb(161 161 170);
+  font-size: 0.875rem;
+  text-align: left;
+  transition: color 160ms ease, transform 220ms var(--siq-ease-out);
+}
+
+.siq-nav-item::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+  background: rgb(255 255 255 / 0);
+  transition: background-color 160ms ease;
+}
+
+.siq-nav-item:hover {
+  color: rgb(228 228 231);
+}
+
+.siq-nav-item:hover::before {
+  background: rgb(255 255 255 / 0.045);
+}
+
+.siq-nav-item:active {
+  transform: scale(0.985);
+}
+
+.siq-nav-item[data-unread="true"] {
+  color: rgb(244 244 245);
+  font-weight: 600;
+}
+
+.siq-nav-item[data-selected="true"] {
+  color: #fff;
+  font-weight: 600;
+}
+
+.siq-nav-item[data-selected="true"]::before {
+  background: transparent;
+}
+
+.siq-nav-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  color: rgb(113 113 122);
+  transition: color 160ms ease, background-color 160ms ease, box-shadow 200ms ease;
+}
+
+.siq-nav-item:hover .siq-nav-icon {
+  color: rgb(212 212 216);
+}
+
+.siq-nav-item[data-selected="true"] .siq-nav-icon {
+  color: var(--color-emerald-300);
+  background: rgb(var(--siq-accent-rgb) / 0.16);
+  box-shadow: inset 0 0 0 1px rgb(var(--siq-accent-rgb) / 0.28), 0 0 18px -4px rgb(var(--siq-accent-rgb) / 0.55);
+}
+
+/* Shared animated highlight (rendered by motion with a layoutId) */
+.siq-nav-highlight {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, rgb(var(--siq-accent-rgb) / 0.16), rgb(var(--siq-accent-rgb) / 0.05) 55%, rgb(255 255 255 / 0.03));
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--siq-accent-rgb) / 0.2),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+.siq-nav-highlight::before {
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: -10px;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  content: "";
+  background: var(--color-emerald-400);
+  box-shadow: 0 0 12px rgb(var(--siq-accent-rgb) / 0.9);
+}
+
+.siq-section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-inline: 0.4rem;
+  color: rgb(113 113 122);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  transition: color 160ms ease;
+}
+
+.siq-section-label:hover {
+  color: rgb(212 212 216);
+}
+
+/* ---------------------------------------------------------------- Rail tabs */
+.siq-rail-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 14px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  transition:
+    border-radius 260ms var(--siq-ease-spring),
+    transform 260ms var(--siq-ease-spring),
+    box-shadow 200ms ease,
+    filter 200ms ease;
+}
+
+.siq-workspace-tab:hover .siq-rail-icon {
+  border-radius: 12px;
+  transform: translateY(-1px) scale(1.04);
+  filter: brightness(1.12);
+}
+
+.siq-workspace-tab:active .siq-rail-icon {
+  transform: scale(0.94);
+}
+
+.siq-workspace-tab[aria-current="page"] .siq-rail-icon {
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 0 0 2px rgb(var(--siq-accent-rgb) / 0.55),
+    0 8px 22px -6px rgb(var(--siq-accent-rgb) / 0.6);
+}
+
+.siq-rail-home {
+  background: linear-gradient(145deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.02));
+  color: rgb(212 212 216);
+}
+
+.siq-workspace-tab[aria-current="page"] .siq-rail-home {
+  background: linear-gradient(145deg, rgb(var(--siq-accent-rgb) / 0.9), rgb(var(--siq-accent-rgb) / 0.55));
+  color: #0a0a0f;
+}
+
+.siq-rail-add {
+  border: 1px dashed rgb(255 255 255 / 0.16);
+  background: transparent;
+  color: rgb(161 161 170);
+  box-shadow: none;
+}
+
+.siq-workspace-tab:hover .siq-rail-add {
+  border-color: rgb(var(--siq-accent-rgb) / 0.6);
+  background: rgb(var(--siq-accent-rgb) / 0.12);
+  color: var(--color-emerald-300);
+}
+
+.siq-rail-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  min-width: 18px;
+  height: 18px;
+  border: 3px solid var(--siq-canvas);
+  border-radius: 999px;
+  padding: 0 4px;
+  background: #f43f5e;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  line-height: 12px;
+  text-align: center;
+  animation: siq-pop 420ms var(--siq-ease-spring);
+}
+
+.siq-workspace-tab-dot {
+  top: 50%;
+  right: auto;
+  left: 0;
+  width: 4px;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: #fafafa;
+  transform: translateY(-50%);
+  box-shadow: 0 0 8px rgb(255 255 255 / 0.7);
+}
+
+.siq-rail-divider {
+  width: 26px;
+  height: 2px;
+  margin: 2px auto 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.14), transparent);
+}
+
+.siq-rail-tooltip {
+  pointer-events: none;
+  position: fixed;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 7px 11px;
+  color: #fafafa;
+  font-size: 12.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- Buttons */
+.siq-press {
+  transition: transform 180ms var(--siq-ease-spring), background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 200ms ease;
+}
+
+.siq-press:active {
+  transform: scale(0.95);
+}
+
+.siq-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--siq-hairline);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.015));
+  color: rgb(161 161 170);
+  transition: transform 180ms var(--siq-ease-spring), background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 200ms ease;
+}
+
+.siq-icon-btn:hover {
+  border-color: var(--siq-hairline-strong);
+  background: rgb(255 255 255 / 0.07);
+  color: #fafafa;
+}
+
+.siq-icon-btn:active {
+  transform: scale(0.92);
+}
+
+.siq-icon-btn[aria-pressed="true"],
+.siq-icon-btn[aria-expanded="true"] {
+  border-color: rgb(var(--siq-accent-rgb) / 0.45);
+  background: rgb(var(--siq-accent-rgb) / 0.14);
+  color: var(--color-emerald-300);
+  box-shadow: 0 0 20px -6px rgb(var(--siq-accent-rgb) / 0.6);
+}
+
+.siq-cta {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--color-emerald-400), var(--color-emerald-600));
+  color: #09090b;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35), 0 8px 24px -10px rgb(var(--siq-accent-rgb) / 0.85);
+  transition: transform 180ms var(--siq-ease-spring), box-shadow 200ms ease, filter 160ms ease;
+}
+
+.siq-cta::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(105deg, transparent 30%, rgb(255 255 255 / 0.35) 48%, transparent 66%);
+  transform: translateX(-120%);
+  transition: transform 700ms var(--siq-ease-out);
+}
+
+.siq-cta:hover {
+  filter: brightness(1.06);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.4), 0 12px 30px -10px rgb(var(--siq-accent-rgb) / 0.95);
+}
+
+.siq-cta:hover::after {
+  transform: translateX(120%);
+}
+
+.siq-cta:active {
+  transform: scale(0.96);
+}
+
+.siq-cta:disabled {
+  filter: grayscale(0.6) brightness(0.7);
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------- Composer */
+.siq-composer {
+  position: relative;
+  border: 1px solid var(--siq-hairline-strong);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgb(28 29 36 / 0.88), rgb(18 19 24 / 0.94));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 18px 40px -22px rgb(0 0 0 / 0.9);
+  transition: border-color 200ms ease, box-shadow 260ms ease;
+}
+
+.siq-composer:focus-within {
+  border-color: rgb(var(--siq-accent-rgb) / 0.5);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 0 0 4px rgb(var(--siq-accent-rgb) / 0.1),
+    0 18px 44px -18px rgb(var(--siq-accent-rgb) / 0.45);
+}
+
+/* ---------------------------------------------------------------- Messages */
+.siq-message {
+  transition: background-color 160ms ease;
+}
+
+.siq-message:hover {
+  background: linear-gradient(90deg, rgb(var(--siq-accent-rgb) / 0.045), rgb(255 255 255 / 0.018) 40%, transparent);
+}
+
+.siq-message::before {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  content: "";
+  background: rgb(var(--siq-accent-rgb) / 0);
+  transition: background-color 200ms ease;
+}
+
+.siq-message:hover::before {
+  background: rgb(var(--siq-accent-rgb) / 0.7);
+}
+
+.siq-message-enter {
+  animation: siq-message-in 420ms var(--siq-ease-out) both;
+}
+
+.siq-toolbar {
+  animation: siq-toolbar-in 200ms var(--siq-ease-out);
+}
+
+@keyframes siq-toolbar-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes siq-message-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+.siq-reaction {
+  transition: transform 200ms var(--siq-ease-spring), background-color 160ms ease, border-color 160ms ease;
+}
+
+.siq-reaction:hover {
+  transform: translateY(-1px) scale(1.05);
+}
+
+.siq-reaction:active {
+  transform: scale(0.92);
+}
+
+.siq-day-divider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--siq-hairline);
+  border-radius: 999px;
+  padding: 3px 12px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.015));
+  color: rgb(161 161 170);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* ---------------------------------------------------------------- Hero tiles */
+.siq-hero-tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgb(var(--siq-accent-rgb) / 0.35), transparent 60%),
+    linear-gradient(160deg, rgb(255 255 255 / 0.08), rgb(255 255 255 / 0.01));
+  color: var(--color-emerald-300);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    inset 0 0 0 1px rgb(var(--siq-accent-rgb) / 0.3),
+    0 18px 40px -16px rgb(var(--siq-accent-rgb) / 0.55);
+  animation: siq-float 6s ease-in-out infinite;
+}
+
+@keyframes siq-float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-6px) rotate(2deg); }
+}
+
+.siq-gradient-text {
+  background: linear-gradient(100deg, #fff 20%, var(--color-emerald-300) 60%, #fff 90%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: siq-gradient-pan 8s ease-in-out infinite;
+}
+
+@keyframes siq-gradient-pan {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* ---------------------------------------------------------------- Live / presence */
+.siq-live-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-emerald-400);
+}
+
+.siq-live-dot::after {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  content: "";
+  background: inherit;
+  animation: siq-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes siq-ping {
+  75%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+@keyframes siq-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+.siq-speaking-ring {
+  box-shadow:
+    0 0 0 2px var(--color-emerald-400),
+    0 0 18px 2px rgb(var(--siq-accent-rgb) / 0.55);
+  animation: siq-speak 1.2s ease-in-out infinite;
+}
+
+@keyframes siq-speak {
+  0%, 100% { box-shadow: 0 0 0 2px var(--color-emerald-400), 0 0 14px 0 rgb(var(--siq-accent-rgb) / 0.45); }
+  50% { box-shadow: 0 0 0 3px var(--color-emerald-300), 0 0 26px 4px rgb(var(--siq-accent-rgb) / 0.65); }
+}
+
+/* ---------------------------------------------------------------- Range sliders */
+.siq-workspace input[type="range"]:not(.siq-color-hue),
+.siq-range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue)::-webkit-slider-runnable-track,
+.siq-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(var(--siq-accent-rgb) / 0.22);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.5), inset 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue)::-moz-range-track,
+.siq-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.09);
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue)::-moz-range-progress,
+.siq-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-emerald-400);
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue)::-webkit-slider-thumb,
+.siq-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: 2px solid var(--color-emerald-300);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgb(var(--siq-accent-rgb) / 0.18), 0 2px 8px rgb(0 0 0 / 0.6);
+  transition: transform 180ms var(--siq-ease-spring), box-shadow 180ms ease;
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue)::-moz-range-thumb,
+.siq-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-emerald-300);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgb(var(--siq-accent-rgb) / 0.18);
+}
+
+.siq-workspace input[type="range"]:not(.siq-color-hue):hover::-webkit-slider-thumb,
+.siq-workspace input[type="range"]:not(.siq-color-hue):active::-webkit-slider-thumb,
+.siq-range:hover::-webkit-slider-thumb {
+  transform: scale(1.18);
+  box-shadow: 0 0 0 6px rgb(var(--siq-accent-rgb) / 0.22), 0 0 18px rgb(var(--siq-accent-rgb) / 0.7);
+}
+
+/* ---------------------------------------------------------------- Skeleton */
+.siq-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgb(255 255 255 / 0.05);
+}
+
+.siq-skeleton::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.07), transparent);
+  transform: translateX(-100%);
+  animation: siq-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes siq-shimmer {
+  to { transform: translateX(100%); }
+}
+
+/* ---------------------------------------------------------------- Profile dock */
+.siq-profile-dock {
+  border-top-color: var(--siq-hairline) !important;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.1), rgb(0 0 0 / 0.28)) !important;
+}
+
+.siq-profile-card {
+  position: relative;
+  border: 1px solid var(--siq-hairline);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.012));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* ---------------------------------------------------------------- Focus */
+/* Inputs carry their own focus glow (composer, fields); only controls get the ring */
+.siq-workspace :is(button, a, [role="button"], [role="switch"]):focus-visible {
+  outline: 2px solid rgb(var(--siq-accent-rgb) / 0.65);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- Responsive overrides */
+@media (width < 64rem) {
+  .siq-members-rail {
+    background: var(--siq-panel-solid) !important;
+  }
+}
+
+@media (width < 48rem) {
+  .siq-workspace-navigation {
+    background: var(--siq-panel-solid);
+  }
+
+  .siq-rail-icon {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .siq-workspace::before,
+  .siq-ambient::before,
+  .siq-hero-tile,
+  .siq-gradient-text,
+  .siq-speaking-ring,
+  .siq-live-dot::after,
+  .siq-skeleton::after,
+  .siq-message-enter {
+    animation: none !important;
+  }
+}
+
+/* ============================================================================
+ * Liquid header panels — shape is drawn by HeaderPanel's gooey SVG (Sileo physics),
+ * so the panel box itself is transparent and every corner stays rounded.
+ * ============================================================================ */
+.siq-header-panel,
+.siq-header-panel[data-header-panel="voice"] {
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.siq-header-panel {
+  top: calc(100% + 10px);
+}
+
+.siq-header-panel[data-header-panel="voice"]::after {
+  display: none;
+}
+
+/* The trigger melts into the liquid pill drawn behind it */
+.siq-header-trigger[aria-expanded="true"],
+.siq-voice-trigger[aria-expanded="true"] {
+  z-index: 2;
+  border-color: transparent !important;
+  border-radius: 10px !important;
+  background: transparent !important;
+  color: var(--color-emerald-300) !important;
+}
+
+.siq-liquid-canvas {
+  position: absolute;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+  filter:
+    drop-shadow(0 22px 36px rgb(0 0 0 / 0.55))
+    drop-shadow(0 4px 10px rgb(0 0 0 / 0.35));
+}
+
+.siq-liquid-content {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  max-height: inherit;
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+/* Reduced motion: no SVG shape, a plain rounded surface instead */
+.siq-liquid-content-static {
+  border: 1px solid var(--siq-hairline);
+  background: linear-gradient(180deg, #1b1c24, #121319);
+  box-shadow: 0 22px 36px rgb(0 0 0 / 0.55);
+}
+
+@media (width >= 48rem) {
+  .siq-header-panel {
+    top: calc(100% + 10px);
+  }
+
+  .siq-header-panel[data-header-panel="voice"] {
+    inset: auto auto calc(100dvh - var(--voice-anchor-top) + 10px) var(--voice-anchor-left);
+    max-height: calc(var(--voice-anchor-top) - 24px);
   }
 }

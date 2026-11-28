@@ -183,7 +183,7 @@ export function AudioWaveformPlayer({ src, name, onDownload }: AudioWaveformPlay
   return (
     <div
       dir="ltr"
-      className="siq-bezel-sm w-80 max-w-full min-w-0 space-y-2 rounded-xl border border-white/[0.09] bg-[#0E0F12] p-2.5"
+      className="siq-bezel-sm w-80 max-w-full min-w-0 space-y-2 rounded-xl border border-white/[0.09] bg-black/25 p-2.5"
     >
       <audio
         ref={audioRef}
@@ -220,7 +220,7 @@ export function AudioWaveformPlayer({ src, name, onDownload }: AudioWaveformPlay
           iconSize={16}
           aria-label={playing ? "Pause audio" : "Play audio"}
           onClick={() => void togglePlayback()}
-          className="grid size-8 shrink-0 place-items-center rounded-lg border border-white/[0.1] bg-[#16171D] text-emerald-300 hover:bg-white/[0.08]"
+          className="grid size-8 shrink-0 place-items-center rounded-lg border border-white/[0.1] bg-white/[0.05] text-emerald-300 hover:bg-white/[0.08]"
         />
         <div className="min-w-0 flex-1">
           <div className="relative rounded-md focus-within:outline focus-within:outline-emerald-400">
@@ -255,7 +255,7 @@ export function AudioWaveformPlayer({ src, name, onDownload }: AudioWaveformPlay
             if (audioRef.current) audioRef.current.playbackRate = SPEEDS[next];
             setSpeedIndex(next);
           }}
-          className="min-w-10 shrink-0 rounded-md border border-white/[0.1] bg-[#16171D] px-1 py-1 font-mono text-[10px] text-zinc-300 hover:text-white"
+          className="min-w-10 shrink-0 rounded-md border border-white/[0.1] bg-white/[0.05] px-1 py-1 font-mono text-[10px] text-zinc-300 hover:text-white"
         >
           {SPEEDS[speedIndex]}x
         </button>

@@ -20,23 +20,27 @@ function getSignalStyle(pingMs: number | null) {
   if (pingMs === null) {
     return {
       box: "bg-zinc-500/15 text-zinc-400 border-zinc-500/25",
+      text: "text-zinc-400",
       stroke: "#a1a1aa",
     };
   }
   if (pingMs < 110) {
     return {
       box: "bg-emerald-500/15 text-emerald-400 border-emerald-500/25",
+      text: "text-emerald-400",
       stroke: "#34d399",
     };
   }
   if (pingMs < 230) {
     return {
       box: "bg-amber-500/15 text-amber-400 border-amber-500/25",
+      text: "text-amber-400",
       stroke: "#fbbf24",
     };
   }
   return {
     box: "bg-rose-500/15 text-rose-400 border-rose-500/25",
+    text: "text-rose-400",
     stroke: "#fb7185",
   };
 }
@@ -126,7 +130,7 @@ export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStat
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 2, scale: 0.94 }}
             transition={{ duration: 0.12 }}
-            className="pointer-events-none absolute -top-9 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/[0.12] bg-[#18191E] px-2.5 py-1 text-[11px] font-semibold tabular-nums text-zinc-100 shadow-xl"
+            className="siq-glass pointer-events-none absolute -top-10 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-full px-3 py-1 text-[11px] font-bold tabular-nums text-zinc-100"
           >
             {stats.lastPingMs !== null ? `${stats.lastPingMs} ms` : "Measuring…"}
           </motion.div>
@@ -157,6 +161,7 @@ export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStat
             <HeaderPanel
               kind="voice"
               label="Voice connection details"
+              pillContent={<Wifi className={`size-[18px] ${signal.text}`} />}
               style={{
                 "--voice-anchor-left": `${anchor.left}px`,
                 "--voice-anchor-top": `${anchor.top}px`,
@@ -202,7 +207,7 @@ export function ConnectionStatusButton({ stats, open, onToggle }: ConnectionStat
               {tab === "connection" ? (
                 <div className="min-h-0 space-y-3.5 overflow-y-auto p-4">
                   {/* Live Ping Graph */}
-                  <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-[#0B0C0F] p-2.5">
+                  <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-black/30 p-2.5">
                     <div className="relative h-[84px] w-full">
                       {/* Horizontal Grid Lines + Y-Axis labels */}
                       <div className="pointer-events-none absolute inset-0 flex flex-col justify-between text-[10px] font-medium tabular-nums text-zinc-500">

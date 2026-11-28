@@ -224,7 +224,7 @@ export function DmConversationView({
           return (
             <div
               ref={dmCallStageRef}
-              className={`flex flex-col border-b border-white/[0.08] bg-[#0B0C0F] ${
+              className={`flex flex-col border-b border-white/[0.08] bg-black/30 ${
                 isStageMaximized || isDmFullscreen
                   ? "min-h-0 flex-1 border-b-0 p-2 sm:p-4"
                   : activeDmScreenSharer
@@ -269,7 +269,7 @@ export function DmConversationView({
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-[#0E0F13] px-3 py-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-black/35 px-3 py-1.5">
                     <div className="flex items-center gap-2">
                       {activeDmScreenSharer.isLocal ? (
                         <button
@@ -332,7 +332,7 @@ export function DmConversationView({
                           setDmStreamFit((f) => (f === "contain" ? "cover" : "contain"))
                         }
                         title={dmStreamFit === "contain" ? "Fill frame" : "Fit frame"}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.1] bg-white/[0.05] text-zinc-300 hover:text-white"
                       >
                         {dmStreamFit === "contain" ? (
                           <Expand className="h-3.5 w-3.5" />
@@ -349,7 +349,7 @@ export function DmConversationView({
                           className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors ${
                             isStageMaximized
                               ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                              : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:text-white"
+                              : "border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:text-white"
                           }`}
                         >
                           {isStageMaximized ? (
@@ -375,7 +375,7 @@ export function DmConversationView({
                           }
                         }}
                         title="Fullscreen"
-                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-white/[0.1] bg-[#18191E] px-2 text-[11px] font-medium text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-300"
+                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-white/[0.1] bg-white/[0.05] px-2 text-[11px] font-medium text-zinc-200 hover:border-emerald-500/40 hover:text-emerald-300"
                       >
                         {isDmFullscreen ? (
                           <Minimize className="h-3.5 w-3.5" />
@@ -401,7 +401,7 @@ export function DmConversationView({
                   return (
                     <div
                       key={p.identity}
-                      className={`relative flex flex-col items-center justify-center overflow-hidden rounded-xl border bg-[#14151A] ${
+                      className={`relative flex flex-col items-center justify-center overflow-hidden rounded-xl border bg-white/[0.035] ${
                         activeDmScreenSharer
                           ? "h-20 w-36 sm:h-24 sm:w-44"
                           : cameraVideo
@@ -477,7 +477,7 @@ export function DmConversationView({
                   className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
                     voice.isMuted
                       ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
-                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                      : "border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:bg-white/[0.08]"
                   }`}
                 >
                   {voice.isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
@@ -489,7 +489,7 @@ export function DmConversationView({
                   className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
                     voice.isDeafened
                       ? "border-rose-500/40 bg-rose-500/20 text-rose-300"
-                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                      : "border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:bg-white/[0.08]"
                   }`}
                 >
                   {voice.isDeafened ? (
@@ -505,7 +505,7 @@ export function DmConversationView({
                   className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
                     voice.isCameraOn
                       ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
-                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                      : "border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:bg-white/[0.08]"
                   }`}
                 >
                   {voice.isCameraOn ? (
@@ -529,7 +529,7 @@ export function DmConversationView({
                         ? "Switch to rear camera"
                         : "Switch to front camera"
                     }
-                    className="flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.1] bg-[#18191E] text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50 sm:h-9 sm:w-9"
+                    className="flex h-10 w-10 items-center justify-center rounded-full border border-white/[0.1] bg-white/[0.05] text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50 sm:h-9 sm:w-9"
                   >
                     <SwitchCamera
                       className={`h-4 w-4 ${voice.isSwitchingCamera ? "animate-spin" : ""}`}
@@ -543,7 +543,7 @@ export function DmConversationView({
                   className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors sm:h-9 sm:w-9 ${
                     voice.isScreenSharing
                       ? "border-emerald-500/40 bg-emerald-500/20 text-emerald-300"
-                      : "border-white/[0.1] bg-[#18191E] text-zinc-200 hover:bg-white/[0.08]"
+                      : "border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:bg-white/[0.08]"
                   }`}
                 >
                   <Monitor className="h-4 w-4" />
@@ -588,7 +588,7 @@ export function DmConversationView({
 
       {/* Right Sticky Friend Profile Sidebar (Image 8 ergonomics) */}
       {showProfileSidebar && (
-        <aside className="hidden w-[300px] shrink-0 flex-col overflow-y-auto border-l border-white/[0.07] bg-[#0E0F12] select-none lg:flex">
+        <aside className="hidden w-[300px] shrink-0 flex-col overflow-y-auto border-l border-white/[0.07] bg-black/[0.14] select-none lg:flex">
           {/* Banner */}
           <div
             className="h-28 w-full shrink-0"
@@ -633,7 +633,7 @@ export function DmConversationView({
               <button
                 type="button"
                 onClick={() => onStartCall(false)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] bg-[#16171C] py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.045] py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
               >
                 <Phone className="h-3.5 w-3.5" />
                 <span>Voice Call</span>
@@ -641,7 +641,7 @@ export function DmConversationView({
               <button
                 type="button"
                 onClick={() => onStartCall(true)}
-                className="flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] bg-[#16171C] py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.045] py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
               >
                 <Video className="h-3.5 w-3.5" />
                 <span>Video Call</span>
@@ -649,7 +649,7 @@ export function DmConversationView({
             </div>
 
             {/* Activity & Bio Card */}
-            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-[#14151A] p-3.5">
+            <div className="space-y-3 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3.5">
               {livePeer.customActivity && (
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -691,7 +691,7 @@ export function DmConversationView({
 
             {/* Mutual Servers */}
             {mutualServers.length > 0 && (
-              <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#14151A] p-3.5">
+              <div className="space-y-2 rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3.5">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 tabular-nums">
                   Mutual Servers — {mutualServers.length}
                 </p>

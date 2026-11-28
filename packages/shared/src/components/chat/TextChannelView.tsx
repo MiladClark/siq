@@ -474,6 +474,8 @@ interface MessageRowProps {
   savingEdit: boolean;
   density: MessageDensity;
   textSizeClass: string;
+  /** Arrived live while the user was watching: plays the enter animation once */
+  animateIn: boolean;
   actions: MessageRowActions;
 }
 
@@ -499,6 +501,7 @@ const MessageRow = memo(function MessageRow({
   savingEdit,
   density,
   textSizeClass,
+  animateIn,
   actions,
 }: MessageRowProps) {
   const author = useMemo(
@@ -533,7 +536,7 @@ const MessageRow = memo(function MessageRow({
           className="my-4 flex items-center gap-3 select-none"
         >
           <div className="h-px flex-1 bg-white/[0.07]" />
-          <span className="rounded-full border border-white/[0.07] bg-[#16171C] px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
+          <span className="siq-day-divider tabular-nums">
             {formatDateDivider(msg.createdAt)}
           </span>
           <div className="h-px flex-1 bg-white/[0.07]" />
@@ -543,7 +546,7 @@ const MessageRow = memo(function MessageRow({
       <article
         id={`msg-${msg.id}`}
         onContextMenu={(e) => actions.contextMenu(e, msg, canDelete)}
-        className={`group relative flex gap-3 rounded-lg px-2 transition-all hover:bg-white/[0.025] ${
+        className={`siq-message group relative flex gap-3 rounded-xl px-2.5 ${animateIn ? "siq-message-enter" : ""} ${
           highlighted
             ? "bg-emerald-500/10 ring-1 ring-emerald-500/45"
             : ""
@@ -558,7 +561,7 @@ const MessageRow = memo(function MessageRow({
         }`}
       >
         {/* Hover Action Bar (Quick Reactions + Picker + Reply + Edit + Pin + Copy + Delete) */}
-        <div className="absolute -top-3.5 right-2 z-10 hidden max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-lg border border-white/[0.09] bg-[#18191E] p-0.5 shadow-xl shadow-black/60 [scrollbar-width:none] group-hover:flex">
+        <div className="siq-glass siq-toolbar absolute -top-4 right-3 z-10 hidden max-w-[calc(100vw-24px)] items-center gap-0.5 overflow-x-auto rounded-xl p-1 [scrollbar-width:none] group-hover:flex">
           {QUICK_REACTION_EMOJIS.map((emoji) => (
             <button
               key={emoji}
@@ -704,7 +707,7 @@ const MessageRow = memo(function MessageRow({
                     actions.cancelEdit();
                   }
                 }}
-                className="w-full resize-none rounded-lg border border-emerald-500/50 bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:outline-none"
+                className="w-full resize-none rounded-lg border border-emerald-500/50 bg-white/[0.05] px-3 py-2 text-sm text-zinc-100 focus:outline-none"
               />
               <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                 <span>Press Enter to save · Esc to cancel</span>
@@ -757,7 +760,7 @@ const MessageRow = memo(function MessageRow({
                     <div
                       key={`${att.url}-${i}`}
                       onContextMenu={(e) => actions.imageContextMenu(e, att)}
-                      className="group/img relative overflow-hidden rounded-xl border border-white/[0.08] bg-[#0E0F12] transition-colors hover:border-emerald-500/40"
+                      className="group/img relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/25 transition-colors hover:border-emerald-500/40"
                     >
                       <button
                         type="button"
@@ -806,7 +809,7 @@ const MessageRow = memo(function MessageRow({
                 return (
                   <div
                     key={`${att.url}-${i}`}
-                    className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-[#0E0F12] p-2.5 pr-3 transition-colors hover:border-white/[0.16]"
+                    className="flex items-center gap-3 rounded-xl border border-white/[0.08] bg-black/25 p-2.5 pr-3 transition-colors hover:border-white/[0.16]"
                   >
                     <div
                       className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${cat.accent}`}
@@ -829,7 +832,7 @@ const MessageRow = memo(function MessageRow({
                       icon={DownloadIcon}
                       onClick={() => actions.download(att)}
                       title={`Download ${att.name}`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#18191E] text-zinc-300 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.05] text-zinc-300 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
                     />
                   </div>
                 );
@@ -855,10 +858,10 @@ const MessageRow = memo(function MessageRow({
                     type="button"
                     onClick={() => actions.toggleReaction(msg.id, reaction.emoji)}
                     title={`${reaction.emoji} reacted by ${reactorNames}`}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-xs font-medium tabular-nums transition-all active:scale-95 ${
+                    className={`siq-reaction inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums ${
                       reaction.reactedByMe
                         ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20"
-                        : "border-white/[0.08] bg-[#18191E] text-zinc-300 hover:border-white/[0.16] hover:text-white"
+                        : "border-white/[0.08] bg-white/[0.05] text-zinc-300 hover:border-white/[0.16] hover:text-white"
                     }`}
                   >
                     <span className="text-sm leading-none">{reaction.emoji}</span>
@@ -870,7 +873,7 @@ const MessageRow = memo(function MessageRow({
                 type="button"
                 onClick={(e) => actions.openReactionPicker(e, msg.id)}
                 title="Add reaction"
-                className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg border border-white/[0.07] bg-[#18191E] text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-100"
+                className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.05] text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-100"
               >
                 <SmilePlus className="h-3.5 w-3.5" />
               </button>
@@ -2129,9 +2132,24 @@ export function TextChannelView({
     []
   );
 
+  // Messages that arrive live (newer than what was on screen when the channel opened) animate in;
+  // history and older pages never do.
+  const liveBaselineRef = useRef<{ channelId: string; latestMs: number } | null>(null);
+  if (!loading && liveBaselineRef.current?.channelId !== channel.id) {
+    const last = messages[messages.length - 1];
+    liveBaselineRef.current = {
+      channelId: channel.id,
+      latestMs: last ? new Date(last.createdAt).getTime() : Date.now(),
+    };
+  }
+  const liveBaseline =
+    liveBaselineRef.current?.channelId === channel.id
+      ? liveBaselineRef.current.latestMs
+      : Number.POSITIVE_INFINITY;
+
   return (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#121316]"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent"
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -2164,13 +2182,13 @@ export function TextChannelView({
         className="flex-1 space-y-0.5 overflow-y-auto px-4 py-5 md:px-6"
       >
         {loading ? (
-          <div className="space-y-4">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className="h-8 w-8 animate-pulse rounded-full bg-white/[0.05]" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3 w-28 animate-pulse rounded bg-white/[0.06]" />
-                  <div className="h-4 w-2/3 animate-pulse rounded bg-white/[0.04]" />
+          <div className="flex h-full flex-col justify-end gap-5 pb-4">
+            {[0.55, 0.8, 0.4, 0.68].map((w, i) => (
+              <div key={i} className="flex items-start gap-3" style={{ opacity: 1 - i * 0.12 }}>
+                <div className="siq-skeleton h-9 w-9 shrink-0 rounded-full" />
+                <div className="flex-1 space-y-2 pt-0.5">
+                  <div className="siq-skeleton h-3 w-28 rounded-full" />
+                  <div className="siq-skeleton h-3.5 rounded-full" style={{ width: `${w * 100}%` }} />
                 </div>
               </div>
             ))}
@@ -2180,15 +2198,15 @@ export function TextChannelView({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.2 }}
-            className="flex h-full flex-col items-start justify-end pb-6"
+            className="flex h-full flex-col items-start justify-end pb-8 pl-1"
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.08] bg-[#18191E] text-emerald-400">
-              <Hash className="h-6 w-6" />
+            <div className="siq-hero-tile h-16 w-16">
+              <Hash className="h-8 w-8" strokeWidth={2.4} />
             </div>
-            <h2 dir="auto" className="mt-4 text-xl font-semibold text-zinc-100">
+            <h2 dir="auto" className="siq-gradient-text mt-5 text-3xl font-extrabold tracking-tight">
               {isDm ? channel.name : `Welcome to #${channel.name}`}
             </h2>
-            <p className="mt-1 text-sm text-zinc-400">
+            <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-400">
               {isDm
                 ? `This is the beginning of your direct message history with ${channel.name}.`
                 : channel.description || "This is the beginning of the conversation."}
@@ -2203,18 +2221,18 @@ export function TextChannelView({
                   type="button"
                   disabled={loadingOlder}
                   onClick={() => void loadOlderMessages()}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-[#18191E] px-3.5 py-1 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-60"
+                  className="siq-press inline-flex items-center gap-2 rounded-full border border-white/[0.09] bg-gradient-to-b from-white/[0.06] to-white/[0.02] px-4 py-1.5 text-[11px] font-semibold text-zinc-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-60"
                 >
                   {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
                   <span>{loadingOlder ? "Loading older messages..." : "Load older messages"}</span>
                 </button>
               </div>
             ) : (
-              <div className="mb-4 border-b border-white/[0.06] pb-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-[#18191E] text-emerald-400">
-                  <Hash className="h-5 w-5" />
+              <div className="relative mb-5 overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-br from-emerald-500/[0.08] via-white/[0.02] to-transparent px-5 py-5">
+                <div className="siq-hero-tile h-12 w-12 !rounded-2xl">
+                  <Hash className="h-6 w-6" strokeWidth={2.4} />
                 </div>
-                <h2 dir="auto" className="mt-2.5 text-base font-semibold text-zinc-100">
+                <h2 dir="auto" className="siq-gradient-text mt-3.5 text-xl font-extrabold tracking-tight">
                   {isDm ? channel.name : `Welcome to #${channel.name}`}
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-500">
@@ -2257,6 +2275,7 @@ export function TextChannelView({
                   savingEdit={isEditing ? savingEdit : false}
                   density={density}
                   textSizeClass={textSizeClass}
+                  animateIn={new Date(msg.createdAt).getTime() > liveBaseline}
                   actions={rowActions}
                 />
               );
@@ -2275,7 +2294,7 @@ export function TextChannelView({
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.16 }}
             onClick={() => scrollToBottom(true)}
-            className="absolute bottom-[86px] left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-emerald-500/40 bg-[#14151A]/95 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 shadow-xl backdrop-blur-md transition-colors hover:bg-emerald-500 hover:text-zinc-950"
+            className="siq-glass siq-press absolute bottom-[92px] left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full !border-emerald-500/40 px-4 py-2 text-xs font-bold text-emerald-300 hover:!bg-emerald-500 hover:text-zinc-950"
           >
             <ArrowDown className="h-3.5 w-3.5" />
             <span>
@@ -2286,7 +2305,7 @@ export function TextChannelView({
       </AnimatePresence>
 
       {/* Studio Floating Composer Area */}
-      <div className="shrink-0 bg-gradient-to-t from-[#0D0E12] via-[#111216] to-transparent px-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-1.5 md:px-6 md:pb-3.5 md:pt-2">
+      <div className="shrink-0 bg-gradient-to-t from-black/30 via-black/10 to-transparent px-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-1.5 md:px-6 md:pb-4 md:pt-2">
         <AnimatePresence>
           {replyingTo && (
             <motion.div
@@ -2294,7 +2313,7 @@ export function TextChannelView({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 4 }}
               transition={{ duration: 0.14 }}
-              className="mb-2 flex items-center justify-between rounded-xl border border-emerald-500/20 bg-[#15171E] px-3 py-1.5 text-xs"
+              className="siq-glass relative mb-2 flex items-center justify-between overflow-hidden rounded-xl !border-emerald-500/25 py-2 pl-4 pr-2 text-xs before:absolute before:inset-y-1.5 before:left-1.5 before:w-[3px] before:rounded-full before:bg-emerald-400 before:shadow-[0_0_10px_rgb(var(--siq-accent-rgb)/0.9)]"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <Reply className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
@@ -2328,7 +2347,7 @@ export function TextChannelView({
               {pendingAttachments.map((att, idx) => (
                 <div
                   key={`${att.url}-${idx}`}
-                  className="siq-bezel-sm flex items-center gap-2 rounded-xl border border-white/[0.09] bg-[#161820] px-2.5 py-1.5 text-xs"
+                  className="siq-glass flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs"
                 >
                   {att.contentType.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -2358,7 +2377,7 @@ export function TextChannelView({
 
         <form
           onSubmit={(e) => void handleSend(e)}
-          className="siq-bezel relative flex items-end gap-1 rounded-2xl border border-white/[0.1] bg-[#15161C] p-1.5 transition-colors focus-within:border-emerald-500/45 focus-within:ring-2 focus-within:ring-emerald-500/12 md:gap-1.5 md:px-2.5 md:py-2"
+          className="siq-composer flex items-end gap-1 p-1.5 md:gap-1.5 md:px-2.5 md:py-2"
         >
           <AnimatePresence>
             {mentionDraft && (
@@ -2398,7 +2417,7 @@ export function TextChannelView({
               fileInputRef.current?.click();
             }}
             title={blobReady ? "Attach image or file" : "Blob storage not configured"}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40"
+            className="siq-press flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 disabled:opacity-40"
           />
 
           <textarea
@@ -2433,9 +2452,9 @@ export function TextChannelView({
             onClick={openComposerEmojiPicker}
             title="Insert emoji"
             aria-label="Insert emoji"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-emerald-300"
+            className="siq-press group/emoji flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-400 hover:bg-white/[0.07] hover:text-emerald-300"
           >
-            <Smile className="h-[18px] w-[18px]" />
+            <Smile className="h-[18px] w-[18px] transition-transform duration-300 group-hover/emoji:rotate-12 group-hover/emoji:scale-110" />
           </button>
 
           <AnimatedIconButton
@@ -2448,7 +2467,7 @@ export function TextChannelView({
               (!composerText.trim() && pendingAttachments.length === 0)
             }
             aria-label="Send message"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20 transition-all hover:bg-emerald-400 active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none"
+            className="siq-cta flex h-9 w-9 shrink-0 items-center justify-center !rounded-xl disabled:cursor-not-allowed disabled:opacity-35"
           />
         </form>
       </div>
@@ -2498,12 +2517,12 @@ export function TextChannelView({
               onClick={(e) => e.stopPropagation()}
             >
               {/* Top Action Bar */}
-              <div className="mb-3 flex items-center justify-between gap-4 rounded-2xl border border-white/[0.1] bg-[#111218]/90 px-3.5 py-2 backdrop-blur-md">
+              <div className="mb-3 flex items-center justify-between gap-4 rounded-2xl border border-white/[0.1] bg-white/[0.03]/90 px-3.5 py-2 backdrop-blur-md">
                 <span className="truncate text-xs font-medium text-zinc-200">
                   {lightboxImage.name}
                 </span>
                 <div className="flex shrink-0 items-center gap-1.5">
-                  <div className="hidden items-center gap-1 rounded-xl border border-white/[0.08] bg-[#181920] px-1.5 py-1 sm:flex">
+                  <div className="hidden items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.055] px-1.5 py-1 sm:flex">
                     <button
                       type="button"
                       onClick={() => setLightboxZoom((z) => Math.max(1, Number((z - 0.5).toFixed(2))))}
@@ -2546,7 +2565,7 @@ export function TextChannelView({
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Open in new tab"
-                    className="rounded-xl border border-white/[0.1] bg-[#181920] p-1.5 text-zinc-300 hover:text-white"
+                    className="rounded-xl border border-white/[0.1] bg-white/[0.055] p-1.5 text-zinc-300 hover:text-white"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
@@ -2554,7 +2573,7 @@ export function TextChannelView({
                     type="button"
                     onClick={() => setLightboxImage(null)}
                     aria-label="Close image preview"
-                    className="rounded-xl border border-white/[0.1] bg-[#181920] p-1.5 text-zinc-300 hover:text-white"
+                    className="rounded-xl border border-white/[0.1] bg-white/[0.055] p-1.5 text-zinc-300 hover:text-white"
                   >
                     <X className="h-4 w-4" />
                   </button>

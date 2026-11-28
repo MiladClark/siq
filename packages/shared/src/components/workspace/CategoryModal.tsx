@@ -7,6 +7,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { useSystemNotify } from "@siq/shared/components/ui/NotificationCenter";
 import type { CategoryItem } from "@siq/shared/lib/types";
 
+const HEADER_TILE =
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400/25 to-emerald-500/[0.04] text-emerald-300 ring-1 ring-inset ring-emerald-400/30 shadow-[0_10px_24px_-10px_rgb(var(--siq-accent-rgb)/0.8),inset_0_1px_0_rgb(255_255_255/0.12)]";
+
+const FIELD =
+  "w-full rounded-xl border border-white/[0.09] bg-black/25 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)] transition-[border-color,box-shadow,background-color] duration-200 hover:border-white/[0.14] focus:border-emerald-500/50 focus:bg-black/35 focus:outline-none focus:ring-4 focus:ring-emerald-500/10";
+
 interface CategoryModalProps {
   open: boolean;
   serverId: string | null;
@@ -81,25 +87,27 @@ export function CategoryModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          transition={{ duration: 0.2 }}
           onClick={onClose}
-          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
+          className="siq-backdrop fixed inset-0 z-[85] flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
           aria-label={editingCategory ? "Rename category" : "Create category"}
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            initial={{ opacity: 0, scale: 0.94, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 8 }}
-            transition={{ duration: 0.17, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, scale: 0.97, y: 8 }}
+            transition={{ type: "spring", stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/75"
+            className="siq-glass siq-edge-light relative w-full max-w-sm overflow-hidden rounded-3xl"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
-              <div className="flex items-center gap-2">
-                <FolderPlus className="h-4 w-4 text-emerald-400" />
-                <h2 className="text-sm font-semibold text-zinc-100">
+            <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.035] to-transparent px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={HEADER_TILE}>
+                  <FolderPlus className="h-4 w-4" />
+                </span>
+                <h2 className="truncate text-[15px] font-bold tracking-tight text-zinc-50">
                   {editingCategory ? "Rename Category" : "Create Category"}
                 </h2>
               </div>
@@ -107,15 +115,15 @@ export function CategoryModal({
                 type="button"
                 onClick={onClose}
                 aria-label="Close modal"
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+                className="siq-icon-btn shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 p-5">
-              <div className="space-y-1.5">
-                <label htmlFor="cat-name" className="block text-xs font-medium text-zinc-300">
+              <div className="space-y-2">
+                <label htmlFor="cat-name" className="block text-xs font-semibold text-zinc-300">
                   Category name
                 </label>
                 <input
@@ -127,22 +135,22 @@ export function CategoryModal({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. MAN CAVE, GAMING, ARCHIVE"
-                  className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                  className={FIELD}
                 />
               </div>
 
-              <div className="flex justify-end gap-2">
+              <div className="-mx-5 -mb-5 flex justify-end gap-2 border-t border-white/[0.06] bg-black/20 px-5 py-4">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="rounded-lg border border-white/[0.1] px-3.5 py-2 text-xs font-medium text-zinc-300 hover:bg-white/[0.05]"
+                  className="siq-press rounded-xl border border-white/[0.09] bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-300 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-zinc-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving || !name.trim()}
-                  className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
+                  className="siq-cta !rounded-xl px-5 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? "Saving..." : editingCategory ? "Rename" : "Create"}
                 </button>

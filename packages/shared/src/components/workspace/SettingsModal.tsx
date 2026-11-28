@@ -22,6 +22,7 @@ import {
   Sliders,
   Sparkles,
   Trash2,
+  Type,
   UserCircle,
   Volume2,
   VolumeX,
@@ -212,6 +213,70 @@ function formatKeybindCode(code: string): string {
     Tab: "Tab",
   };
   return map[code] ?? code;
+}
+
+// --- SIQ Nocturne visual vocabulary (presentation only) ---------------------
+const CARD =
+  "rounded-2xl border border-white/[0.07] bg-white/[0.03] shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]";
+const SUBCARD = "rounded-xl border border-white/[0.06] bg-black/20";
+const FIELD =
+  "w-full rounded-xl border border-white/[0.09] bg-black/25 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)] transition-[border-color,box-shadow,background-color] duration-200 hover:border-white/[0.14] focus:border-emerald-500/50 focus:bg-black/35 focus:outline-none focus:ring-4 focus:ring-emerald-500/10";
+const LABEL = "block text-xs font-semibold text-zinc-300";
+const OPTION =
+  "rounded-2xl border text-left transition-[translate,scale,border-color,background-color,box-shadow,color] duration-200 hover:-translate-y-0.5 active:scale-[0.985]";
+const OPTION_ON =
+  "border-emerald-500/50 bg-emerald-500/[0.09] ring-4 ring-emerald-500/10 shadow-[0_14px_32px_-18px_rgb(var(--siq-accent-rgb)/0.95)]";
+const OPTION_OFF =
+  "border-white/[0.07] bg-white/[0.025] hover:border-white/[0.14] hover:bg-white/[0.045]";
+const CHIP =
+  "rounded-xl border transition-[border-color,background-color,color,box-shadow] duration-200";
+const CHIP_ON =
+  "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 shadow-[0_0_18px_-8px_rgb(var(--siq-accent-rgb)/0.9)]";
+const CHIP_OFF =
+  "border-white/[0.07] bg-white/[0.03] text-zinc-400 hover:border-white/[0.14] hover:text-zinc-200";
+const GHOST_BUTTON =
+  "siq-press inline-flex items-center gap-1.5 rounded-xl border border-white/[0.09] bg-white/[0.03] font-semibold text-zinc-300 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-50";
+const SECTION_ICON =
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-500/[0.12] text-emerald-300 ring-1 ring-inset ring-emerald-500/25";
+const SECTION_TITLE = "text-[11px] font-bold uppercase tracking-[0.09em] text-zinc-300";
+const VALUE_CHIP =
+  "rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[11px] tabular-nums text-emerald-300 ring-1 ring-inset ring-emerald-500/20";
+const SEGMENT_TRACK =
+  "inline-flex rounded-xl border border-white/[0.07] bg-black/30 p-0.5 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)]";
+const SEGMENT_PILL =
+  "absolute inset-0 -z-10 rounded-[9px] bg-emerald-500/20 shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.35),0_4px_14px_-6px_rgb(var(--siq-accent-rgb)/0.8)]";
+const SEGMENT_SPRING = { type: "spring", stiffness: 520, damping: 40 } as const;
+
+function togglePillClass(on: boolean) {
+  return `siq-press inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold ${
+    on
+      ? "bg-emerald-500/15 text-emerald-300 shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.4),0_0_18px_-6px_rgb(var(--siq-accent-rgb)/0.8)]"
+      : "bg-white/[0.05] text-zinc-400 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)] hover:text-zinc-200"
+  }`;
+}
+
+function StateDot({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`h-1.5 w-1.5 rounded-full transition-[background-color,box-shadow] duration-200 ${
+        on ? "bg-emerald-400 shadow-[0_0_8px_rgb(var(--siq-accent-rgb)/0.9)]" : "bg-zinc-600"
+      }`}
+    />
+  );
+}
+
+function staggerIn(index: number) {
+  return {
+    initial: { opacity: 0, y: 8 },
+    animate: { opacity: 1, y: 0 },
+    transition: {
+      delay: 0.04 + Math.min(index, 10) * 0.035,
+      type: "spring" as const,
+      stiffness: 420,
+      damping: 32,
+    },
+  };
 }
 
 export function SettingsModal({
@@ -528,43 +593,43 @@ export function SettingsModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.16 }}
+          transition={{ duration: 0.2 }}
           onClick={onClose}
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-xs md:p-6"
+          className="siq-backdrop fixed inset-0 z-[70] flex items-center justify-center md:p-6"
           role="dialog"
           aria-modal="true"
           aria-label="Application settings"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 12 }}
+            initial={{ opacity: 0, scale: 0.94, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 8 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, scale: 0.97, y: 8 }}
+            transition={{ type: "spring", stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="siq-settings-dialog flex h-full w-full max-w-4xl flex-col overflow-hidden bg-[#121316] md:h-[min(84dvh,700px)] md:flex-row md:rounded-2xl md:border md:border-white/[0.11] md:shadow-2xl md:shadow-black/80"
+            className="siq-settings-dialog siq-glass siq-edge-light relative flex h-full w-full max-w-4xl flex-col overflow-hidden md:h-[min(84dvh,700px)] md:flex-row md:rounded-3xl"
           >
             {/* Left Settings Sidebar */}
-            <aside className="flex shrink-0 flex-col justify-between border-b border-white/[0.07] bg-[#0E0F12] p-3 md:w-[228px] md:border-b-0 md:border-r md:p-4">
+            <aside className="flex shrink-0 flex-col justify-between border-b border-white/[0.06] bg-black/20 p-3 md:w-[236px] md:border-b-0 md:border-r md:px-4 md:py-5">
               <div>
-                <div className="mb-1.5 flex items-center justify-between pl-2 md:hidden">
-                  <span className="text-xs font-semibold text-zinc-200">Settings</span>
+                <div className="mb-2 flex items-center justify-between pl-2 md:hidden">
+                  <span className="text-sm font-bold tracking-tight text-zinc-50">Settings</span>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => { onClose(); onSignOut(); }} className="rounded-lg p-2 text-xs font-medium text-rose-300 hover:bg-rose-500/15">
+                    <button type="button" onClick={() => { onClose(); onSignOut(); }} className="siq-press rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/20">
                       Log Out
                     </button>
-                    <button type="button" onClick={onClose} aria-label="Close settings" className="rounded-lg p-2 text-zinc-400 hover:bg-white/[0.06] hover:text-white">
+                    <button type="button" onClick={onClose} aria-label="Close settings" className="siq-icon-btn">
                       <X className="size-4" />
                     </button>
                   </div>
                 </div>
 
-                <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin] md:block md:space-y-5 md:overflow-visible">
+                <div className="flex gap-1 overflow-x-auto [scrollbar-width:thin] md:block md:space-y-6 md:overflow-visible">
                 {navGroups.map((group) => (
-                  <div key={group.title} className="shrink-0 space-y-1">
-                    <p className="hidden px-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 md:block">
+                  <div key={group.title} className="shrink-0 space-y-1.5">
+                    <p className="siq-section-label !hidden !px-2.5 md:!flex">
                       {group.title}
                     </p>
-                    <div className="flex gap-1 md:flex-col">
+                    <div className="flex gap-1 md:flex-col md:gap-0.5">
                       {group.items.map((item) => {
                         const active = tab === item.id;
                         return (
@@ -572,13 +637,17 @@ export function SettingsModal({
                             key={item.id}
                             type="button"
                             onClick={() => setTab(item.id)}
-                            className={`flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium transition-colors ${
-                              active
-                                ? "bg-white/[0.09] text-zinc-100"
-                                : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                            }`}
+                            data-selected={active}
+                            className="siq-nav-item !flex-none whitespace-nowrap !py-2 !text-[13px] font-medium"
                           >
-                            <span className={active ? "text-emerald-400" : "text-zinc-500"}>
+                            {active && (
+                              <motion.span
+                                layoutId="siq-settings-nav-highlight"
+                                className="siq-nav-highlight"
+                                transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                              />
+                            )}
+                            <span className="siq-nav-icon">
                               {item.icon}
                             </span>
                             <span>{item.label}</span>
@@ -592,16 +661,16 @@ export function SettingsModal({
               </div>
 
               {/* Bottom Pinned Log Out */}
-              <div className="mt-3 hidden border-t border-white/[0.07] pt-3 md:block">
+              <div className="mt-3 hidden border-t border-white/[0.06] pt-3 md:block">
                 <button
                   type="button"
                   onClick={() => {
                     onClose();
                     onSignOut();
                   }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs font-medium text-rose-400 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+                  className="siq-press group flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300"
                 >
-                  <LogOut className="h-4 w-4" />
+                  <LogOut className="h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:translate-x-0.5" />
                   <span>Log Out</span>
                 </button>
               </div>
@@ -610,52 +679,77 @@ export function SettingsModal({
             {/* Right Content Pane */}
             <div className="flex min-h-0 flex-1 flex-col">
               {/* Top Content Header */}
-              <div className="hidden h-14 shrink-0 items-center justify-between border-b border-white/[0.07] px-6 md:flex">
-                <h2 className="text-sm font-semibold text-zinc-100">
-                  {tab === "account"
-                    ? "My Account"
-                    : tab === "voice"
-                      ? "Voice & Video"
-                      : tab === "notifications"
-                        ? "Notifications & Audio"
-                        : tab === "privacy"
-                          ? "Data & Privacy"
-                          : "Appearance"}
-                </h2>
+              <div className="hidden h-16 shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.03] to-transparent px-7 md:flex">
+                <div className="flex min-w-0 items-center gap-3">
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={tab}
+                      initial={{ opacity: 0, scale: 0.6, rotate: -20 }}
+                      animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                      exit={{ opacity: 0, scale: 0.6, rotate: 20 }}
+                      transition={{ type: "spring", stiffness: 520, damping: 30 }}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400/25 to-emerald-500/[0.04] text-emerald-300 ring-1 ring-inset ring-emerald-400/30 shadow-[0_10px_24px_-10px_rgb(var(--siq-accent-rgb)/0.8),inset_0_1px_0_rgb(255_255_255/0.12)]"
+                    >
+                      {navGroups.flatMap((group) => group.items).find((item) => item.id === tab)?.icon}
+                    </motion.span>
+                  </AnimatePresence>
+                  <h2 className="truncate text-lg font-bold tracking-tight text-zinc-50">
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={tab}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                        className="inline-block"
+                      >
+                        {tab === "account"
+                          ? "My Account"
+                          : tab === "voice"
+                            ? "Voice & Video"
+                            : tab === "notifications"
+                              ? "Notifications & Audio"
+                              : tab === "privacy"
+                                ? "Data & Privacy"
+                                : "Appearance"}
+                      </motion.span>
+                    </AnimatePresence>
+                  </h2>
+                </div>
                 <button
                   type="button"
                   onClick={onClose}
                   aria-label="Close settings"
-                  className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#18191E] px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:border-white/[0.18] hover:text-white"
+                  className="siq-press flex shrink-0 items-center gap-1.5 rounded-xl border border-white/[0.08] bg-white/[0.03] px-2.5 py-1.5 text-xs text-zinc-400 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-white"
                 >
-                  <span className="text-[10px] font-semibold tracking-wide">ESC</span>
+                  <span className="rounded-md bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide shadow-[inset_0_-1px_0_rgb(0_0_0/0.4)]">ESC</span>
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
 
               {/* Scrollable Tab Body */}
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3.5 md:p-6">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 md:px-7 md:py-6">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={tab}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.14 }}
-                    className="mx-auto max-w-xl space-y-6"
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                    className="mx-auto max-w-xl space-y-7"
                   >
                     {/* ACCOUNT TAB */}
                     {tab === "account" && (
                       <>
                         <form onSubmit={handleSaveAccount} className="space-y-5">
                           {/* Profile Card Preview with Banner + Avatar Croppers */}
-                          <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#0E0F12]">
+                          <div className={`${CARD} overflow-hidden`}>
                             <div
-                              className="group/banner relative h-28 w-full overflow-hidden"
+                              className="group/banner relative h-32 w-full overflow-hidden"
                               style={
                                 !bannerUrl
                                   ? {
-                                      background: `linear-gradient(135deg, ${avatarColor}45 0%, #0E0F12 100%)`,
+                                      background: `radial-gradient(120% 140% at 0% 0%, ${avatarColor}66 0%, transparent 60%), linear-gradient(135deg, ${avatarColor}38 0%, transparent 100%)`,
                                     }
                                   : undefined
                               }
@@ -665,9 +759,13 @@ export function SettingsModal({
                                 <img
                                   src={mediaUrl(bannerUrl)}
                                   alt="Profile banner"
-                                  className="h-full w-full object-cover"
+                                  className="h-full w-full object-cover transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover/banner:scale-[1.03]"
                                 />
                               )}
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/45 to-transparent"
+                              />
 
                               <input
                                 ref={bannerInputRef}
@@ -686,7 +784,7 @@ export function SettingsModal({
                                   type="button"
                                   disabled={uploadingMedia !== null || savingAccount || !blobReady}
                                   onClick={() => bannerInputRef.current?.click()}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.15] bg-black/65 px-2.5 py-1.5 text-[11px] font-medium text-zinc-100 backdrop-blur-sm transition-colors hover:border-emerald-500/50 hover:bg-black/85 hover:text-emerald-300 disabled:opacity-40"
+                                  className="siq-press inline-flex items-center gap-1.5 rounded-xl border border-white/[0.15] bg-black/55 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-100 backdrop-blur-md hover:border-emerald-500/50 hover:bg-black/75 hover:text-emerald-300 disabled:opacity-40"
                                 >
                                   <ImagePlus className="h-3.5 w-3.5" />
                                   <span>
@@ -703,7 +801,7 @@ export function SettingsModal({
                                     disabled={uploadingMedia !== null || savingAccount}
                                     onClick={() => void handleRemoveMedia("banner")}
                                     title="Remove banner"
-                                    className="rounded-lg border border-white/[0.15] bg-black/65 p-1.5 text-zinc-300 backdrop-blur-sm hover:border-rose-500/50 hover:text-rose-400"
+                                    className="siq-press rounded-xl border border-white/[0.15] bg-black/55 p-1.5 text-zinc-300 backdrop-blur-md hover:border-rose-500/50 hover:text-rose-400"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
@@ -713,25 +811,25 @@ export function SettingsModal({
 
                             <div className="flex flex-wrap items-end justify-between gap-4 px-4 pb-4">
                               <div className="relative z-10 -mt-8 flex items-end gap-3.5">
-                                <div className="relative inline-flex rounded-full ring-4 ring-[#0E0F12]">
+                                <div className="relative inline-flex rounded-full shadow-[0_12px_28px_-10px_rgb(0_0_0/0.8)] ring-4 ring-[#17181f]">
                                   <Avatar
                                     name={displayName || user.username}
                                     color={avatarColor}
                                     avatarUrl={avatarUrl}
                                     size="xl"
                                     online
-                                    ringClassName="ring-[#0E0F12]"
+                                    ringClassName="ring-[#17181f]"
                                   />
                                 </div>
                                 <div className="relative z-10 pb-1">
                                   <div className="flex items-center gap-2">
                                     <p
                                       dir="auto"
-                                      className="text-sm font-semibold text-zinc-100 drop-shadow-sm"
+                                      className="text-base font-bold tracking-tight text-zinc-50 drop-shadow-sm"
                                     >
                                       {displayName || user.username}
                                     </p>
-                                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-emerald-300">
+                                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold capitalize text-emerald-300 ring-1 ring-inset ring-emerald-500/30">
                                       {user.role}
                                     </span>
                                   </div>
@@ -757,7 +855,7 @@ export function SettingsModal({
                                   type="button"
                                   disabled={uploadingMedia !== null || savingAccount || !blobReady}
                                   onClick={() => avatarInputRef.current?.click()}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-40"
+                                  className={`${GHOST_BUTTON} px-3 py-1.5 text-xs hover:!border-emerald-500/40 hover:!text-emerald-300 disabled:!opacity-40`}
                                 >
                                   <Camera className="h-3.5 w-3.5" />
                                   <span>
@@ -772,7 +870,7 @@ export function SettingsModal({
                                     disabled={uploadingMedia !== null || savingAccount}
                                     onClick={() => void handleRemoveMedia("avatar")}
                                     title="Remove photo"
-                                    className="rounded-lg border border-white/[0.1] bg-[#18191E] p-1.5 text-zinc-400 hover:border-rose-500/40 hover:text-rose-400"
+                                    className="siq-press rounded-xl border border-white/[0.09] bg-white/[0.03] p-1.5 text-zinc-400 hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
                                   </button>
@@ -785,7 +883,7 @@ export function SettingsModal({
                             <div className="space-y-1.5">
                               <label
                                 htmlFor="settings-display-name"
-                                className="block text-xs font-medium text-zinc-300"
+                                className={LABEL}
                               >
                                 Display name
                               </label>
@@ -797,14 +895,14 @@ export function SettingsModal({
                                 maxLength={40}
                                 value={displayName}
                                 onChange={(e) => setDisplayName(e.target.value)}
-                                className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
+                                className={FIELD}
                               />
                             </div>
 
                             <div className="space-y-1.5">
                               <label
                                 htmlFor="settings-email"
-                                className="flex items-center justify-between text-xs font-medium text-zinc-300"
+                                className="flex items-center justify-between text-xs font-semibold text-zinc-300"
                               >
                                 <span>Email address</span>
                                 <span className="inline-flex items-center gap-1 text-[10px] font-normal text-zinc-500">
@@ -819,7 +917,7 @@ export function SettingsModal({
                                   value={email}
                                   onChange={(e) => setEmail(e.target.value.toLowerCase())}
                                   placeholder="you@example.com"
-                                  className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                                  className={`${FIELD} !pl-9`}
                                 />
                               </div>
                             </div>
@@ -828,7 +926,7 @@ export function SettingsModal({
                           <div className="space-y-1.5">
                             <label
                               htmlFor="settings-activity"
-                              className="block text-xs font-medium text-zinc-300"
+                              className={LABEL}
                             >
                               Custom activity
                             </label>
@@ -840,14 +938,14 @@ export function SettingsModal({
                               value={customActivity}
                               onChange={(e) => setCustomActivity(e.target.value)}
                               placeholder="Playing Valorant, Listening to Lo-fi..."
-                              className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                              className={FIELD}
                             />
                           </div>
 
                           <div className="space-y-1.5">
                             <label
                               htmlFor="settings-bio"
-                              className="flex items-center justify-between text-xs font-medium text-zinc-300"
+                              className="flex items-center justify-between text-xs font-semibold text-zinc-300"
                             >
                               <span>About me (Bio)</span>
                               <span className="text-[10px] font-normal tabular-nums text-zinc-500">
@@ -862,15 +960,15 @@ export function SettingsModal({
                               value={bio}
                               onChange={(e) => setBio(e.target.value)}
                               placeholder="Tell your friends a bit about yourself..."
-                              className="w-full resize-none rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none"
+                              className={`${FIELD} resize-none`}
                             />
                           </div>
 
                           <div className="space-y-2">
-                            <span className="block text-xs font-medium text-zinc-300">
+                            <span className={LABEL}>
                               Avatar accent color
                             </span>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="flex flex-wrap gap-2.5">
                               {AVATAR_PALETTE.map((hex) => {
                                 const selected =
                                   avatarColor.toLowerCase() === hex.toLowerCase();
@@ -879,14 +977,26 @@ export function SettingsModal({
                                     key={hex}
                                     type="button"
                                     onClick={() => setAvatarColor(hex)}
-                                    className={`flex h-7 w-7 items-center justify-center rounded-full transition-transform active:scale-95 ${
+                                    className={`flex h-7 w-7 items-center justify-center rounded-full shadow-[inset_0_1px_0_rgb(255_255_255/0.3)] outline-2 outline-offset-2 transition-[scale,outline-color] duration-200 active:scale-95 ${
                                       selected
-                                        ? "ring-2 ring-white ring-offset-2 ring-offset-[#121316]"
-                                        : ""
+                                        ? "scale-110 outline-white"
+                                        : "outline-transparent hover:scale-110"
                                     }`}
                                     style={{ backgroundColor: hex }}
                                   >
-                                    {selected && <Check className="h-3.5 w-3.5 text-zinc-950" />}
+                                    <AnimatePresence initial={false}>
+                                      {selected && (
+                                        <motion.span
+                                          initial={{ opacity: 0, scale: 0.3 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.3 }}
+                                          transition={{ type: "spring", stiffness: 600, damping: 26 }}
+                                          className="flex"
+                                        >
+                                          <Check className="h-3.5 w-3.5 text-zinc-950" />
+                                        </motion.span>
+                                      )}
+                                    </AnimatePresence>
                                   </button>
                                 );
                               })}
@@ -897,7 +1007,7 @@ export function SettingsModal({
                             <button
                               type="submit"
                               disabled={savingAccount || uploadingMedia !== null}
-                              className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
+                              className="siq-cta !rounded-xl px-5 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {savingAccount ? "Saving..." : "Save Profile"}
                             </button>
@@ -907,11 +1017,13 @@ export function SettingsModal({
                         {/* Change Password */}
                         <form
                           onSubmit={handleChangePassword}
-                          className="space-y-4 border-t border-white/[0.07] pt-6"
+                          className={`${CARD} space-y-4 p-4 sm:p-5`}
                         >
-                          <div className="flex items-center gap-2">
-                            <KeyRound className="h-4 w-4 text-zinc-400" />
-                            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                          <div className="flex items-center gap-2.5">
+                            <span className={SECTION_ICON}>
+                              <KeyRound className="h-3.5 w-3.5" />
+                            </span>
+                            <h3 className={SECTION_TITLE}>
                               Password &amp; Security
                             </h3>
                           </div>
@@ -920,7 +1032,7 @@ export function SettingsModal({
                             <div className="space-y-1.5">
                               <label
                                 htmlFor="curr-pass"
-                                className="block text-xs text-zinc-400"
+                                className="block text-xs font-semibold text-zinc-400"
                               >
                                 Current password
                               </label>
@@ -931,13 +1043,13 @@ export function SettingsModal({
                                 value={currentPassword}
                                 onChange={(e) => setCurrentPassword(e.target.value)}
                                 placeholder="••••••••"
-                                className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
+                                className={FIELD}
                               />
                             </div>
                             <div className="space-y-1.5">
                               <label
                                 htmlFor="new-pass"
-                                className="block text-xs text-zinc-400"
+                                className="block text-xs font-semibold text-zinc-400"
                               >
                                 New password
                               </label>
@@ -949,7 +1061,7 @@ export function SettingsModal({
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
                                 placeholder="At least 6 characters"
-                                className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-2 text-sm text-zinc-100 focus:border-emerald-500/60 focus:outline-none"
+                                className={FIELD}
                               />
                             </div>
                           </div>
@@ -958,7 +1070,7 @@ export function SettingsModal({
                             <button
                               type="submit"
                               disabled={changingPassword}
-                              className="rounded-lg border border-white/[0.12] bg-[#18191E] px-4 py-2 text-xs font-medium text-zinc-100 transition-colors hover:border-emerald-500/40 hover:text-emerald-300 disabled:opacity-50"
+                              className={`${GHOST_BUTTON} px-4 py-2 text-xs hover:!border-emerald-500/40 hover:!text-emerald-300`}
                             >
                               {changingPassword ? "Updating..." : "Update Password"}
                             </button>
@@ -971,14 +1083,19 @@ export function SettingsModal({
                     {tab === "voice" && (
                       <>
                         {/* Devices & Master Volumes */}
-                        <div className="space-y-3.5">
-                          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                            Audio &amp; Camera Devices
-                          </h3>
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2.5">
+                            <span className={SECTION_ICON}>
+                              <Headphones className="h-3.5 w-3.5" />
+                            </span>
+                            <h3 className={SECTION_TITLE}>
+                              Audio &amp; Camera Devices
+                            </h3>
+                          </div>
 
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             <div className="space-y-1.5">
-                              <label htmlFor="s-mic" className="block text-xs text-zinc-300">
+                              <label htmlFor="s-mic" className={LABEL}>
                                 Input Device (Mic)
                               </label>
                               <SelectDropdown
@@ -998,7 +1115,7 @@ export function SettingsModal({
                             </div>
 
                             <div className="space-y-1.5">
-                              <label htmlFor="s-out" className="block text-xs text-zinc-300">
+                              <label htmlFor="s-out" className={LABEL}>
                                 Output Device (Headset)
                               </label>
                               <SelectDropdown
@@ -1020,20 +1137,20 @@ export function SettingsModal({
 
                           {/* Input Gain & Master Output Volume */}
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3">
+                            <div className={`${CARD} space-y-2.5 p-3.5`}>
                               <div className="flex items-center justify-between gap-2">
-                                <label htmlFor="s-input-gain" className="text-xs font-medium text-zinc-200">
+                                <label htmlFor="s-input-gain" className="text-xs font-semibold text-zinc-200">
                                   Input Volume (Mic Gain)
                                 </label>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                  <span className={VALUE_CHIP}>
                                     {voice.voiceAudio.inputGainPct}% · {formatGainDb(voice.voiceAudio.inputGainPct)}
                                   </span>
                                   {voice.voiceAudio.inputGainPct !== 100 && (
                                     <button
                                       type="button"
                                       onClick={() => void voice.updateVoiceAudio({ inputGainPct: 100 })}
-                                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
+                                      className="siq-press rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-400 ring-1 ring-inset ring-white/[0.08] hover:bg-white/[0.1] hover:text-white"
                                       title="Reset to 100% (0 dB)"
                                     >
                                       0 dB
@@ -1051,7 +1168,7 @@ export function SettingsModal({
                                 onChange={(e) =>
                                   void voice.updateVoiceAudio({ inputGainPct: Number(e.target.value) })
                                 }
-                                className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                className="h-1.5 w-full cursor-pointer accent-emerald-400 transition-[filter] hover:brightness-110"
                               />
                               <div className="flex justify-between text-[10px] tabular-nums text-zinc-500">
                                 <span>0%</span>
@@ -1060,20 +1177,20 @@ export function SettingsModal({
                               </div>
                             </div>
 
-                            <div className="space-y-2 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3">
+                            <div className={`${CARD} space-y-2.5 p-3.5`}>
                               <div className="flex items-center justify-between gap-2">
-                                <label htmlFor="s-output-vol" className="text-xs font-medium text-zinc-200">
+                                <label htmlFor="s-output-vol" className="text-xs font-semibold text-zinc-200">
                                   Output Volume (Master)
                                 </label>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                  <span className={VALUE_CHIP}>
                                     {voice.voiceAudio.outputVolumePct}%
                                   </span>
                                   {voice.voiceAudio.outputVolumePct !== 100 && (
                                     <button
                                       type="button"
                                       onClick={() => void voice.updateVoiceAudio({ outputVolumePct: 100 })}
-                                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-white/[0.1] hover:text-white"
+                                      className="siq-press rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-400 ring-1 ring-inset ring-white/[0.08] hover:bg-white/[0.1] hover:text-white"
                                       title="Reset to 100%"
                                     >
                                       100%
@@ -1091,7 +1208,7 @@ export function SettingsModal({
                                 onChange={(e) =>
                                   void voice.updateVoiceAudio({ outputVolumePct: Number(e.target.value) })
                                 }
-                                className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                className="h-1.5 w-full cursor-pointer accent-emerald-400 transition-[filter] hover:brightness-110"
                               />
                               <div className="flex justify-between text-[10px] tabular-nums text-zinc-500">
                                 <span>Mute</span>
@@ -1102,7 +1219,7 @@ export function SettingsModal({
                           </div>
 
                           <div className="space-y-1.5">
-                            <label htmlFor="s-cam" className="block text-xs text-zinc-300">
+                            <label htmlFor="s-cam" className={LABEL}>
                               Camera
                             </label>
                             <SelectDropdown
@@ -1134,15 +1251,16 @@ export function SettingsModal({
                         </div>
 
                         {/* Noise Cancellation Selector */}
-                        <div className="space-y-3 border-t border-white/[0.07] pt-5">
+                        <div className="space-y-3.5 border-t border-white/[0.06] pt-6">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <Sparkles className="h-4 w-4 text-emerald-400" />
-                              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                            <div className="flex items-center gap-2.5">
+                              <span className={SECTION_ICON}><Sparkles className="h-3.5 w-3.5" /></span>
+                              <h3 className={SECTION_TITLE}>
                                 Noise Cancellation Engine
                               </h3>
                             </div>
-                            <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold tracking-wide tabular-nums text-emerald-300">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/[0.12] px-2.5 py-0.5 text-[10px] font-bold tracking-wide tabular-nums text-emerald-300 ring-1 ring-inset ring-emerald-500/25">
+                              <span aria-hidden="true" className="siq-live-dot !h-1.5 !w-1.5" />
                               Active:{" "}
                               {voice.activeNoiseEngine === "siq"
                                 ? voice.activeSiqEngine === "ultra"
@@ -1157,29 +1275,30 @@ export function SettingsModal({
                           </div>
 
                           <div className="grid grid-cols-1 gap-2">
-                            {NOISE_MODES.map((m) => {
+                            {NOISE_MODES.map((m, index) => {
                               const selected = voice.noiseMode === m.id;
                               return (
-                                <button
+                                <motion.button
                                   key={m.id}
                                   type="button"
+                                  {...staggerIn(index)}
                                   onClick={() => void voice.setNoiseMode(m.id)}
-                                  className={`flex items-start justify-between gap-3 rounded-xl border p-3 text-left transition-all ${
+                                  className={`${OPTION} flex items-start justify-between gap-3 p-3.5 ${
                                     selected
-                                      ? "border-emerald-500/50 bg-emerald-500/10"
-                                      : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                                      ? OPTION_ON
+                                      : OPTION_OFF
                                   }`}
                                 >
                                   <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <span className="text-xs font-semibold text-zinc-100">
+                                      <span className="text-xs font-bold text-zinc-100">
                                         {m.title}
                                       </span>
                                       <span
-                                        className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${
                                           m.id === "siq"
-                                            ? "bg-emerald-500/20 text-emerald-300"
-                                            : "bg-white/[0.07] text-zinc-400"
+                                            ? "bg-emerald-500/20 text-emerald-300 ring-emerald-500/30"
+                                            : "bg-white/[0.06] text-zinc-400 ring-white/[0.06]"
                                         }`}
                                       >
                                         {m.badge}
@@ -1190,26 +1309,48 @@ export function SettingsModal({
                                     </p>
                                   </div>
                                   <span
-                                    className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                                    className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border transition-[background-color,border-color,box-shadow] duration-200 ${
                                       selected
-                                        ? "border-emerald-400 bg-emerald-400 text-zinc-950"
+                                        ? "border-emerald-400 bg-emerald-400 text-zinc-950 shadow-[0_0_14px_-2px_rgb(var(--siq-accent-rgb)/0.9)]"
                                         : "border-zinc-600"
                                     }`}
                                   >
-                                    {selected && <Check className="h-3 w-3" />}
+                                    <AnimatePresence initial={false}>
+                                      {selected && (
+                                        <motion.span
+                                          initial={{ opacity: 0, scale: 0.3 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.3 }}
+                                          transition={{ type: "spring", stiffness: 600, damping: 26 }}
+                                          className="flex"
+                                        >
+                                          <Check className="h-3 w-3" />
+                                        </motion.span>
+                                      )}
+                                    </AnimatePresence>
                                   </span>
-                                </button>
+                                </motion.button>
                               );
                             })}
                           </div>
 
                           {/* SIQ AI Studio Console */}
+                          <AnimatePresence initial={false}>
                           {(voice.noiseMode === "siq" || voice.activeNoiseEngine === "siq") && (
-                            <div className="space-y-3.5 rounded-xl border border-emerald-500/25 bg-[#0C0D11] p-4">
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                              className="overflow-hidden"
+                            >
+                            <div className="siq-edge-light relative space-y-4 rounded-2xl border border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.06] to-black/20 p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.05)]">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                  <Sliders className="h-3.5 w-3.5 text-emerald-400" />
-                                  <span className="text-xs font-semibold text-zinc-100">
+                                <div className="flex items-center gap-2.5">
+                                  <span className={SECTION_ICON}>
+                                    <Sliders className="h-3.5 w-3.5" />
+                                  </span>
+                                  <span className="text-[13px] font-bold tracking-tight text-zinc-50">
                                     SIQ AI Studio Console
                                   </span>
                                 </div>
@@ -1224,7 +1365,7 @@ export function SettingsModal({
 
                               {/* 3-Tier Neural Core Selector */}
                               <div className="space-y-1.5">
-                                <p className="text-[11px] font-medium text-zinc-300">
+                                <p className="text-[11px] font-semibold text-zinc-300">
                                   Neural Core Mode
                                 </p>
                                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
@@ -1235,10 +1376,10 @@ export function SettingsModal({
                                         key={eng.id}
                                         type="button"
                                         onClick={() => voice.updateSiqDsp({ aiEngine: eng.id })}
-                                        className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                                        className={`${CHIP} px-3 py-2.5 text-left ${
                                           active
-                                            ? "border-emerald-500/55 bg-emerald-500/15 text-emerald-200"
-                                            : "border-white/[0.07] bg-[#121318] text-zinc-300 hover:border-white/[0.15]"
+                                            ? CHIP_ON
+                                            : CHIP_OFF
                                         }`}
                                       >
                                         <div className="flex items-center justify-between gap-1">
@@ -1271,10 +1412,10 @@ export function SettingsModal({
                                       key={preset.id}
                                       type="button"
                                       onClick={() => voice.applySiqPreset(preset.id)}
-                                      className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                                      className={`${CHIP} px-3 py-2.5 text-left ${
                                         isMatch
-                                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                                          : "border-white/[0.07] bg-[#121318] text-zinc-300 hover:border-white/[0.15]"
+                                          ? CHIP_ON
+                                          : CHIP_OFF
                                       }`}
                                     >
                                       <p className="text-[11px] font-semibold">{preset.label}</p>
@@ -1290,7 +1431,7 @@ export function SettingsModal({
                                   <label htmlFor="s-siq-sup" className="text-zinc-300">
                                     AI Noise Suppression Strength
                                   </label>
-                                  <span className="font-mono text-[11px] tabular-nums text-emerald-300">
+                                  <span className={VALUE_CHIP}>
                                     {voice.voiceAudio.siqDsp.suppressionStrength}%
                                     {voice.voiceAudio.siqDsp.aiEngine === "ultra"
                                       ? ` · -${suppressionPctToAttenLimDb(voice.voiceAudio.siqDsp.suppressionStrength)} dB`
@@ -1309,15 +1450,15 @@ export function SettingsModal({
                                       suppressionStrength: Number(e.target.value),
                                     })
                                   }
-                                  className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                  className="h-1.5 w-full cursor-pointer accent-emerald-400 transition-[filter] hover:brightness-110"
                                 />
                               </div>
 
                               {/* Voice Gate Auto / Manual + Threshold */}
-                              <div className="space-y-2 rounded-lg border border-white/[0.06] bg-[#101116] p-3">
+                              <div className={`${SUBCARD} space-y-2.5 p-3.5`}>
                                 <div className="flex items-center justify-between gap-2">
                                   <div>
-                                    <p className="text-xs font-medium text-zinc-200">
+                                    <p className="text-xs font-semibold text-zinc-200">
                                       Smart Voice Gate
                                     </p>
                                     <p className="text-[10px] text-zinc-500">
@@ -1326,39 +1467,61 @@ export function SettingsModal({
                                         : "Look-ahead gate driven by the AI-cleaned signal — opens before your first syllable, ignores keyboard clicks and fans."}
                                     </p>
                                   </div>
-                                  <div className="inline-flex rounded-lg border border-white/[0.08] bg-[#0A0B0E] p-0.5">
+                                  <div className={`${SEGMENT_TRACK} shrink-0`}>
                                     <button
                                       type="button"
                                       onClick={() => voice.updateSiqDsp({ autoGate: true })}
-                                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                      className={`relative isolate rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition-colors duration-200 ${
                                         voice.voiceAudio.siqDsp.autoGate
-                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          ? "text-emerald-300"
                                           : "text-zinc-400 hover:text-zinc-200"
                                       }`}
                                     >
+                                      {voice.voiceAudio.siqDsp.autoGate && (
+                                        <motion.span
+                                          layoutId="siq-settings-gate-mode"
+                                          className={SEGMENT_PILL}
+                                          transition={SEGMENT_SPRING}
+                                        />
+                                      )}
                                       Auto
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => voice.updateSiqDsp({ autoGate: false })}
-                                      className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                                      className={`relative isolate rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition-colors duration-200 ${
                                         !voice.voiceAudio.siqDsp.autoGate
-                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          ? "text-emerald-300"
                                           : "text-zinc-400 hover:text-zinc-200"
                                       }`}
                                     >
+                                      {!voice.voiceAudio.siqDsp.autoGate && (
+                                        <motion.span
+                                          layoutId="siq-settings-gate-mode"
+                                          className={SEGMENT_PILL}
+                                          transition={SEGMENT_SPRING}
+                                        />
+                                      )}
                                       Manual
                                     </button>
                                   </div>
                                 </div>
 
+                                <AnimatePresence initial={false}>
                                 {!voice.voiceAudio.siqDsp.autoGate && (
-                                  <div className="space-y-1 pt-1">
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                                    className="overflow-hidden"
+                                  >
+                                  <div className="space-y-1.5 pt-1">
                                     <div className="flex items-center justify-between text-[11px]">
-                                      <label htmlFor="s-gate-db" className="text-zinc-400">
+                                      <label htmlFor="s-gate-db" className="font-medium text-zinc-400">
                                         Gate Open Threshold
                                       </label>
-                                      <span className="font-mono tabular-nums text-amber-300">
+                                      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-mono tabular-nums text-amber-300 ring-1 ring-inset ring-amber-500/25">
                                         {voice.voiceAudio.siqDsp.gateThresholdDb} dB
                                       </span>
                                     </div>
@@ -1382,7 +1545,9 @@ export function SettingsModal({
                                       <span>-15 dB (Strict)</span>
                                     </div>
                                   </div>
+                                  </motion.div>
                                 )}
+                                </AnimatePresence>
                               </div>
 
                               {/* High-Pass Rumble Filter (Pre-AI) */}
@@ -1395,18 +1560,25 @@ export function SettingsModal({
                                     Blocks desk thumps &amp; wind before AI
                                   </span>
                                 </div>
-                                <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/[0.07] bg-[#0A0B0E] p-1">
+                                <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/[0.07] bg-black/30 p-1 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)]">
                                   {SIQ_HPF_OPTIONS.map((opt) => (
                                     <button
                                       key={opt.hz}
                                       type="button"
                                       onClick={() => voice.updateSiqDsp({ highPassHz: opt.hz })}
-                                      className={`rounded-md py-1.5 text-[11px] font-medium tabular-nums transition-colors ${
+                                      className={`relative isolate rounded-[9px] py-1.5 text-[11px] font-semibold tabular-nums transition-colors duration-200 ${
                                         voice.voiceAudio.siqDsp.highPassHz === opt.hz
-                                          ? "bg-emerald-500/20 text-emerald-300"
+                                          ? "text-emerald-300"
                                           : "text-zinc-400 hover:text-zinc-200"
                                       }`}
                                     >
+                                      {voice.voiceAudio.siqDsp.highPassHz === opt.hz && (
+                                        <motion.span
+                                          layoutId="siq-settings-hpf"
+                                          className={SEGMENT_PILL}
+                                          transition={SEGMENT_SPRING}
+                                        />
+                                      )}
                                       {opt.label}
                                     </button>
                                   ))}
@@ -1422,10 +1594,10 @@ export function SettingsModal({
                                       deEsser: !voice.voiceAudio.siqDsp.deEsser,
                                     })
                                   }
-                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                  className={`${CHIP} flex w-full items-center justify-between px-3 py-2.5 text-xs font-medium ${
                                     voice.voiceAudio.siqDsp.deEsser
-                                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                                      : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
+                                      ? CHIP_ON
+                                      : "border-white/[0.07] bg-black/20 text-zinc-400 hover:border-white/[0.14]"
                                   }`}
                                 >
                                   <span className="text-left">
@@ -1434,7 +1606,8 @@ export function SettingsModal({
                                       Tames harsh S / Sh peaks
                                     </span>
                                   </span>
-                                  <span className="text-[11px] font-semibold">
+                                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold">
+                                    <StateDot on={voice.voiceAudio.siqDsp.deEsser} />
                                     {voice.voiceAudio.siqDsp.deEsser ? "On" : "Off"}
                                   </span>
                                 </button>
@@ -1446,10 +1619,10 @@ export function SettingsModal({
                                       compressor: !voice.voiceAudio.siqDsp.compressor,
                                     })
                                   }
-                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                                  className={`${CHIP} flex w-full items-center justify-between px-3 py-2.5 text-xs font-medium ${
                                     voice.voiceAudio.siqDsp.compressor
-                                      ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                                      : "border-white/[0.07] bg-[#0A0B0E] text-zinc-400"
+                                      ? CHIP_ON
+                                      : "border-white/[0.07] bg-black/20 text-zinc-400 hover:border-white/[0.14]"
                                   }`}
                                 >
                                   <span className="text-left">
@@ -1460,14 +1633,15 @@ export function SettingsModal({
                                       Smart leveling &amp; anti-clip
                                     </span>
                                   </span>
-                                  <span className="text-[11px] font-semibold">
+                                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold">
+                                    <StateDot on={voice.voiceAudio.siqDsp.compressor} />
                                     {voice.voiceAudio.siqDsp.compressor ? "On" : "Off"}
                                   </span>
                                 </button>
                               </div>
 
                               <div className="space-y-1.5">
-                                <p className="text-[11px] font-medium text-zinc-300">
+                                <p className="text-[11px] font-semibold text-zinc-300">
                                   Voice Tone EQ
                                 </p>
                                 <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -1476,10 +1650,10 @@ export function SettingsModal({
                                       key={tone.id}
                                       type="button"
                                       onClick={() => voice.updateSiqDsp({ voiceTone: tone.id })}
-                                      className={`rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                                      className={`${CHIP} px-2 py-2 text-[11px] font-semibold ${
                                         voice.voiceAudio.siqDsp.voiceTone === tone.id
-                                          ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                                          : "border-white/[0.07] bg-[#121318] text-zinc-400 hover:text-zinc-200"
+                                          ? CHIP_ON
+                                          : CHIP_OFF
                                       }`}
                                     >
                                       {tone.label}
@@ -1488,26 +1662,29 @@ export function SettingsModal({
                                 </div>
                               </div>
                             </div>
+                            </motion.div>
                           )}
+                          </AnimatePresence>
                         </div>
 
                         {/* Input Mode: Voice Activity vs Push-to-Talk */}
-                        <div className="space-y-3 border-t border-white/[0.07] pt-5">
+                        <div className="space-y-3.5 border-t border-white/[0.06] pt-6">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Keyboard className="h-4 w-4 text-emerald-400" />
-                              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                            <div className="flex items-center gap-2.5">
+                              <span className={SECTION_ICON}><Keyboard className="h-3.5 w-3.5" /></span>
+                              <h3 className={SECTION_TITLE}>
                                 Input Mode
                               </h3>
                             </div>
                             {voice.voiceAudio.inputMode === "push-to-talk" && (
                               <span
-                                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide ring-1 ring-inset transition-[background-color,color,box-shadow] duration-150 ${
                                   voice.isPttActive
-                                    ? "bg-emerald-500/25 text-emerald-300"
-                                    : "bg-white/[0.06] text-zinc-400"
+                                    ? "bg-emerald-500/25 text-emerald-300 ring-emerald-500/40 shadow-[0_0_18px_-4px_rgb(var(--siq-accent-rgb)/0.9)]"
+                                    : "bg-white/[0.06] text-zinc-400 ring-white/[0.08]"
                                 }`}
                               >
+                                <StateDot on={voice.isPttActive} />
                                 {voice.isPttActive ? "TRANSMITTING" : "PTT STANDBY"}
                               </span>
                             )}
@@ -1519,13 +1696,13 @@ export function SettingsModal({
                               onClick={() =>
                                 void voice.updateVoiceAudio({ inputMode: "voice-activity" })
                               }
-                              className={`rounded-xl border p-3 text-left transition-all ${
+                              className={`${OPTION} p-3.5 ${
                                 voice.voiceAudio.inputMode === "voice-activity"
-                                  ? "border-emerald-500/50 bg-emerald-500/10"
-                                  : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                                  ? OPTION_ON
+                                  : OPTION_OFF
                               }`}
                             >
-                              <p className="text-xs font-semibold text-zinc-100">Voice Activity</p>
+                              <p className="text-xs font-bold text-zinc-100">Voice Activity</p>
                               <p className="mt-0.5 text-[11px] text-zinc-400">
                                 Open mic with smart noise gate
                               </p>
@@ -1535,13 +1712,13 @@ export function SettingsModal({
                               onClick={() =>
                                 void voice.updateVoiceAudio({ inputMode: "push-to-talk" })
                               }
-                              className={`rounded-xl border p-3 text-left transition-all ${
+                              className={`${OPTION} p-3.5 ${
                                 voice.voiceAudio.inputMode === "push-to-talk"
-                                  ? "border-emerald-500/50 bg-emerald-500/10"
-                                  : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                                  ? OPTION_ON
+                                  : OPTION_OFF
                               }`}
                             >
-                              <p className="text-xs font-semibold text-zinc-100">Push-to-Talk</p>
+                              <p className="text-xs font-bold text-zinc-100">Push-to-Talk</p>
                               <p className="mt-0.5 text-[11px] text-zinc-400">
                                 Zero-delay instant transmit key
                               </p>
@@ -1549,18 +1726,18 @@ export function SettingsModal({
                           </div>
 
                           {voice.voiceAudio.inputMode === "push-to-talk" && (
-                            <div className="grid grid-cols-1 gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-3.5 sm:grid-cols-2">
+                            <div className={`${CARD} grid grid-cols-1 gap-4 p-4 sm:grid-cols-2`}>
                               <div className="space-y-1.5">
-                                <p className="text-[11px] font-medium text-zinc-300">
+                                <p className="text-[11px] font-semibold text-zinc-300">
                                   Push-to-Talk Shortcut
                                 </p>
                                 <button
                                   type="button"
                                   onClick={() => setRecordingPtt((prev) => !prev)}
-                                  className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                                  className={`siq-press flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-xs font-semibold ${
                                     recordingPtt
-                                      ? "border-amber-400/60 bg-amber-500/15 text-amber-200"
-                                      : "border-white/[0.1] bg-[#16171D] text-zinc-100 hover:border-white/[0.2]"
+                                      ? "border-amber-400/60 bg-amber-500/15 text-amber-200 shadow-[0_0_0_4px_rgb(245_158_11/0.12),0_0_22px_-6px_rgb(245_158_11/0.7)] animate-pulse motion-reduce:animate-none"
+                                      : "border-white/[0.09] bg-black/25 font-mono text-zinc-100 hover:border-white/[0.18]"
                                   }`}
                                 >
                                   <span>
@@ -1579,7 +1756,7 @@ export function SettingsModal({
                                   <label htmlFor="s-ptt-delay" className="text-zinc-300">
                                     Release Delay
                                   </label>
-                                  <span className="font-mono tabular-nums text-emerald-300">
+                                  <span className={VALUE_CHIP}>
                                     {voice.voiceAudio.pttReleaseDelayMs} ms
                                   </span>
                                 </div>
@@ -1595,7 +1772,7 @@ export function SettingsModal({
                                       pttReleaseDelayMs: Number(e.target.value),
                                     })
                                   }
-                                  className="h-1.5 w-full cursor-pointer accent-emerald-400"
+                                  className="h-1.5 w-full cursor-pointer accent-emerald-400 transition-[filter] hover:brightness-110"
                                 />
                                 <p className="text-[10px] text-zinc-500">
                                   Keeps mic open briefly after release so word endings never cut off.
@@ -1606,51 +1783,58 @@ export function SettingsModal({
                         </div>
 
                         {/* Voice Quality & Network Resilience */}
-                        <div className="space-y-3 border-t border-white/[0.07] pt-5">
-                          <div className="flex items-center gap-2">
-                            <Radio className="h-4 w-4 text-emerald-400" />
-                            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                        <div className="space-y-3.5 border-t border-white/[0.06] pt-6">
+                          <div className="flex items-center gap-2.5">
+                            <span className={SECTION_ICON}><Radio className="h-3.5 w-3.5" /></span>
+                            <h3 className={SECTION_TITLE}>
                               Voice Quality &amp; Network Resilience
                             </h3>
                           </div>
 
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                            {VOICE_QUALITY_PROFILES.map((profile) => {
+                            {VOICE_QUALITY_PROFILES.map((profile, index) => {
                               const selected = voice.voiceAudio.voiceQuality === profile.id;
                               return (
-                                <button
+                                <motion.button
                                   key={profile.id}
                                   type="button"
+                                  {...staggerIn(index)}
                                   onClick={() =>
                                     void voice.updateVoiceAudio({ voiceQuality: profile.id })
                                   }
-                                  className={`rounded-xl border p-3 text-left transition-all ${
+                                  className={`${OPTION} p-3.5 ${
                                     selected
-                                      ? "border-emerald-500/50 bg-emerald-500/10"
-                                      : "border-white/[0.07] bg-[#0E0F12] hover:border-white/[0.14]"
+                                      ? OPTION_ON
+                                      : OPTION_OFF
                                   }`}
                                 >
                                   <div className="flex items-center justify-between gap-1">
-                                    <span className="text-xs font-semibold text-zinc-100">
+                                    <span className="text-xs font-bold text-zinc-100">
                                       {profile.title}
                                     </span>
-                                    <span className="rounded bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-zinc-300">
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 font-mono text-[10px] tabular-nums ring-1 ring-inset transition-colors duration-200 ${
+                                        selected
+                                          ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                                          : "bg-white/[0.06] text-zinc-300 ring-white/[0.06]"
+                                      }`}
+                                    >
                                       {profile.bitrate}
                                     </span>
                                   </div>
-                                  <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+                                  <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-400">
                                     {profile.desc}
                                   </p>
-                                </button>
+                                </motion.button>
                               );
                             })}
                           </div>
 
                           {/* 2x2 Voice Processing Toggles */}
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                            <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-200 hover:border-white/[0.11]`}>
                               <div className="min-w-0">
-                                <p className="text-xs font-medium text-zinc-100">
+                                <p className="text-xs font-semibold text-zinc-100">
                                   Echo Cancellation (AEC3)
                                 </p>
                                 <p className="text-[11px] text-zinc-500">
@@ -1662,19 +1846,16 @@ export function SettingsModal({
                                 onClick={() =>
                                   void voice.setEchoCancellation(!voice.echoCancellation)
                                 }
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                  voice.echoCancellation
-                                    ? "bg-emerald-500/20 text-emerald-300"
-                                    : "bg-white/[0.06] text-zinc-400"
-                                }`}
+                                className={togglePillClass(voice.echoCancellation)}
                               >
+                                <StateDot on={voice.echoCancellation} />
                                 {voice.echoCancellation ? "On" : "Off"}
                               </button>
                             </div>
 
-                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                            <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-200 hover:border-white/[0.11]`}>
                               <div className="min-w-0">
-                                <p className="text-xs font-medium text-zinc-100">
+                                <p className="text-xs font-semibold text-zinc-100">
                                   Auto Gain Control (AGC)
                                 </p>
                                 <p className="text-[11px] text-zinc-500">
@@ -1686,21 +1867,18 @@ export function SettingsModal({
                                 onClick={() =>
                                   void voice.setAutoGainControl(!voice.autoGainControl)
                                 }
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                  voice.autoGainControl
-                                    ? "bg-emerald-500/20 text-emerald-300"
-                                    : "bg-white/[0.06] text-zinc-400"
-                                }`}
+                                className={togglePillClass(voice.autoGainControl)}
                               >
+                                <StateDot on={voice.autoGainControl} />
                                 {voice.autoGainControl ? "On" : "Off"}
                               </button>
                             </div>
 
-                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                            <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-200 hover:border-white/[0.11]`}>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <Zap className="h-3 w-3 text-emerald-400" />
-                                  <p className="text-xs font-medium text-zinc-100">
+                                  <p className="text-xs font-semibold text-zinc-100">
                                     Packet-Loss Recovery (RED)
                                   </p>
                                 </div>
@@ -1715,19 +1893,16 @@ export function SettingsModal({
                                     packetLossRecovery: !voice.voiceAudio.packetLossRecovery,
                                   })
                                 }
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                  voice.voiceAudio.packetLossRecovery
-                                    ? "bg-emerald-500/20 text-emerald-300"
-                                    : "bg-white/[0.06] text-zinc-400"
-                                }`}
+                                className={togglePillClass(voice.voiceAudio.packetLossRecovery)}
                               >
+                                <StateDot on={voice.voiceAudio.packetLossRecovery} />
                                 {voice.voiceAudio.packetLossRecovery ? "On" : "Off"}
                               </button>
                             </div>
 
-                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] px-3.5 py-3">
+                            <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-200 hover:border-white/[0.11]`}>
                               <div className="min-w-0">
-                                <p className="text-xs font-medium text-zinc-100">
+                                <p className="text-xs font-semibold text-zinc-100">
                                   Silence Saver (DTX)
                                 </p>
                                 <p className="text-[11px] text-zinc-500">
@@ -1741,12 +1916,9 @@ export function SettingsModal({
                                     dtxEnabled: !voice.voiceAudio.dtxEnabled,
                                   })
                                 }
-                                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                  voice.voiceAudio.dtxEnabled
-                                    ? "bg-emerald-500/20 text-emerald-300"
-                                    : "bg-white/[0.06] text-zinc-400"
-                                }`}
+                                className={togglePillClass(voice.voiceAudio.dtxEnabled)}
                               >
+                                <StateDot on={voice.voiceAudio.dtxEnabled} />
                                 {voice.voiceAudio.dtxEnabled ? "On" : "Off"}
                               </button>
                             </div>
@@ -1754,11 +1926,13 @@ export function SettingsModal({
                         </div>
 
                         {/* Default Screen Share Info */}
-                        <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] px-4 py-3">
-                          <div className="flex items-center gap-2.5">
-                            <Monitor className="h-4 w-4 text-emerald-400" />
+                        <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5`}>
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/[0.12] text-emerald-300 ring-1 ring-inset ring-emerald-500/25">
+                              <Monitor className="h-4 w-4" />
+                            </span>
                             <div>
-                              <p className="text-xs font-medium text-zinc-100">
+                              <p className="text-xs font-semibold text-zinc-100">
                                 Default Stream Quality
                               </p>
                               <p className="text-[11px] font-medium tabular-nums text-zinc-400">
@@ -1779,9 +1953,9 @@ export function SettingsModal({
                     {/* NOTIFICATIONS & AUDIO TAB */}
                     {tab === "notifications" && (
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] px-4 py-3.5">
+                        <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5`}>
                           <div>
-                            <p className="text-xs font-medium text-zinc-100">
+                            <p className="text-xs font-semibold text-zinc-100">
                               Message Toast Popups
                             </p>
                             <p className="text-[11px] text-zinc-500">
@@ -1816,7 +1990,7 @@ export function SettingsModal({
                                   });
                                 }, 700);
                               }}
-                              className="rounded-lg border border-white/[0.09] bg-[#18191E] px-2.5 py-1.5 text-[11px] font-medium text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                              className={`${GHOST_BUTTON} px-2.5 py-1.5 text-[11px] hover:!border-emerald-500/40 hover:!text-emerald-300`}
                             >
                               Test Stack
                             </button>
@@ -1825,62 +1999,79 @@ export function SettingsModal({
                               onClick={() =>
                                 onUpdatePrefs({ toastsEnabled: !appPrefs.toastsEnabled })
                               }
-                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                appPrefs.toastsEnabled
-                                  ? "bg-emerald-500/20 text-emerald-300"
-                                  : "bg-white/[0.06] text-zinc-400"
-                              }`}
+                              className={togglePillClass(appPrefs.toastsEnabled)}
                             >
+                              <StateDot on={appPrefs.toastsEnabled} />
                               {appPrefs.toastsEnabled ? "On" : "Off"}
                             </button>
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
+                        <div className={`${CARD} flex items-center justify-between gap-3 p-4`}>
                           <div>
-                            <p className="text-xs font-medium text-zinc-100">
+                            <p className="text-xs font-semibold text-zinc-100">
                               Toast Animation Style
                             </p>
                             <p className="mt-0.5 text-[11px] text-zinc-500">
                               Choose Sileo liquid SVG-morphing pills or stacked Obsidian cards.
                             </p>
                           </div>
-                          <div className="inline-flex shrink-0 items-center rounded-lg border border-white/[0.08] bg-[#14151A] p-0.5">
+                          <div className={`${SEGMENT_TRACK} shrink-0 items-center`}>
                             <button
                               type="button"
                               onClick={() => onUpdatePrefs({ toastStyle: "liquid" })}
-                              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                              className={`relative isolate rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition-colors duration-200 ${
                                 appPrefs.toastStyle === "liquid"
-                                  ? "bg-emerald-500/20 text-emerald-300"
+                                  ? "text-emerald-300"
                                   : "text-zinc-400 hover:text-zinc-200"
                               }`}
                             >
+                              {appPrefs.toastStyle === "liquid" && (
+                                <motion.span
+                                  layoutId="siq-settings-toast-style"
+                                  className={SEGMENT_PILL}
+                                  transition={SEGMENT_SPRING}
+                                />
+                              )}
                               Sileo Liquid
                             </button>
                             <button
                               type="button"
                               onClick={() => onUpdatePrefs({ toastStyle: "classic" })}
-                              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                              className={`relative isolate rounded-[9px] px-2.5 py-1 text-[11px] font-semibold transition-colors duration-200 ${
                                 appPrefs.toastStyle === "classic"
-                                  ? "bg-emerald-500/20 text-emerald-300"
+                                  ? "text-emerald-300"
                                   : "text-zinc-400 hover:text-zinc-200"
                               }`}
                             >
+                              {appPrefs.toastStyle === "classic" && (
+                                <motion.span
+                                  layoutId="siq-settings-toast-style"
+                                  className={SEGMENT_PILL}
+                                  transition={SEGMENT_SPRING}
+                                />
+                              )}
                               Obsidian Stack
                             </button>
                           </div>
                         </div>
 
-                        <div className="space-y-4 rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {soundEnabled ? (
-                                <Volume2 className="h-4 w-4 text-emerald-400" />
-                              ) : (
-                                <VolumeX className="h-4 w-4 text-zinc-500" />
-                              )}
+                        <div className={`${CARD} space-y-4 p-4`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors duration-300 ${
+                                  soundEnabled ? "bg-emerald-500/[0.14]" : "bg-white/[0.05]"
+                                }`}
+                              >
+                                {soundEnabled ? (
+                                  <Volume2 className="h-4 w-4 text-emerald-400" />
+                                ) : (
+                                  <VolumeX className="h-4 w-4 text-zinc-500" />
+                                )}
+                              </span>
                               <div>
-                                <p className="text-xs font-medium text-zinc-100">
+                                <p className="text-xs font-semibold text-zinc-100">
                                   Interface Sound Effects
                                 </p>
                                 <p className="text-[11px] text-zinc-500">
@@ -1897,20 +2088,24 @@ export function SettingsModal({
                                 setSoundPrefs({ enabled: next });
                                 if (next) playSound("unmute");
                               }}
-                              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                soundEnabled
-                                  ? "bg-emerald-500/20 text-emerald-300"
-                                  : "bg-white/[0.06] text-zinc-400"
-                              }`}
+                              className={togglePillClass(soundEnabled)}
                             >
+                              <StateDot on={soundEnabled} />
                               {soundEnabled ? "On" : "Off"}
                             </button>
                           </div>
 
+                          <AnimatePresence initial={false}>
                           {soundEnabled && (
-                            <>
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                              className="space-y-4 overflow-hidden"
+                            >
                               <div className="flex items-center gap-3">
-                                <span className="text-xs text-zinc-400">Volume</span>
+                                <span className="text-xs font-semibold text-zinc-400">Volume</span>
                                 <input
                                   type="range"
                                   min={0.05}
@@ -1922,9 +2117,9 @@ export function SettingsModal({
                                     setSoundVolume(v);
                                     setSoundPrefs({ volume: v });
                                   }}
-                                  className="h-1.5 flex-1 cursor-pointer accent-emerald-500"
+                                  className="h-1.5 flex-1 cursor-pointer accent-emerald-400"
                                 />
-                                <span className="w-9 text-right text-xs font-semibold tabular-nums text-zinc-400">
+                                <span className="w-11 rounded-full bg-emerald-500/10 py-0.5 text-center font-mono text-[11px] font-semibold tabular-nums text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
                                   {Math.round(soundVolume * 100)}%
                                 </span>
                               </div>
@@ -1942,14 +2137,15 @@ export function SettingsModal({
                                     key={key}
                                     type="button"
                                     onClick={() => playSound(key)}
-                                    className="rounded-lg border border-white/[0.09] bg-[#18191E] px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                                    className={`${GHOST_BUTTON} rounded-full px-3 py-1 text-[11px] hover:!border-emerald-500/40 hover:!text-emerald-300`}
                                   >
                                     Test {label}
                                   </button>
                                 ))}
                               </div>
-                            </>
+                            </motion.div>
                           )}
+                          </AnimatePresence>
                         </div>
                       </div>
                     )}
@@ -1957,9 +2153,11 @@ export function SettingsModal({
                     {/* PRIVACY & DATA TAB */}
                     {tab === "privacy" && (
                       <div className="space-y-4">
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
-                          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
-                            <ShieldCheck className="h-4 w-4" />
+                        <div className="siq-edge-light relative rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/[0.1] via-emerald-500/[0.03] to-transparent p-4 shadow-[0_18px_40px_-28px_rgb(var(--siq-accent-rgb)/0.9)]">
+                          <div className="flex items-center gap-2.5 text-xs font-bold text-emerald-300">
+                            <span className={SECTION_ICON}>
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </span>
                             <span>Private Instance Protection</span>
                           </div>
                           <p className="mt-1.5 text-xs leading-relaxed text-zinc-300">
@@ -1968,7 +2166,7 @@ export function SettingsModal({
                           </p>
                         </div>
 
-                        <div className="rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4 text-xs leading-relaxed text-zinc-400">
+                        <div className={`${CARD} p-4 text-xs leading-relaxed text-zinc-400`}>
                           <p className="font-semibold text-zinc-200">
                             Media Transport Encryption
                           </p>
@@ -1979,9 +2177,9 @@ export function SettingsModal({
                           </p>
                         </div>
 
-                        <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-[#0E0F12] p-4">
+                        <div className={`${CARD} flex items-center justify-between gap-3 p-4`}>
                           <div>
-                            <p className="text-xs font-medium text-zinc-100">
+                            <p className="text-xs font-semibold text-zinc-100">
                               Reset Local Preferences
                             </p>
                             <p className="text-[11px] text-zinc-500">
@@ -2001,9 +2199,9 @@ export function SettingsModal({
                                 source: "Settings",
                               });
                             }}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#18191E] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-rose-500/40 hover:text-rose-300"
+                            className={`${GHOST_BUTTON} group shrink-0 px-3 py-1.5 text-xs hover:!border-rose-500/40 hover:!bg-rose-500/10 hover:!text-rose-300`}
                           >
-                            <RotateCcw className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3.5 w-3.5 transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:-rotate-180" />
                             <span>Reset</span>
                           </button>
                         </div>
@@ -2015,17 +2213,22 @@ export function SettingsModal({
                       <div className="space-y-5">
                         {desktopSettings}
                         {/* 8-Color Theme Studio */}
-                        <div className="siq-bezel-sm space-y-3.5 rounded-2xl border border-white/[0.08] bg-[#0D0E12] p-4">
+                        <div className={`${CARD} space-y-4 p-4 sm:p-5`}>
                           <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <p className="text-xs font-semibold text-zinc-100">
-                                Accent Theme
-                              </p>
-                              <p className="mt-0.5 text-[11px] text-zinc-500">
-                                8 calibrated studio palettes — updates the entire workspace live.
-                              </p>
+                            <div className="flex items-start gap-3">
+                              <span className={`${SECTION_ICON} mt-0.5`}>
+                                <Palette className="h-3.5 w-3.5" />
+                              </span>
+                              <div>
+                                <p className="text-[13px] font-bold tracking-tight text-zinc-50">
+                                  Accent Theme
+                                </p>
+                                <p className="mt-0.5 text-[11px] text-zinc-500">
+                                  8 calibrated studio palettes — updates the entire workspace live.
+                                </p>
+                              </div>
                             </div>
-                            <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300">
+                            <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300 shadow-[0_0_18px_-8px_rgb(var(--siq-accent-rgb)/0.9)]">
                               {appPrefs.customAccentHex
                                 ? "Custom accent"
                                 : themePreset?.name}
@@ -2033,57 +2236,73 @@ export function SettingsModal({
                           </div>
 
                           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                            {APP_THEME_PRESETS.map((themeItem) => {
+                            {APP_THEME_PRESETS.map((themeItem, index) => {
                               const active = !appPrefs.customAccentHex && appPrefs.theme === themeItem.id;
                               return (
+                                <motion.div key={themeItem.id} {...staggerIn(index)} className="h-full">
                                 <motion.button
-                                  key={themeItem.id}
                                   type="button"
-                                  whileHover={{ y: -1 }}
+                                  whileHover={{ y: -2 }}
                                   whileTap={{ scale: 0.97 }}
                                   onClick={() => onUpdatePrefs({ theme: themeItem.id, customAccentHex: null })}
-                                  className={`group relative flex flex-col justify-between rounded-xl border p-2.5 text-left transition-all ${
+                                  className={`group relative flex h-full w-full flex-col justify-between rounded-2xl border p-3 text-left transition-[border-color,background-color,box-shadow] duration-200 ${
                                     active
-                                      ? "border-emerald-500/60 bg-emerald-500/[0.1] ring-1 ring-emerald-500/25"
-                                      : "border-white/[0.08] bg-[#14151C] hover:border-white/[0.16] hover:bg-[#181A22]"
+                                      ? OPTION_ON
+                                      : OPTION_OFF
                                   }`}
                                 >
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-1">
                                       <span
-                                        className="h-4 w-4 rounded-full ring-2 ring-black/40"
+                                        className="h-4 w-4 rounded-full ring-2 ring-black/40 transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:scale-110"
                                         style={{ backgroundColor: themeItem.primary }}
                                       />
                                       <span
-                                        className="-ml-1.5 h-3.5 w-3.5 rounded-full ring-2 ring-[#14151C]"
+                                        className="-ml-1.5 h-3.5 w-3.5 rounded-full ring-2 ring-black/50"
                                         style={{ backgroundColor: themeItem.light }}
                                       />
                                       <span
-                                        className="-ml-1.5 h-3 w-3 rounded-full ring-2 ring-[#14151C]"
+                                        className="-ml-1.5 h-3 w-3 rounded-full ring-2 ring-black/50"
                                         style={{ backgroundColor: themeItem.deep }}
                                       />
                                     </div>
 
-                                    {active && (
-                                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-zinc-950">
-                                        <Check className="h-2.5 w-2.5 stroke-[3]" />
-                                      </span>
-                                    )}
+                                    <AnimatePresence initial={false}>
+                                      {active && (
+                                        <motion.span
+                                          initial={{ opacity: 0, scale: 0.3 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.3 }}
+                                          transition={{ type: "spring", stiffness: 600, damping: 26 }}
+                                          className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-zinc-950 shadow-[0_0_12px_-2px_rgb(var(--siq-accent-rgb)/0.9)]"
+                                        >
+                                          <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                        </motion.span>
+                                      )}
+                                    </AnimatePresence>
                                   </div>
 
                                   <div className="mt-2.5">
-                                    <p className="truncate text-[11px] font-semibold text-zinc-100">
+                                    <p className="truncate text-[11px] font-bold text-zinc-100">
                                       {themeItem.name}
                                     </p>
                                     <p className="truncate text-[10px] text-zinc-500">
                                       {themeItem.vibe}
                                     </p>
                                   </div>
+                                  <span
+                                    aria-hidden="true"
+                                    className="mt-2.5 block h-1 w-full rounded-full opacity-70 transition-opacity duration-200 group-hover:opacity-100"
+                                    style={{
+                                      background: `linear-gradient(90deg, ${themeItem.deep}, ${themeItem.primary}, ${themeItem.light})`,
+                                    }}
+                                  />
                                 </motion.button>
+                                </motion.div>
                               );
                             })}
                           </div>
-                          <div className="space-y-2.5 border-t border-white/[0.07] pt-3">
+                          <div className="space-y-2.5 border-t border-white/[0.06] pt-4">
                             <ColorPicker
                               label="Custom app accent"
                               value={appPrefs.customAccentHex ?? themePreset?.primary ?? "#9D7BFA"}
@@ -2094,8 +2313,9 @@ export function SettingsModal({
                               <button
                                 type="button"
                                 onClick={() => onUpdatePrefs({ customAccentHex: null })}
-                                className="rounded-lg border border-white/[0.1] px-2.5 py-1.5 text-xs font-medium text-zinc-300 hover:text-zinc-100"
+                                className={`${GHOST_BUTTON} group px-3 py-1.5 text-xs`}
                               >
+                                <RotateCcw className="h-3.5 w-3.5 transition-transform duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover:-rotate-180" />
                                 Reset to preset
                               </button>
                             )}
@@ -2103,15 +2323,20 @@ export function SettingsModal({
                         </div>
 
                         {/* 4 Local Self-Hosted Typography Presets */}
-                        <div className="siq-bezel-sm space-y-3.5 rounded-2xl border border-white/[0.08] bg-[#0D0E12] p-4">
+                        <div className={`${CARD} space-y-4 p-4 sm:p-5`}>
                           <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <p className="text-xs font-semibold text-zinc-100">
-                                Typography
-                              </p>
-                              <p className="mt-0.5 text-[11px] text-zinc-500">
-                                4 bilingual English + فارسی font pairings bundled locally inside the app.
-                              </p>
+                            <div className="flex items-start gap-3">
+                              <span className={`${SECTION_ICON} mt-0.5`}>
+                                <Type className="h-3.5 w-3.5" />
+                              </span>
+                              <div>
+                                <p className="text-[13px] font-bold tracking-tight text-zinc-50">
+                                  Typography
+                                </p>
+                                <p className="mt-0.5 text-[11px] text-zinc-500">
+                                  4 bilingual English + فارسی font pairings bundled locally inside the app.
+                                </p>
+                              </div>
                             </div>
                             <span className="shrink-0 rounded-full border border-white/[0.1] bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] font-medium text-zinc-400">
                               LOCAL WOFF2
@@ -2119,39 +2344,47 @@ export function SettingsModal({
                           </div>
 
                           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                            {APP_FONT_PRESETS.map((preset) => {
+                            {APP_FONT_PRESETS.map((preset, index) => {
                               const active = appPrefs.fontPreset === preset.id;
                               return (
+                                <motion.div key={preset.id} {...staggerIn(index)} className="h-full">
                                 <motion.button
-                                  key={preset.id}
                                   type="button"
-                                  whileHover={{ y: -1 }}
+                                  whileHover={{ y: -2 }}
                                   whileTap={{ scale: 0.985 }}
                                   onClick={() => onUpdatePrefs({ fontPreset: preset.id })}
                                   style={{ fontFamily: preset.cssFamily }}
-                                  className={`relative flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all ${
+                                  className={`relative flex h-full w-full flex-col justify-between rounded-2xl border p-3.5 text-left transition-[border-color,background-color,box-shadow] duration-200 ${
                                     active
-                                      ? "border-emerald-500/60 bg-emerald-500/[0.1] ring-1 ring-emerald-500/25"
-                                      : "border-white/[0.08] bg-[#14151C] hover:border-white/[0.16] hover:bg-[#181A22]"
+                                      ? OPTION_ON
+                                      : OPTION_OFF
                                   }`}
                                 >
                                   <div className="flex items-start justify-between gap-2">
                                     <div>
-                                      <p className="text-xs font-semibold text-zinc-100">
+                                      <p className="text-xs font-bold text-zinc-100">
                                         {preset.name}
                                       </p>
                                       <p className="mt-0.5 text-[10px] text-zinc-500">
                                         {preset.subtitle}
                                       </p>
                                     </div>
-                                    {active && (
-                                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-zinc-950">
-                                        <Check className="h-2.5 w-2.5 stroke-[3]" />
-                                      </span>
-                                    )}
+                                    <AnimatePresence initial={false}>
+                                      {active && (
+                                        <motion.span
+                                          initial={{ opacity: 0, scale: 0.3 }}
+                                          animate={{ opacity: 1, scale: 1 }}
+                                          exit={{ opacity: 0, scale: 0.3 }}
+                                          transition={{ type: "spring", stiffness: 600, damping: 26 }}
+                                          className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-zinc-950 shadow-[0_0_12px_-2px_rgb(var(--siq-accent-rgb)/0.9)]"
+                                        >
+                                          <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                        </motion.span>
+                                      )}
+                                    </AnimatePresence>
                                   </div>
 
-                                  <div className="mt-3 space-y-1 rounded-lg border border-white/[0.06] bg-[#0B0C10]/80 px-2.5 py-2">
+                                  <div className="mt-3 space-y-1 rounded-xl border border-white/[0.06] bg-black/30 px-3 py-2.5 shadow-[inset_0_1px_2px_rgb(0_0_0/0.3)]">
                                     <p className="truncate text-xs font-medium text-zinc-200">
                                       {preset.sampleEn}
                                     </p>
@@ -2163,6 +2396,7 @@ export function SettingsModal({
                                     </p>
                                   </div>
                                 </motion.button>
+                                </motion.div>
                               );
                             })}
                           </div>
@@ -2170,33 +2404,40 @@ export function SettingsModal({
 
                         {/* Layout Density & Text Scale */}
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <div className="space-y-2 rounded-2xl border border-white/[0.07] bg-[#0D0E12] p-4">
-                            <p className="text-xs font-semibold text-zinc-200">
+                          <div className={`${CARD} space-y-2.5 p-4`}>
+                            <p className="text-xs font-bold text-zinc-200">
                               Message Density
                             </p>
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/[0.07] bg-black/30 p-1 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)]">
                               {(["comfortable", "compact"] as MessageDensity[]).map((d) => (
                                 <button
                                   key={d}
                                   type="button"
                                   onClick={() => onUpdatePrefs({ messageDensity: d })}
-                                  className={`rounded-xl border px-3 py-2 text-xs font-medium capitalize transition-colors ${
+                                  className={`relative isolate rounded-[9px] px-3 py-2 text-xs font-semibold capitalize transition-colors duration-200 ${
                                     appPrefs.messageDensity === d
-                                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                                      : "border-white/[0.08] bg-[#16171E] text-zinc-400 hover:text-zinc-200"
+                                      ? "text-emerald-300"
+                                      : "text-zinc-400 hover:text-zinc-200"
                                   }`}
                                 >
+                                  {appPrefs.messageDensity === d && (
+                                    <motion.span
+                                      layoutId="siq-settings-density"
+                                      className={SEGMENT_PILL}
+                                      transition={SEGMENT_SPRING}
+                                    />
+                                  )}
                                   {d}
                                 </button>
                               ))}
                             </div>
                           </div>
 
-                          <div className="space-y-2 rounded-2xl border border-white/[0.07] bg-[#0D0E12] p-4">
-                            <p className="text-xs font-semibold text-zinc-200">
+                          <div className={`${CARD} space-y-2.5 p-4`}>
+                            <p className="text-xs font-bold text-zinc-200">
                               Chat Text Size
                             </p>
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/[0.07] bg-black/30 p-1 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)]">
                               {(
                                 [
                                   ["sm", "Small"],
@@ -2208,12 +2449,19 @@ export function SettingsModal({
                                   key={scale}
                                   type="button"
                                   onClick={() => onUpdatePrefs({ textScale: scale })}
-                                  className={`rounded-xl border px-2.5 py-2 text-xs font-medium transition-colors ${
+                                  className={`relative isolate rounded-[9px] px-2.5 py-2 text-xs font-semibold transition-colors duration-200 ${
                                     appPrefs.textScale === scale
-                                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                                      : "border-white/[0.08] bg-[#16171E] text-zinc-400 hover:text-zinc-200"
+                                      ? "text-emerald-300"
+                                      : "text-zinc-400 hover:text-zinc-200"
                                   }`}
                                 >
+                                  {appPrefs.textScale === scale && (
+                                    <motion.span
+                                      layoutId="siq-settings-text-scale"
+                                      className={SEGMENT_PILL}
+                                      transition={SEGMENT_SPRING}
+                                    />
+                                  )}
                                   {label}
                                 </button>
                               ))}
@@ -2221,7 +2469,7 @@ export function SettingsModal({
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between rounded-2xl border border-white/[0.07] bg-[#0D0E12] px-4 py-3.5">
+                        <div className={`${CARD} flex items-center justify-between gap-3 px-4 py-3.5`}>
                           <div>
                             <p className="text-xs font-semibold text-zinc-100">
                               Show Members Sidebar
@@ -2237,12 +2485,9 @@ export function SettingsModal({
                                 showMembersSidebar: !appPrefs.showMembersSidebar,
                               })
                             }
-                            className={`rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                              appPrefs.showMembersSidebar
-                                ? "bg-emerald-500/20 text-emerald-300"
-                                : "bg-white/[0.06] text-zinc-400"
-                            }`}
+                            className={togglePillClass(appPrefs.showMembersSidebar)}
                           >
+                            <StateDot on={appPrefs.showMembersSidebar} />
                             {appPrefs.showMembersSidebar ? "Visible" : "Hidden"}
                           </button>
                         </div>
@@ -2250,14 +2495,14 @@ export function SettingsModal({
                     )}
 
                     {/* Mobile Log Out button */}
-                    <div className="border-t border-white/[0.07] pt-4 md:hidden">
+                    <div className="border-t border-white/[0.06] pt-4 md:hidden">
                       <button
                         type="button"
                         onClick={() => {
                           onClose();
                           onSignOut();
                         }}
-                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 py-2.5 text-xs font-semibold text-rose-300"
+                        className="siq-press flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 py-3 text-xs font-bold text-rose-300 hover:bg-rose-500/15"
                       >
                         <LogOut className="h-4 w-4" />
                         <span>Log Out</span>

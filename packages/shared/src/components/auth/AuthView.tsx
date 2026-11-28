@@ -1,6 +1,7 @@
 "use client";
 
-import { AlertCircle, ArrowRight, Database, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, ArrowRight, AudioLines, Database, Eye, EyeOff, MonitorUp, ShieldCheck } from "lucide-react";
+import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 import { ContextMenuProvider } from "@siq/shared/components/ui/ContextMenu";
@@ -20,7 +21,23 @@ interface AuthViewProps {
 
 const labelClass = "block text-sm font-medium text-zinc-200";
 const fieldClass =
-  "min-h-12 w-full rounded-xl border border-white/10 bg-white/[0.035] px-3.5 text-base text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20";
+  "min-h-12 w-full rounded-xl border border-white/10 bg-black/25 px-3.5 text-base text-zinc-100 shadow-[inset_0_1px_2px_rgba(0,0,0,0.45)] transition-all placeholder:text-zinc-500 focus:border-emerald-400/70 focus:outline-none focus:ring-4 focus:ring-emerald-400/15";
+
+const BRAND_FEATURES = [
+  { icon: AudioLines, label: "AI noise-free voice" },
+  { icon: MonitorUp, label: "1440p screen share" },
+  { icon: ShieldCheck, label: "Private by design" },
+] as const;
+
+const rise = {
+  hidden: { opacity: 0, y: 14, filter: "blur(6px)" },
+  show: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    filter: "blur(0px)",
+    transition: { delay: 0.08 + i * 0.08, duration: 0.6, ease: [0.22, 1, 0.36, 1] as const },
+  }),
+};
 
 export function AuthView({
   initialMode = "login",
@@ -104,19 +121,44 @@ export function AuthView({
 
   return (
     <ContextMenuProvider>
-      <main className="siq-auth">
+      <main className="siq-auth siq-ambient">
         <section className="siq-auth-brand" aria-label="About SIQ" data-tauri-drag-region={windowDrag ? "deep" : undefined}>
-          <SiqMark className="siq-auth-wordmark" />
-          <p className="mt-2 text-3xl font-bold tracking-tight text-zinc-100 sm:mt-4 sm:text-5xl">Squad up.</p>
-          <p className="mt-2 text-base text-zinc-300">Voice, chat, and screen share.</p>
-          <p className="mt-3 text-xs text-zinc-400 sm:mt-9">Designed by Clark <span aria-hidden="true">·</span> 2026</p>
+          <motion.div initial="hidden" animate="show" custom={0} variants={rise}>
+            <SiqMark className="siq-auth-wordmark" />
+          </motion.div>
+          <motion.p initial="hidden" animate="show" custom={1} variants={rise}
+            className="siq-gradient-text mt-2 text-3xl font-extrabold tracking-tight sm:mt-4 sm:text-6xl">
+            Squad up.
+          </motion.p>
+          <motion.p initial="hidden" animate="show" custom={2} variants={rise} className="mt-2 text-base text-zinc-300">
+            Voice, chat, and screen share.
+          </motion.p>
+          <motion.ul initial="hidden" animate="show" custom={3} variants={rise} className="mt-6 hidden flex-wrap gap-2 sm:flex">
+            {BRAND_FEATURES.map(({ icon: Icon, label }) => (
+              <li key={label}
+                className="inline-flex items-center gap-2 rounded-full border border-white/[0.09] bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm">
+                <Icon aria-hidden="true" className="size-3.5 text-emerald-300" />
+                {label}
+              </li>
+            ))}
+          </motion.ul>
+          <motion.p initial="hidden" animate="show" custom={4} variants={rise} className="mt-3 text-xs text-zinc-400 sm:mt-9">
+            Designed by Clark <span aria-hidden="true">·</span> 2026
+          </motion.p>
         </section>
 
         <section className="siq-auth-form" aria-labelledby="siq-auth-title">
-          <div className="mx-auto w-full max-w-sm">
-            <h1 id="siq-auth-title" className="mb-6 text-3xl font-semibold tracking-tight text-zinc-100">
+          <motion.div
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: "spring", stiffness: 260, damping: 28, delay: 0.12 }}
+            className="siq-glass siq-edge-light relative mx-auto w-full max-w-sm rounded-[28px] p-6 sm:p-8"
+          >
+            <motion.h1 key={action} id="siq-auth-title"
+              initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              className="mb-6 text-3xl font-extrabold tracking-tight text-zinc-50">
               {isBootstrap ? "Create the admin account" : action}
-            </h1>
+            </motion.h1>
 
             {(!dbConfigured || !schemaReady) && (
               <div role="status" className="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm text-amber-200">
@@ -201,9 +243,9 @@ export function AuthView({
                 </p>
               )}
               <button type="submit" disabled={submitting || !dbConfigured || !schemaReady}
-                className="relative flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-400 px-11 text-sm font-semibold text-zinc-950 hover:bg-emerald-300 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-300 disabled:opacity-50">
+                className="siq-cta group relative flex min-h-12 w-full items-center justify-center !rounded-xl px-11 text-sm focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-300 disabled:opacity-50">
                 {submitting ? isLogin ? "Signing in…" : "Creating account…" : action}
-                <ArrowRight aria-hidden="true" className="absolute right-4 size-4" />
+                <ArrowRight aria-hidden="true" className="absolute right-4 size-4 transition-transform duration-300 group-hover:translate-x-1" />
               </button>
             </form>
             {!isBootstrap && (
@@ -215,7 +257,7 @@ export function AuthView({
                 </button>
               </p>
             )}
-          </div>
+          </motion.div>
         </section>
       </main>
     </ContextMenuProvider>

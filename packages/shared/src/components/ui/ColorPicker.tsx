@@ -141,14 +141,14 @@ export function ColorPicker({
           aria-expanded={expanded && !disabled}
           aria-controls={`${id}-editor`}
           onClick={() => setExpanded((open) => !open)}
-          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-white/[0.1] bg-[#18191e] px-2.5 text-xs font-medium text-zinc-200 hover:border-white/20"
+          className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.05] px-2.5 text-xs font-medium text-zinc-200 hover:border-white/20"
         >
           <SlidersHorizontal aria-hidden="true" className="size-3.5" />
           Custom color
         </button>
       </div>
       {expanded && !disabled && (
-        <div id={`${id}-editor`} className="w-full max-w-sm space-y-3 rounded-xl border border-white/[0.1] bg-[#14151a] p-3">
+        <div id={`${id}-editor`} className="w-full max-w-sm space-y-3 rounded-xl border border-white/[0.1] bg-white/[0.04] p-3">
           <div
             tabIndex={0}
             aria-label={`${label} saturation and lightness. Left and right change saturation. Up and down change lightness.`}
@@ -174,7 +174,7 @@ export function ColorPicker({
 
           <div className="flex items-center gap-2">
             <span aria-hidden="true" style={{ backgroundColor: hex }} className="size-8 shrink-0 rounded-lg border border-white/15" />
-            <select aria-label="Color format" value={format} onChange={(event) => { setHexDraft(null); setFormat(event.target.value as Format); }} className="h-9 shrink-0 rounded-lg border border-white/[0.1] bg-[#18191e] px-1.5 text-xs text-zinc-300">
+            <select aria-label="Color format" value={format} onChange={(event) => { setHexDraft(null); setFormat(event.target.value as Format); }} className="h-9 shrink-0 rounded-lg border border-white/[0.1] bg-white/[0.05] px-1.5 text-xs text-zinc-300">
               <option>HEX</option>
               <option>RGB</option>
               <option>HSL</option>
@@ -204,7 +204,7 @@ export function ColorPicker({
                     event.currentTarget.blur();
                   }
                 }}
-                className="h-9 min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-[#0e0f12] px-2 font-mono text-xs text-zinc-100 aria-invalid:border-rose-400/60"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-black/25 px-2 font-mono text-xs text-zinc-100 aria-invalid:border-rose-400/60"
               />
             ) : (
               <output className="min-w-0 flex-1 break-words font-mono text-xs text-zinc-200">
@@ -212,7 +212,7 @@ export function ColorPicker({
               </output>
             )}
             {eyeDropper && (
-              <button type="button" title="Pick color from screen" aria-label="Pick color from screen" onClick={() => void sampleColor()} className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/[0.1] bg-[#18191e] text-zinc-200 hover:border-white/20">
+              <button type="button" title="Pick color from screen" aria-label="Pick color from screen" onClick={() => void sampleColor()} className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/[0.1] bg-white/[0.05] text-zinc-200 hover:border-white/20">
                 <Pipette aria-hidden="true" className="size-4" />
               </button>
             )}

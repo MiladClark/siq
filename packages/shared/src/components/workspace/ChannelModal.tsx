@@ -8,6 +8,29 @@ import { useSystemNotify } from "@siq/shared/components/ui/NotificationCenter";
 import { SelectDropdown } from "@siq/shared/components/ui/SelectDropdown";
 import type { CategoryItem, ChannelItem, RoleItem } from "@siq/shared/lib/types";
 
+const HEADER_TILE =
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400/25 to-emerald-500/[0.04] text-emerald-300 ring-1 ring-inset ring-emerald-400/30 shadow-[0_10px_24px_-10px_rgb(var(--siq-accent-rgb)/0.8),inset_0_1px_0_rgb(255_255_255/0.12)]";
+
+const FIELD =
+  "w-full rounded-xl border border-white/[0.09] bg-black/25 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 shadow-[inset_0_1px_2px_rgb(0_0_0/0.35)] transition-[border-color,box-shadow,background-color] duration-200 hover:border-white/[0.14] focus:border-emerald-500/50 focus:bg-black/35 focus:outline-none focus:ring-4 focus:ring-emerald-500/10";
+
+const LABEL = "block text-xs font-semibold text-zinc-300";
+
+const OPTION_CARD =
+  "group flex items-center gap-3 rounded-2xl border px-3 py-3 text-left text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.98]";
+const OPTION_ON =
+  "border-emerald-500/50 bg-emerald-500/[0.1] text-emerald-200 ring-4 ring-emerald-500/10 shadow-[0_14px_30px_-16px_rgb(var(--siq-accent-rgb)/0.9)]";
+const OPTION_OFF =
+  "border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:border-white/[0.15] hover:bg-white/[0.05] hover:text-zinc-200";
+
+function optionIconClass(active: boolean) {
+  return `flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors duration-200 ${
+    active
+      ? "bg-emerald-500/20 text-emerald-300 shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.35)]"
+      : "bg-white/[0.05] text-zinc-500 group-hover:text-zinc-300"
+  }`;
+}
+
 interface ChannelModalProps {
   open: boolean;
   serverId?: string | null;
@@ -133,30 +156,53 @@ export function ChannelModal({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.16 }}
+          transition={{ duration: 0.2 }}
           onClick={onClose}
-          className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-4 backdrop-blur-[2px]"
+          className="siq-backdrop fixed inset-0 z-[85] flex items-center justify-center p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="channel-modal-title"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 10 }}
+            initial={{ opacity: 0, scale: 0.94, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 8 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, scale: 0.97, y: 8 }}
+            transition={{ type: "spring", stiffness: 420, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.1] bg-[#121316] shadow-2xl shadow-black/70"
+            className="siq-glass siq-edge-light relative w-full max-w-md overflow-hidden rounded-3xl"
           >
-            <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
-              <h2 id="channel-modal-title" className="text-sm font-semibold text-zinc-100">
-                {editingChannel ? "Edit Channel" : "Create Channel"}
-              </h2>
+            <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-gradient-to-b from-white/[0.035] to-transparent px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={HEADER_TILE}>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={type}
+                      initial={{ opacity: 0, scale: 0.5, rotate: -30 }}
+                      animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                      exit={{ opacity: 0, scale: 0.5, rotate: 30 }}
+                      transition={{ type: "spring", stiffness: 520, damping: 28 }}
+                      className="flex"
+                    >
+                      {type === "voice" ? (
+                        <Volume2 className="h-4 w-4" />
+                      ) : (
+                        <Hash className="h-4 w-4" />
+                      )}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
+                <h2
+                  id="channel-modal-title"
+                  className="truncate text-[15px] font-bold tracking-tight text-zinc-50"
+                >
+                  {editingChannel ? "Edit Channel" : "Create Channel"}
+                </h2>
+              </div>
               <button
                 type="button"
                 onClick={onClose}
                 aria-label="Close modal"
-                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                className="siq-icon-btn shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -164,25 +210,23 @@ export function ChannelModal({
 
             <form
               onSubmit={handleSubmit}
-              className="max-h-[78dvh] space-y-4 overflow-y-auto p-5"
+              className="max-h-[78dvh] space-y-5 overflow-y-auto overscroll-contain p-5"
             >
               {!editingChannel && (
-                <div className="space-y-1.5">
-                  <span className="block text-xs font-medium text-zinc-300">Channel type</span>
-                  <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <span className={LABEL}>Channel type</span>
+                  <div className="grid grid-cols-2 gap-2.5">
                     <button
                       type="button"
                       onClick={() => setType("text")}
-                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-colors ${
-                        type === "text"
-                          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                          : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
-                      }`}
+                      className={`${OPTION_CARD} ${type === "text" ? OPTION_ON : OPTION_OFF}`}
                     >
-                      <Hash className="h-4 w-4" />
+                      <span className={optionIconClass(type === "text")}>
+                        <Hash className="h-4 w-4" />
+                      </span>
                       <div>
                         <div>Text</div>
-                        <div className="text-[10px] font-normal text-zinc-500">
+                        <div className="mt-0.5 text-[10px] font-medium text-zinc-500">
                           Chat &amp; files
                         </div>
                       </div>
@@ -190,16 +234,14 @@ export function ChannelModal({
                     <button
                       type="button"
                       onClick={() => setType("voice")}
-                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs font-medium transition-colors ${
-                        type === "voice"
-                          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
-                          : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
-                      }`}
+                      className={`${OPTION_CARD} ${type === "voice" ? OPTION_ON : OPTION_OFF}`}
                     >
-                      <Volume2 className="h-4 w-4" />
+                      <span className={optionIconClass(type === "voice")}>
+                        <Volume2 className="h-4 w-4" />
+                      </span>
                       <div>
                         <div>Voice</div>
-                        <div className="text-[10px] font-normal text-zinc-500">
+                        <div className="mt-0.5 text-[10px] font-medium text-zinc-500">
                           Audio, cam, screen
                         </div>
                       </div>
@@ -208,8 +250,8 @@ export function ChannelModal({
                 </div>
               )}
 
-              <div className="space-y-1.5">
-                <label htmlFor="channel-name" className="block text-xs font-medium text-zinc-300">
+              <div className="space-y-2">
+                <label htmlFor="channel-name" className={LABEL}>
                   Channel name
                 </label>
                 <input
@@ -221,15 +263,15 @@ export function ChannelModal({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder={type === "text" ? "memes or گپ" : "Squad Room"}
-                  className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+                  className={FIELD}
                 />
               </div>
 
               {categories.length > 0 && (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <label
                     htmlFor="channel-category"
-                    className="block text-xs font-medium text-zinc-300"
+                    className={LABEL}
                   >
                     Category
                   </label>
@@ -250,8 +292,8 @@ export function ChannelModal({
                 </div>
               )}
 
-              <div className="space-y-1.5">
-                <label htmlFor="channel-desc" className="block text-xs font-medium text-zinc-300">
+              <div className="space-y-2">
+                <label htmlFor="channel-desc" className={LABEL}>
                   Topic (optional)
                 </label>
                 <input
@@ -262,18 +304,32 @@ export function ChannelModal({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="What is this channel for?"
-                  className="w-full rounded-lg border border-white/[0.1] bg-[#18191E] px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-emerald-500/60 focus:outline-none focus:ring-2 focus:ring-emerald-500/15"
+                  className={FIELD}
                 />
               </div>
 
               {/* Private Channel Lock Toggle */}
-              <div className="rounded-xl border border-white/[0.08] bg-[#0E0F12] p-3.5">
+              <div
+                className={`rounded-2xl border p-4 transition-[border-color,background-color,box-shadow] duration-300 ${
+                  isPrivate
+                    ? "border-emerald-500/30 bg-emerald-500/[0.05] shadow-[0_16px_36px_-24px_rgb(var(--siq-accent-rgb)/0.9)]"
+                    : "border-white/[0.08] bg-white/[0.03]"
+                }`}
+              >
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-start gap-2.5">
-                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-colors duration-300 ${
+                        isPrivate
+                          ? "bg-emerald-500/20 text-emerald-300"
+                          : "bg-white/[0.05] text-emerald-400"
+                      }`}
+                    >
+                      <Lock className="h-4 w-4" />
+                    </span>
                     <div>
-                      <p className="text-xs font-semibold text-zinc-100">Private Channel</p>
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-xs font-bold text-zinc-100">Private Channel</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
                         Only selected roles and admins can view or join this channel.
                       </p>
                     </div>
@@ -283,68 +339,88 @@ export function ChannelModal({
                     role="switch"
                     aria-checked={isPrivate}
                     onClick={() => setIsPrivate((v) => !v)}
-                    className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                      isPrivate ? "bg-emerald-500" : "bg-zinc-700"
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition-[background-color,box-shadow] duration-300 ${
+                      isPrivate
+                        ? "bg-emerald-500 shadow-[0_0_18px_-4px_rgb(var(--siq-accent-rgb)/0.85)]"
+                        : "bg-white/[0.1] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]"
                     }`}
                   >
                     <span
-                      className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                        isPrivate ? "translate-x-4" : "translate-x-0"
+                      className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-[0_2px_6px_rgb(0_0_0/0.45)] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
+                        isPrivate ? "translate-x-5" : "translate-x-0"
                       }`}
                     />
                   </button>
                 </div>
 
-                {isPrivate && (
-                  <div className="mt-3 space-y-1.5 border-t border-white/[0.07] pt-3">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                      Allowed Roles
-                    </p>
-                    {assignableRoles.length === 0 ? (
-                      <p className="text-[11px] text-zinc-500">
-                        No custom roles yet — only Server Owners and Admins will have access.
-                      </p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {assignableRoles.map((role) => {
-                          const active = allowedRoleIds.includes(role.id);
-                          return (
-                            <button
-                              key={role.id}
-                              type="button"
-                              onClick={() => toggleAllowedRole(role.id)}
-                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
-                                active
-                                  ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                                  : "border-white/[0.08] bg-[#18191E] text-zinc-400 hover:text-zinc-200"
-                              }`}
-                            >
-                              <span
-                                className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: role.color }}
-                              />
-                              <span>{role.name}</span>
-                            </button>
-                          );
-                        })}
+                <AnimatePresence initial={false}>
+                  {isPrivate && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mt-4 space-y-2 border-t border-white/[0.07] pt-3.5">
+                        <p className="siq-section-label !px-0">
+                          Allowed Roles
+                        </p>
+                        {assignableRoles.length === 0 ? (
+                          <p className="text-[11px] text-zinc-500">
+                            No custom roles yet — only Server Owners and Admins will have access.
+                          </p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {assignableRoles.map((role, index) => {
+                              const active = allowedRoleIds.includes(role.id);
+                              return (
+                                <motion.button
+                                  key={role.id}
+                                  type="button"
+                                  initial={{ opacity: 0, y: 6, scale: 0.94 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  transition={{
+                                    delay: Math.min(index, 10) * 0.03,
+                                    type: "spring",
+                                    stiffness: 480,
+                                    damping: 30,
+                                  }}
+                                  onClick={() => toggleAllowedRole(role.id)}
+                                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-[border-color,background-color,color,box-shadow] duration-200 ${
+                                    active
+                                      ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_16px_-6px_rgb(var(--siq-accent-rgb)/0.9)]"
+                                      : "border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:border-white/[0.16] hover:text-zinc-200"
+                                  }`}
+                                >
+                                  <span
+                                    className="h-2 w-2 rounded-full ring-2 ring-black/30"
+                                    style={{ backgroundColor: role.color }}
+                                  />
+                                  <span>{role.name}</span>
+                                </motion.button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
-              <div className="flex justify-end gap-2 pt-1">
+              <div className="sticky bottom-0 z-10 -mx-5 -mb-5 flex justify-end gap-2 border-t border-white/[0.06] bg-black/30 px-5 py-4 backdrop-blur-md">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="rounded-lg border border-white/[0.1] px-3.5 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                  className="siq-press rounded-xl border border-white/[0.09] bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-300 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-zinc-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400 active:scale-[0.98] disabled:opacity-50"
+                  className="siq-cta !rounded-xl px-5 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? "Saving..." : editingChannel ? "Save Changes" : "Create Channel"}
                 </button>

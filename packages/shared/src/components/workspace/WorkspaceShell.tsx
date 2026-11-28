@@ -3,7 +3,6 @@
 import { apiFetch, markPresenceOffline, mediaUrl } from "@/lib/client-api";
 import {
   ChevronDown,
-  ChevronRight,
   Copy,
   Download,
   FolderPlus,
@@ -2105,20 +2104,19 @@ function WorkspaceInner({
           <button
             type="button"
             onClick={() => selectChannel(channel.id)}
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
-              selected
-                ? "bg-white/[0.08] font-medium text-zinc-100"
-                : hasUnread
-                  ? "font-medium text-zinc-100 hover:bg-white/[0.04]"
-                  : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-            }`}
+            data-selected={selected}
+            data-unread={hasUnread && !selected}
+            className="siq-nav-item"
           >
-            <span className="relative flex shrink-0 items-center">
-              <Hash
-                className={`h-4 w-4 ${
-                  selected ? "text-emerald-400" : "text-zinc-500"
-                }`}
+            {selected && (
+              <motion.span
+                layoutId="siq-nav-highlight"
+                className="siq-nav-highlight"
+                transition={{ type: "spring", stiffness: 520, damping: 42 }}
               />
+            )}
+            <span className="siq-nav-icon relative">
+              <Hash className="h-[15px] w-[15px]" strokeWidth={2.3} />
               {channel.isPrivate && (
                 <Lock className="absolute -right-1 -top-1 h-2.5 w-2.5 text-amber-400" />
               )}
@@ -2127,7 +2125,7 @@ function WorkspaceInner({
               {channel.name}
             </span>
             {hasUnread && !selected && (
-              <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />
+              <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.8)]" />
             )}
           </button>
 
@@ -2219,22 +2217,18 @@ function WorkspaceInner({
               handleJoinVoiceChannel(channel);
             }}
             title="Double-click to join voice"
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors ${
-              selected
-                ? "bg-white/[0.08] font-medium text-zinc-100"
-                : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-            }`}
+            data-selected={selected}
+            className="siq-nav-item"
           >
-            <span className="relative flex shrink-0 items-center">
-              <Volume2
-                className={`h-4 w-4 ${
-                  isLiveHere
-                    ? "text-emerald-400"
-                    : selected
-                      ? "text-zinc-200"
-                      : "text-zinc-500"
-                }`}
+            {selected && (
+              <motion.span
+                layoutId="siq-nav-highlight"
+                className="siq-nav-highlight"
+                transition={{ type: "spring", stiffness: 520, damping: 42 }}
               />
+            )}
+            <span className={`siq-nav-icon relative ${isLiveHere ? "!text-emerald-300" : ""}`}>
+              <Volume2 className="h-[15px] w-[15px]" strokeWidth={2.2} />
               {channel.isPrivate && (
                 <Lock className="absolute -right-1 -top-1 h-2.5 w-2.5 text-amber-400" />
               )}
@@ -2280,9 +2274,15 @@ function WorkspaceInner({
         </div>
 
         {occupants.length > 0 && (
-          <ul className="space-y-0.5 pl-5 pr-1 pt-0.5">
+          <ul className="relative ml-[22px] space-y-0.5 border-l border-white/[0.07] pb-1 pl-2.5 pr-1 pt-0.5">
             {occupants.map((occ) => (
-              <li key={occ.identity}>
+              <motion.li
+                key={occ.identity}
+                layout
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              >
                 <button
                   type="button"
                   onClick={(e) =>
@@ -2340,7 +2340,9 @@ function WorkspaceInner({
                   onMouseLeave={() => {
                     if (occ.isScreenSharing) scheduleHideStreamPreview();
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs text-zinc-300 transition-colors hover:bg-white/[0.05]"
+                  className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-1 text-left text-xs transition-colors hover:bg-white/[0.05] ${
+                    occ.isSpeaking && !occ.isMuted ? "text-white" : "text-zinc-300"
+                  }`}
                 >
                   <Avatar
                     name={occ.name}
@@ -2365,8 +2367,9 @@ function WorkspaceInner({
                         handleWatchUserStream(occ.identity, channel.id);
                       }}
                       title="Watch live stream"
-                      className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white shadow-xs transition-transform hover:scale-105 hover:bg-emerald-500 hover:text-zinc-950"
+                      className="inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-rose-500 to-rose-600 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-white shadow-[0_0_12px_rgba(244,63,94,0.55)] transition-transform hover:scale-110"
                     >
+                      <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
                       LIVE
                     </span>
                   )}
@@ -2374,7 +2377,7 @@ function WorkspaceInner({
                     <MicOff className="h-3 w-3 shrink-0 text-rose-400" />
                   )}
                 </button>
-              </li>
+              </motion.li>
             ))}
           </ul>
         )}
@@ -2482,7 +2485,7 @@ function WorkspaceInner({
           aria-haspopup="dialog"
           aria-keyshortcuts="Control+K Meta+K"
           data-header-trigger="search"
-          className="siq-header-trigger group flex h-8 w-8 items-center justify-center gap-2 rounded-lg border border-white/[0.09] bg-[#16171D] text-xs text-zinc-400 transition-colors hover:border-white/[0.18] hover:text-zinc-200 md:w-[108px] md:justify-between md:px-2.5"
+          className="siq-header-trigger group flex h-8 w-8 items-center justify-center gap-2 rounded-lg border border-white/[0.09] bg-white/[0.05] text-xs text-zinc-400 transition-colors hover:border-white/[0.18] hover:text-zinc-200 md:w-[108px] md:justify-between md:px-2.5"
         >
           <kbd className="hidden shrink-0 font-mono text-[10px] md:inline">Ctrl + K</kbd>
         </AnimatedIconButton>
@@ -2773,6 +2776,37 @@ function WorkspaceInner({
     />
   );
 
+  // Animated page transitions without remounting heavy views (chat history, live video)
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const headerTitleRef = useRef<HTMLDivElement | null>(null);
+  const viewKey =
+    viewMode === "home"
+      ? `home:${homeView}:${homeView === "dm" ? (activeDmId ?? "") : friendsTab}`
+      : `server:${activeServer?.id ?? ""}:${activeChannel?.id ?? ""}`;
+  const firstViewRef = useRef(true);
+  useEffect(() => {
+    if (firstViewRef.current) {
+      firstViewRef.current = false;
+      return;
+    }
+    if (typeof window === "undefined" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const easing = "cubic-bezier(0.22, 1, 0.36, 1)";
+    viewportRef.current?.animate(
+      [
+        { opacity: 0, transform: "translateY(10px) scale(0.996)", filter: "blur(4px)" },
+        { opacity: 1, transform: "none", filter: "blur(0)" },
+      ],
+      { duration: 340, easing }
+    );
+    headerTitleRef.current?.animate(
+      [
+        { opacity: 0, transform: "translateX(-8px)" },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: 280, easing }
+    );
+  }, [viewKey]);
+
   return (
     <div
       ref={workspaceRef}
@@ -2830,12 +2864,13 @@ function WorkspaceInner({
                 <button
                   type="button"
                   onClick={() => openSmartSearch("people")}
-                  className="siq-bezel-sm flex flex-1 items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-[#14151B] px-3 py-1.5 text-left text-xs text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-200"
+                  className="siq-press group flex flex-1 items-center justify-between gap-2 rounded-xl border border-white/[0.08] bg-gradient-to-b from-white/[0.05] to-white/[0.015] px-3 py-2 text-left text-xs text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] hover:border-emerald-500/35 hover:text-zinc-100"
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <Search className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                    <Search className="h-3.5 w-3.5 shrink-0 text-emerald-400 transition-transform duration-300 group-hover:scale-110" />
                     <span className="truncate">Find or start a conversation</span>
                   </span>
+                  <kbd className="hidden rounded-md border border-white/[0.08] bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-zinc-500 md:inline">⌘K</kbd>
                 </button>
                 <button
                   type="button"
@@ -2854,17 +2889,19 @@ function WorkspaceInner({
               >
                 <AnimatedIconButton
                   icon={UsersIcon}
-                  iconSize={16}
-                  iconClassName={
-                    homeView === "friends" ? "text-emerald-400" : "text-zinc-400"
-                  }
+                  iconSize={15}
+                  iconClassName="siq-nav-icon"
                   onClick={() => selectHomeFriends()}
-                  className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm font-medium transition-colors ${
-                    homeView === "friends"
-                      ? "bg-white/[0.09] text-zinc-100"
-                      : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                  }`}
+                  data-selected={homeView === "friends"}
+                  className="siq-nav-item w-full !py-2"
                 >
+                  {homeView === "friends" && (
+                    <motion.span
+                      layoutId="siq-nav-highlight"
+                      className="siq-nav-highlight"
+                      transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                    />
+                  )}
                   <span>Friends</span>
                   {incomingRequestsCount > 0 && (
                     <span className="ml-auto rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white">
@@ -2874,8 +2911,8 @@ function WorkspaceInner({
                 </AnimatedIconButton>
 
                 <div>
-                  <div className="mb-1.5 flex items-center justify-between px-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <div className="mb-1.5 flex items-center justify-between pr-1">
+                    <span className="siq-section-label">
                       Direct Messages
                     </span>
                     <AnimatedIconButton
@@ -2888,9 +2925,20 @@ function WorkspaceInner({
                   </div>
 
                   {dmConversations.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-white/[0.07] px-3 py-5 text-center text-[11px] text-zinc-500">
-                      No conversations yet. Click + to message a friend.
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openSmartSearch("people")}
+                      className="group flex w-full flex-col items-center gap-2 rounded-xl border border-dashed border-white/[0.09] px-3 py-6 text-center transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/[0.04]"
+                    >
+                      <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/[0.05] text-zinc-400 transition-all duration-300 group-hover:scale-110 group-hover:bg-emerald-500/15 group-hover:text-emerald-300">
+                        <Plus className="h-4 w-4" />
+                      </span>
+                      <span className="text-[11px] leading-relaxed text-zinc-500 group-hover:text-zinc-300">
+                        No conversations yet.
+                        <br />
+                        Start one with a friend.
+                      </span>
+                    </button>
                   ) : (
                     <ul className="space-y-0.5">
                       {dmConversations.map((conv) => {
@@ -2956,14 +3004,17 @@ function WorkspaceInner({
                                   },
                                 ])
                               }
-                              className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                                isSelected
-                                  ? "bg-white/[0.09] text-zinc-100"
-                                  : hasUnread
-                                    ? "text-zinc-100 hover:bg-white/[0.05]"
-                                    : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-                              }`}
+                              data-selected={isSelected}
+                              data-unread={hasUnread && !isSelected}
+                              className="siq-nav-item w-full !gap-2.5 !px-2 !py-1.5"
                             >
+                              {isSelected && (
+                                <motion.span
+                                  layoutId="siq-nav-highlight"
+                                  className="siq-nav-highlight"
+                                  transition={{ type: "spring", stiffness: 520, damping: 42 }}
+                                />
+                              )}
                               <Avatar
                                 name={livePeer.displayName}
                                 color={livePeer.avatarColor}
@@ -3019,7 +3070,7 @@ function WorkspaceInner({
                                 </p>
                               </div>
                               {hasUnread && !isSelected && (
-                                <span className="h-2 w-2 shrink-0 rounded-full bg-rose-500" />
+                                <span className="h-2 w-2 shrink-0 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.8)]" />
                               )}
                             </button>
                           </li>
@@ -3147,11 +3198,12 @@ function WorkspaceInner({
                 <AnimatePresence>
                   {serverDropdownOpen && activeServer && (
                     <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.14 }}
-                      className="absolute inset-x-0 top-12 z-50 rounded-b-xl border-b border-white/[0.11] bg-[#14151A] p-1.5 shadow-xl"
+                      initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 520, damping: 34 }}
+                      style={{ transformOrigin: "top center" }}
+                      className="siq-glass absolute inset-x-2 top-[52px] z-50 rounded-2xl p-1.5"
                     >
                       {canCreateInvites && (
                         <button
@@ -3277,17 +3329,17 @@ function WorkspaceInner({
                               [cat.id]: !prev[cat.id],
                             }))
                           }
-                          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[10px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-300"
+                          className="siq-section-label min-w-0 flex-1 text-left"
                         >
-                          {isCollapsed ? (
-                            <ChevronRight className="h-3 w-3 shrink-0" />
-                          ) : (
-                            <ChevronDown className="h-3 w-3 shrink-0" />
-                          )}
+                          <ChevronDown
+                            className={`h-3 w-3 shrink-0 transition-transform duration-300 ${
+                              isCollapsed ? "-rotate-90" : ""
+                            }`}
+                          />
                           <span dir="auto" className="truncate">
                             {cat.name}
                           </span>
-                          <span className="ml-1 h-px flex-1 bg-white/[0.06]" />
+                          <span className="ml-1 h-px flex-1 bg-gradient-to-r from-white/[0.08] to-transparent" />
                         </button>
 
                         {canManageChannels && (
@@ -3302,17 +3354,25 @@ function WorkspaceInner({
                         )}
                       </div>
 
-                      {!isCollapsed && (
-                        <ul className="space-y-0.5">
-                          {catChannels.length === 0 ? (
-                            <li className="px-2.5 py-1 text-[11px] text-zinc-600">
-                              No channels yet
-                            </li>
-                          ) : (
-                            catChannels.map((ch) => renderChannelItem(ch))
-                          )}
-                        </ul>
-                      )}
+                      <AnimatePresence initial={false}>
+                        {!isCollapsed && (
+                          <motion.ul
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+                            className="space-y-0.5 overflow-hidden"
+                          >
+                            {catChannels.length === 0 ? (
+                              <li className="px-2.5 py-1 text-[11px] text-zinc-600">
+                                No channels yet
+                              </li>
+                            ) : (
+                              catChannels.map((ch) => renderChannelItem(ch))
+                            )}
+                          </motion.ul>
+                        )}
+                      </AnimatePresence>
                     </div>
                   );
                 })}
@@ -3328,7 +3388,7 @@ function WorkspaceInner({
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 12 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                className="border-t border-emerald-500/20 bg-gradient-to-b from-emerald-500/[0.07] to-[#0E1014] px-3 py-2.5"
+                className="relative mx-2.5 mb-2 overflow-hidden rounded-2xl border border-emerald-500/25 bg-gradient-to-b from-emerald-500/[0.12] via-emerald-500/[0.04] to-black/20 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_14px_30px_-18px_rgb(var(--siq-accent-rgb)/0.7)]"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -3350,7 +3410,10 @@ function WorkspaceInner({
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="flex items-center gap-1.5">
-                        <p className="text-[11px] font-semibold tracking-tight text-emerald-400">
+                        <p className="flex items-center gap-1.5 text-[11px] font-bold tracking-tight text-emerald-300">
+                          {voice.connectionState !== ConnectionState.Connecting && (
+                            <span className="siq-live-dot" />
+                          )}
                           {voice.connectionState === ConnectionState.Connecting
                             ? "Connecting..."
                             : "Voice Live"}
@@ -3428,13 +3491,13 @@ function WorkspaceInner({
           </AnimatePresence>
 
           {/* Persistent Bottom Profile Dock */}
-          <div className="siq-profile-dock border-t border-white/[0.07] bg-[#0B0C0E] p-3">
-            <div className="flex items-center justify-between gap-2">
+          <div className="siq-profile-dock border-t p-2.5">
+            <div className="siq-profile-card flex items-center justify-between gap-1 p-1">
               <button
                 type="button"
                 onClick={() => setStatusPickerOpen((v) => !v)}
                 title="Set status & custom activity"
-                className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
+                className="siq-press flex min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left hover:bg-white/[0.05]"
               >
                 <Avatar
                   name={user.displayName}
@@ -3444,10 +3507,10 @@ function WorkspaceInner({
                   status={
                     user.presenceStatus === "invisible" ? "offline" : user.presenceStatus
                   }
-                  ringClassName="ring-[#0B0C0E]"
+                  ringClassName="ring-[#141519]"
                 />
                 <div className="min-w-0">
-                  <p dir="auto" className="truncate text-xs font-medium text-zinc-100">
+                  <p dir="auto" className="truncate text-[13px] font-semibold text-zinc-100">
                     {user.displayName}
                   </p>
                   <p dir="auto" className="truncate text-[11px] font-medium text-zinc-500">
@@ -3468,7 +3531,7 @@ function WorkspaceInner({
                 iconSize={16}
                 onClick={() => openSettings("account")}
                 title="User & App Settings"
-                className="inline-flex items-center justify-center rounded-lg p-2 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                className="siq-press inline-flex h-9 w-9 items-center justify-center rounded-[10px] text-zinc-400 hover:bg-white/[0.07] hover:text-zinc-100 [&:hover_svg]:rotate-90 [&_svg]:transition-transform [&_svg]:duration-500"
               />
             </div>
           </div>
@@ -3505,9 +3568,11 @@ function WorkspaceInner({
                   <Menu className="h-4 w-4" />
                 </button>
 
-                <div className="flex shrink-0 items-center gap-2 pr-2">
-                  <Users className="h-4 w-4 text-emerald-400" />
-                  <h1 className="text-sm font-semibold text-zinc-100">Friends</h1>
+                <div ref={headerTitleRef} className="flex shrink-0 items-center gap-2.5 pr-2">
+                  <span className="siq-nav-icon !h-7 !w-7 !rounded-[9px] !bg-emerald-500/15 !text-emerald-300 shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.3)]">
+                    <Users className="h-4 w-4" />
+                  </span>
+                  <h1 className="text-[15px] font-bold tracking-tight text-zinc-50">Friends</h1>
                 </div>
 
                 <span className="h-4 w-px shrink-0 bg-white/[0.1]" />
@@ -3534,7 +3599,7 @@ function WorkspaceInner({
                           <motion.span
                             layoutId="friends-active-tab"
                             transition={{ type: "spring", stiffness: 440, damping: 32 }}
-                            className="absolute inset-0 rounded-lg border border-white/[0.08] bg-white/[0.09]"
+                            className="absolute inset-0 rounded-lg border border-white/[0.1] bg-gradient-to-b from-white/[0.12] to-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                           />
                         )}
                         <span className="relative z-10">{t.label}</span>
@@ -3550,10 +3615,10 @@ function WorkspaceInner({
                   <button
                     type="button"
                     onClick={() => setFriendsTab("add")}
-                    className={`ml-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    className={`ml-1 px-3 py-1.5 text-xs ${
                       friendsTab === "add"
-                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
-                        : "bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
+                        ? "siq-press rounded-[10px] bg-emerald-500/20 font-semibold text-emerald-300 ring-1 ring-emerald-500/40"
+                        : "siq-cta"
                     }`}
                   >
                     Add Friend
@@ -3584,25 +3649,27 @@ function WorkspaceInner({
                   <Menu className="h-4 w-4" />
                 </button>
 
-                <Avatar
-                  name={activeDmPeer.displayName}
-                  color={activeDmPeer.avatarColor}
-                  avatarUrl={activeDmPeer.avatarUrl}
-                  size="sm"
-                  status={resolveDisplayStatus(
-                    onlineMemberIds.has(activeDmPeer.id),
-                    activeDmPeer.presenceStatus
-                  )}
-                  ringClassName="ring-[#121316]"
-                />
-                <div className="min-w-0">
-                  <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
-                    {activeDmPeer.displayName}
-                  </h1>
+                <div ref={headerTitleRef} className="flex min-w-0 items-center gap-2.5">
+                  <Avatar
+                    name={activeDmPeer.displayName}
+                    color={activeDmPeer.avatarColor}
+                    avatarUrl={activeDmPeer.avatarUrl}
+                    size="sm"
+                    status={resolveDisplayStatus(
+                      onlineMemberIds.has(activeDmPeer.id),
+                      activeDmPeer.presenceStatus
+                    )}
+                    ringClassName="ring-[#141519]"
+                  />
+                  <div className="min-w-0 leading-tight">
+                    <h1 dir="auto" className="truncate text-[15px] font-bold tracking-tight text-zinc-50">
+                      {activeDmPeer.displayName}
+                    </h1>
+                    <span className="hidden truncate text-[11px] text-zinc-500 sm:block">
+                      @{activeDmPeer.username}
+                    </span>
+                  </div>
                 </div>
-                <span className="hidden truncate text-xs text-zinc-500 sm:inline">
-                  @{activeDmPeer.username}
-                </span>
               </div>
 
               <div className="flex shrink-0 items-center gap-1 md:gap-1.5">
@@ -3612,14 +3679,14 @@ function WorkspaceInner({
                   onClick={() => void handleStartDmCall(activeDmPeer.id, false)}
                   title="Start Voice Call"
                   aria-label="Start Voice Call"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                  className="siq-icon-btn hover:!border-emerald-500/40 hover:!text-emerald-300"
                 />
                 <button
                   type="button"
                   onClick={() => void handleStartDmCall(activeDmPeer.id, true)}
                   title="Start Video Call"
                   aria-label="Start Video Call"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#18191E] text-zinc-300 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+                  className="siq-icon-btn hover:!border-emerald-500/40 hover:!text-emerald-300"
                 >
                   <Video className="h-4 w-4" />
                 </button>
@@ -3646,11 +3713,8 @@ function WorkspaceInner({
                   onClick={() => setShowDmProfileSidebar((v) => !v)}
                   title={showDmProfileSidebar ? "Hide User Profile" : "Show User Profile"}
                   aria-label="Toggle user profile sidebar"
-                  className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors lg:flex ${
-                    showDmProfileSidebar
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                      : "border-white/[0.1] bg-[#18191E] text-zinc-300 hover:text-white"
-                  }`}
+                  aria-pressed={showDmProfileSidebar}
+                  className="siq-icon-btn !hidden lg:!inline-flex"
                 >
                   <PanelRight className="h-4 w-4" />
                 </button>
@@ -3679,13 +3743,15 @@ function WorkspaceInner({
                 </button>
 
                 {activeChannel && (
-                  <>
-                    {activeChannel.type === "text" ? (
-                      <Hash className="h-4 w-4 shrink-0 text-zinc-500" />
-                    ) : (
-                      <Volume2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                    )}
-                    <h1 dir="auto" className="truncate text-sm font-semibold text-zinc-100">
+                  <div ref={headerTitleRef} className="flex min-w-0 items-center gap-2.5">
+                    <span className="siq-nav-icon !h-7 !w-7 !rounded-[9px] !bg-emerald-500/12 !text-emerald-300 shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.28),0_0_18px_-6px_rgb(var(--siq-accent-rgb)/0.7)]">
+                      {activeChannel.type === "text" ? (
+                        <Hash className="h-4 w-4" strokeWidth={2.4} />
+                      ) : (
+                        <Volume2 className="h-4 w-4" />
+                      )}
+                    </span>
+                    <h1 dir="auto" className="truncate text-[15px] font-bold tracking-tight text-zinc-50">
                       {activeChannel.name}
                     </h1>
                     {activeChannel.isPrivate && (
@@ -3702,7 +3768,7 @@ function WorkspaceInner({
                         {activeChannel.description}
                       </span>
                     )}
-                  </>
+                  </div>
                 )}
               </div>
 
@@ -3729,7 +3795,7 @@ function WorkspaceInner({
                 {renderHeaderSmartSearch()}
 
                 {showMembersRail && (
-                  <button type="button" aria-label="Show server members" aria-controls="server-members" aria-expanded={mobileMembersOpen} onClick={() => { closeHeaderPanel(); setMobileMembersOpen((open) => !open); }} className="grid size-8 place-items-center rounded-lg border border-white/[0.1] bg-[#18191e] text-zinc-300 lg:hidden">
+                  <button type="button" aria-label="Show server members" aria-controls="server-members" aria-expanded={mobileMembersOpen} onClick={() => { closeHeaderPanel(); setMobileMembersOpen((open) => !open); }} className="siq-icon-btn lg:!hidden">
                     <Users className="size-4" />
                   </button>
                 )}
@@ -3741,7 +3807,7 @@ function WorkspaceInner({
         </div>
 
         {/* MAIN VIEWPORT */}
-        <div className="flex min-h-0 min-w-0 flex-1 select-text">
+        <div ref={viewportRef} className="flex min-h-0 min-w-0 flex-1 select-text">
           {viewMode === "home" && homeView === "friends" ? (
             <>
               <FriendsHubView
@@ -3872,31 +3938,41 @@ function WorkspaceInner({
 
           {/* Right Server Members Rail */}
           {showMembersRail && (
-            <aside id="server-members" data-open={mobileMembersOpen} className="siq-members-rail hidden w-56 shrink-0 flex-col border-l border-white/[0.07] bg-[#0E0F12] p-4 select-none lg:flex">
+            <aside id="server-members" data-open={mobileMembersOpen} className="siq-members-rail hidden w-60 shrink-0 flex-col border-l border-white/[0.06] bg-black/[0.14] p-4 select-none lg:flex">
               <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
-                  <Users className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-2 text-[13px] font-bold tracking-tight text-zinc-100">
+                  <span className="siq-nav-icon !h-6 !w-6 !bg-white/[0.06] !text-zinc-300">
+                    <Users className="h-3.5 w-3.5" />
+                  </span>
                   <span>Members</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-medium tabular-nums text-zinc-500">{onlineServerMembers.length}/{activeServerMembers.length}</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10.5px] font-bold tabular-nums text-emerald-300">
+                    <span className="siq-live-dot !h-1.5 !w-1.5" />
+                    {onlineServerMembers.length}/{activeServerMembers.length}
+                  </span>
                   <button type="button" aria-label="Close members" onClick={() => setMobileMembersOpen(false)} className="rounded-lg p-1.5 text-zinc-400 lg:hidden"><X className="size-4" /></button>
                 </div>
               </div>
 
               <div className="flex-1 space-y-5 overflow-y-auto">
                 <div>
-                  <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                    Online · {onlineServerMembers.length}
+                  <p className="siq-section-label mb-1.5 !cursor-default">
+                    Online — {onlineServerMembers.length}
                   </p>
                   <ul className="space-y-0.5">
-                    {onlineServerMembers.map((member) => {
+                    {onlineServerMembers.map((member, memberIndex) => {
                       const voiceInfo = findMemberVoiceInfo(member.id);
                       const topRole = activeServer
                         ? getMemberRolesInServer(activeServer, member.id)[0]
                         : undefined;
                       return (
-                        <li key={member.id}>
+                        <motion.li
+                          key={member.id}
+                          initial={{ opacity: 0, x: 8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: Math.min(memberIndex, 12) * 0.025, type: "spring", stiffness: 380, damping: 30 }}
+                        >
                           <button
                             type="button"
                             onClick={(e) =>
@@ -3920,7 +3996,7 @@ function WorkspaceInner({
                                 role: member.role,
                               })
                             }
-                            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-white/[0.05]"
+                            className="siq-press group/member flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left text-xs hover:bg-white/[0.05] hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]"
                           >
                             <Avatar
                               name={member.displayName}
@@ -3947,13 +4023,16 @@ function WorkspaceInner({
                                       : `@${member.username}`}
                               </p>
                             </div>
-                            {voiceInfo.isScreenSharing && (
-                              <span className="rounded bg-rose-500 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white">
+                            {voiceInfo.isScreenSharing ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-rose-500 to-rose-600 px-1.5 py-0.5 text-[9px] font-extrabold tracking-wider text-white shadow-[0_0_12px_rgba(244,63,94,0.55)]">
+                                <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
                                 LIVE
                               </span>
-                            )}
+                            ) : voiceInfo.channel ? (
+                              <Volume2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                            ) : null}
                           </button>
-                        </li>
+                        </motion.li>
                       );
                     })}
                   </ul>
@@ -3961,8 +4040,8 @@ function WorkspaceInner({
 
                 {offlineServerMembers.length > 0 && (
                   <div>
-                    <p className="mb-1.5 px-2 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                      Offline · {offlineServerMembers.length}
+                    <p className="siq-section-label mb-1.5 !cursor-default">
+                      Offline — {offlineServerMembers.length}
                     </p>
                     <ul className="space-y-0.5">
                       {offlineServerMembers.map((member) => {
@@ -3994,7 +4073,7 @@ function WorkspaceInner({
                                   role: member.role,
                                 })
                               }
-                              className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-xs opacity-55 transition-all hover:bg-white/[0.04] hover:opacity-90"
+                              className="siq-press flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left text-xs opacity-50 grayscale-[0.4] hover:bg-white/[0.04] hover:opacity-90 hover:grayscale-0"
                             >
                               <Avatar
                                 name={member.displayName}

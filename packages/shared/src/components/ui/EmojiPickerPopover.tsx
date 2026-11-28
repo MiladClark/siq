@@ -183,39 +183,71 @@ export function EmojiPickerPopover({
       })).filter((g) => g.items.length > 0)
     : EMOJI_GROUPS;
 
+  // Grow out of the corner nearest the trigger (picker sits below/above, right-aligned)
+  const originY = coords.top >= anchorRect.bottom ? "top" : "bottom";
+  const originX = coords.left < anchorRect.left ? "right" : "left";
+
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, scale: 0.94, y: 4 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, y: 2 }}
-      transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-      style={{ top: coords.top, left: coords.left }}
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{
+        opacity: 0,
+        scale: 0.95,
+        transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
+      }}
+      transition={{ type: "spring", stiffness: 480, damping: 32 }}
+      style={{
+        top: coords.top,
+        left: coords.left,
+        transformOrigin: `${originY} ${originX}`,
+      }}
       role="dialog"
       aria-label="Emoji picker"
-      className="fixed z-[95] flex w-[292px] flex-col overflow-hidden rounded-xl border border-white/[0.11] bg-[#14151A] shadow-2xl shadow-black/80"
+      className="siq-glass fixed z-[95] flex w-[292px] flex-col overflow-hidden rounded-2xl"
     >
-      <div className="border-b border-white/[0.07] p-2.5">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+      <div className="border-b border-white/[0.06] p-2.5">
+        <div className="group relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 transition-colors group-focus-within:text-emerald-400" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search emoji..."
-            className="w-full rounded-lg border border-white/[0.08] bg-[#0E0F12] py-1.5 pl-8 pr-2.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:outline-none"
+            className="w-full rounded-[10px] border border-white/[0.08] bg-black/25 py-2 pl-8 pr-2.5 text-xs text-zinc-100 shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)] transition-[border-color,background-color,box-shadow] duration-200 placeholder:text-zinc-500 focus:border-emerald-500/50 focus:bg-black/35 focus:shadow-[0_0_0_3px_rgb(var(--siq-accent-rgb)/0.12)] focus:outline-none"
           />
         </div>
       </div>
 
-      <div className="max-h-[260px] space-y-3 overflow-y-auto p-2.5">
+      <div className="max-h-[260px] space-y-3 overflow-y-auto p-2.5 [mask-image:linear-gradient(to_bottom,transparent,black_8px,black_calc(100%-14px),transparent)]">
         {filteredGroups.length === 0 ? (
-          <p className="py-6 text-center text-xs text-zinc-500">No matching emoji</p>
+          <motion.p
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="py-6 text-center text-xs text-zinc-500"
+          >
+            No matching emoji
+          </motion.p>
         ) : (
-          filteredGroups.map((group) => (
-            <div key={group.id}>
-              <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+          filteredGroups.map((group, groupIndex) => (
+            <motion.div
+              key={group.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                type: "spring",
+                stiffness: 420,
+                damping: 32,
+                delay: 0.04 + groupIndex * 0.05,
+              }}
+            >
+              <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-bold uppercase tracking-[0.09em] text-zinc-500">
+                <span
+                  aria-hidden="true"
+                  className="h-1 w-1 rounded-full bg-emerald-400/80 shadow-[0_0_6px_rgb(var(--siq-accent-rgb)/0.8)]"
+                />
                 {group.label}
               </p>
               <div className="grid grid-cols-6 gap-1">
@@ -227,13 +259,15 @@ export function EmojiPickerPopover({
                       onSelect(item.emoji);
                       onClose();
                     }}
-                    className="flex h-9 w-full items-center justify-center rounded-lg text-lg transition-all hover:scale-110 hover:bg-white/[0.08] active:scale-95"
+                    className="group flex h-9 w-full items-center justify-center rounded-[10px] text-lg outline-none transition-[background-color,box-shadow] duration-150 hover:bg-white/[0.07] hover:shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.22),0_6px_16px_-8px_rgb(var(--siq-accent-rgb)/0.6)] focus-visible:bg-white/[0.07] focus-visible:shadow-[inset_0_0_0_1px_rgb(var(--siq-accent-rgb)/0.45)]"
                   >
-                    {item.emoji}
+                    <span className="inline-block transition-transform duration-200 [transition-timing-function:var(--siq-ease-spring)] motion-safe:group-hover:-rotate-6 motion-safe:group-hover:scale-125 motion-safe:group-active:scale-90">
+                      {item.emoji}
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
+            </motion.div>
           ))
         )}
       </div>

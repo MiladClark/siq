@@ -128,7 +128,7 @@ export function FloatingDock({
       <motion.div
         onMouseMove={(e) => mouseX.set(e.pageX)}
         onMouseLeave={() => mouseX.set(Infinity)}
-        className={`siq-bezel inline-flex items-center gap-1.5 rounded-2xl border border-white/[0.1] bg-[#131419]/92 px-2.5 py-2 backdrop-blur-md ${className}`}
+        className={`siq-glass inline-flex items-center gap-1.5 rounded-[22px] px-2.5 py-2 ${className}`}
       >
         {children}
       </motion.div>
@@ -176,12 +176,12 @@ export function DockItem({
   const y = useSpring(yRaw, { mass: 0.12, stiffness: 280, damping: 18 });
 
   const surfaceClass = solidDanger
-    ? "border-rose-500/60 bg-rose-500 text-white hover:bg-rose-400 shadow-lg shadow-rose-500/20"
+    ? "border-rose-400/60 bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.3),0_10px_26px_-10px_rgba(244,63,94,0.9)] hover:from-rose-400 hover:to-rose-500"
     : danger
-      ? "border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25"
+      ? "border-rose-500/45 bg-rose-500/15 text-rose-300 shadow-[0_0_20px_-8px_rgba(244,63,94,0.9)] hover:bg-rose-500/25"
       : active
-        ? "border-emerald-500/45 bg-emerald-500/18 text-emerald-300 hover:bg-emerald-500/25"
-        : "border-white/[0.08] bg-[#1B1C23] text-zinc-200 hover:border-white/[0.16] hover:bg-[#23252F] hover:text-white";
+        ? "border-emerald-500/50 bg-gradient-to-b from-emerald-500/25 to-emerald-500/10 text-emerald-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_0_22px_-8px_rgb(var(--siq-accent-rgb)/0.9)] hover:from-emerald-500/30"
+        : "border-white/[0.08] bg-gradient-to-b from-white/[0.07] to-white/[0.02] text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] hover:border-white/[0.16] hover:from-white/[0.11] hover:text-white";
 
   return (
     <div className="relative flex items-center justify-center">
@@ -192,7 +192,7 @@ export function DockItem({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 3, scale: 0.94 }}
             transition={{ duration: 0.12 }}
-            className="pointer-events-none absolute -top-9 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/[0.12] bg-[#0E0F12]/95 px-2.5 py-1 text-[11px] font-medium text-zinc-100 shadow-xl"
+            className="siq-glass pointer-events-none absolute -top-10 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[10px] px-2.5 py-1 text-[11px] font-semibold text-zinc-100"
           >
             {label}
           </motion.div>
@@ -209,11 +209,11 @@ export function DockItem({
         whileTap={{ scale: 0.92 }}
         style={{ scale, y }}
         aria-label={label}
-        className={`relative flex h-10 min-w-10 items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${surfaceClass} ${className}`}
+        className={`relative flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-2xl border px-3.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${surfaceClass} ${className}`}
       >
         {children}
         {badge && (
-          <span className="rounded bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+          <span className="inline-flex items-center gap-1 rounded-md bg-rose-500 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-white shadow-[0_0_10px_rgba(244,63,94,0.7)]">
             {badge}
           </span>
         )}

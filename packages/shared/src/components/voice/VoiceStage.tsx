@@ -639,7 +639,7 @@ export function VoiceStage({
     })();
 
     return (
-      <div className="siq-grid-bg relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-[#08090C] p-6">
+      <div className="siq-grid-bg relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-black/45 p-6">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0"
@@ -663,7 +663,7 @@ export function VoiceStage({
                   <SpotlightCard
                     key={occ.identity}
                     spotlightColor={`${fresh.avatarColor}28`}
-                    className="siq-bezel-sm rounded-2xl border border-white/[0.09] bg-[#111218]/90 transition-transform duration-150 hover:-translate-y-0.5"
+                    className="siq-bezel-sm rounded-2xl border border-white/[0.09] bg-white/[0.03]/90 transition-transform duration-150 hover:-translate-y-0.5"
                   >
                     <button
                       type="button"
@@ -705,14 +705,15 @@ export function VoiceStage({
                 );
               })}
               {previewOccupants.length > 6 && (
-                <div className="siq-bezel-sm flex h-32 w-24 items-center justify-center rounded-2xl border border-white/[0.08] bg-[#111218] text-sm font-semibold tabular-nums text-zinc-300">
+                <div className="siq-glass flex h-32 w-24 items-center justify-center rounded-2xl text-sm font-bold tabular-nums text-zinc-300">
                   +{previewOccupants.length - 6}
                 </div>
               )}
             </div>
           ) : (
-            <div className="siq-bezel mb-6 flex h-24 w-44 flex-col items-center justify-center gap-2 rounded-3xl border border-white/[0.09] bg-[#101116]/90">
-              <BarVisualizer state="listening" barCount={11} size="md" />
+            <div className="siq-glass siq-edge-light relative mb-7 flex h-28 w-52 flex-col items-center justify-center gap-2.5 rounded-[28px]">
+              <span aria-hidden className="pointer-events-none absolute -inset-6 -z-10 rounded-[40px] bg-[radial-gradient(closest-side,rgb(var(--siq-accent-rgb)/0.28),transparent)] blur-xl" />
+              <BarVisualizer state="listening" barCount={13} size="md" />
               <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                 READY · OPUS
               </span>
@@ -733,7 +734,7 @@ export function VoiceStage({
 
           <h2
             dir="auto"
-            className="text-balance text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl"
+            className="siq-gradient-text text-balance text-3xl font-extrabold tracking-tight sm:text-4xl"
           >
             {channel.name}
           </h2>
@@ -760,7 +761,7 @@ export function VoiceStage({
               type="button"
               disabled={!livekitReady || isConnecting}
               onClick={() => onJoinVoiceChannel(channel)}
-              className="inline-flex items-center justify-center gap-2.5 rounded-2xl bg-emerald-500 px-8 py-3 text-sm font-semibold text-zinc-950 shadow-xl shadow-emerald-500/20 transition-colors hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-45"
+              className="siq-cta inline-flex items-center justify-center gap-2.5 !rounded-2xl px-9 py-3.5 text-sm disabled:cursor-not-allowed disabled:opacity-45"
             >
               <Headphones className="h-4 w-4" />
               <span>{isConnecting ? "Connecting..." : "Join Voice"}</span>
@@ -807,7 +808,7 @@ export function VoiceStage({
     <div
       ref={stageRootRef}
       onMouseMove={wakeHud}
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[#08090C]"
+      className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-black/45"
     >
       {/* Main Media Area */}
       <div
@@ -825,7 +826,7 @@ export function VoiceStage({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.18 }}
-              className="siq-bezel-sm flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/25 bg-[#111319] px-3.5 py-2.5 sm:px-4"
+              className="siq-bezel-sm flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/25 bg-white/[0.03] px-3.5 py-2.5 sm:px-4"
             >
               <div className="flex min-w-0 flex-wrap items-center gap-2.5">
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold tracking-wider text-rose-300 ring-1 ring-rose-500/35">
@@ -889,7 +890,7 @@ export function VoiceStage({
                     <button
                       type="button"
                       onClick={onOpenScreenShareModal}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.1] bg-[#181920] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.1] bg-white/[0.055] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
                     >
                       <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
                       <span>Stream Options</span>
@@ -1078,7 +1079,7 @@ export function VoiceStage({
               {/* Precision Studio Theater Control Bar */}
               <div
                 onMouseEnter={wakeHud}
-                className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-[#0E0F13] px-3 py-2 sm:gap-3 sm:px-4"
+                className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-black/30 px-3 py-2 sm:gap-3 sm:px-4"
               >
                 {/* Left: Stream Audio Mixer OR Broadcaster Quick Controls */}
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -1094,7 +1095,7 @@ export function VoiceStage({
                       <button
                         type="button"
                         onClick={onOpenScreenShareModal}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-[#17181F] px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.1] bg-white/[0.055] px-2.5 text-xs font-medium text-zinc-200 transition-colors hover:border-white/[0.18] hover:text-white"
                       >
                         <SlidersHorizontal className="h-3.5 w-3.5 text-zinc-400" />
                         <span>Change Window / Quality</span>
@@ -1109,7 +1110,7 @@ export function VoiceStage({
                       </button>
                     </div>
                   ) : focusedSharer.screenAudioTrack ? (
-                    <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-[#15161C] px-2.5 py-1">
+                    <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.045] px-2.5 py-1">
                       <button
                         type="button"
                         onClick={handleToggleStreamAudioMute}
@@ -1151,7 +1152,7 @@ export function VoiceStage({
                 {/* Right: Zoom + Fit/Fill + Participants Toggle + PiP + Full App Width + OS Fullscreen */}
                 <div className="flex shrink-0 items-center gap-1.5">
                   {/* Desktop Zoom Control Pill */}
-                  <div className="hidden items-center rounded-lg border border-white/[0.09] bg-[#17181F] p-0.5 sm:flex">
+                  <div className="hidden items-center rounded-lg border border-white/[0.09] bg-white/[0.055] p-0.5 sm:flex">
                     <button
                       type="button"
                       disabled={streamZoom <= 1}
@@ -1194,7 +1195,7 @@ export function VoiceStage({
                     className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors ${
                       streamFit === "cover"
                         ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                        : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                        : "border-white/[0.09] bg-white/[0.055] text-zinc-300 hover:border-white/[0.18] hover:text-white"
                     }`}
                   >
                     {streamFit === "contain" ? (
@@ -1220,7 +1221,7 @@ export function VoiceStage({
                     className={`hidden h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors sm:inline-flex ${
                       !showParticipantsStrip
                         ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                        : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                        : "border-white/[0.09] bg-white/[0.055] text-zinc-300 hover:border-white/[0.18] hover:text-white"
                     }`}
                   >
                     <Users className="h-3.5 w-3.5" />
@@ -1236,7 +1237,7 @@ export function VoiceStage({
                       className={`hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors sm:flex ${
                         isPipActive
                           ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                          : "border-white/[0.09] bg-[#17181F] text-zinc-300 hover:border-white/[0.18] hover:text-white"
+                          : "border-white/[0.09] bg-white/[0.055] text-zinc-300 hover:border-white/[0.18] hover:text-white"
                       }`}
                     >
                       <PictureInPicture2 className="h-3.5 w-3.5" />
@@ -1257,7 +1258,7 @@ export function VoiceStage({
                       className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium transition-colors ${
                         isStageMaximized
                           ? "border-emerald-500/45 bg-emerald-500/15 text-emerald-300"
-                          : "border-white/[0.09] bg-[#17181F] text-zinc-200 hover:border-white/[0.18] hover:text-white"
+                          : "border-white/[0.09] bg-white/[0.055] text-zinc-200 hover:border-white/[0.18] hover:text-white"
                       }`}
                     >
                       {isStageMaximized ? (
@@ -1284,7 +1285,7 @@ export function VoiceStage({
                     className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-semibold transition-colors ${
                       isBrowserFullscreen
                         ? "border-emerald-500/50 bg-emerald-500 text-zinc-950 hover:bg-emerald-400"
-                        : "border-white/[0.12] bg-[#1C1E26] text-zinc-100 hover:border-emerald-500/45 hover:text-emerald-300"
+                        : "border-white/[0.12] bg-white/[0.07] text-zinc-100 hover:border-emerald-500/45 hover:text-emerald-300"
                     }`}
                   >
                     {isBrowserFullscreen ? (
@@ -1330,12 +1331,12 @@ export function VoiceStage({
                   active={p.isSpeaking || isBeingWatched}
                   spotlightColor={`${fresh.avatarColor}22`}
                   onContextMenu={(e) => handleParticipantContextMenu(e, p)}
-                  className={`siq-bezel-sm flex flex-col justify-between rounded-2xl border bg-[#101116] transition-all duration-150 ${
+                  className={`flex flex-col justify-between rounded-3xl border bg-white/[0.02] shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_20px_44px_-28px_rgba(0,0,0,0.95)] transition-all duration-300 ${
                     isBeingWatched
                       ? "border-emerald-500/55 ring-1 ring-emerald-500/25"
                       : p.isSpeaking
-                        ? "border-emerald-500/65 shadow-[0_0_24px_-8px_rgb(var(--siq-accent-rgb)/0.48)]"
-                        : "border-white/[0.08] hover:border-white/[0.14]"
+                        ? "border-emerald-400/70 shadow-[0_0_0_1px_rgb(var(--siq-accent-rgb)/0.35),0_0_42px_-10px_rgb(var(--siq-accent-rgb)/0.75)]"
+                        : "border-white/[0.07] hover:-translate-y-0.5 hover:border-white/[0.14]"
                   } ${
                     focusedSharer
                       ? "min-h-[104px] sm:min-h-[118px]"
@@ -1343,7 +1344,12 @@ export function VoiceStage({
                   }`}
                 >
                   {/* Video or Avatar Center */}
-                  <div className="relative z-10 flex flex-1 overflow-hidden bg-[#0B0C10]/80">
+                  <div
+                    className="relative z-10 flex flex-1 overflow-hidden"
+                    style={{
+                      background: `radial-gradient(90% 80% at 50% 38%, ${fresh.avatarColor}2e, transparent 70%), linear-gradient(180deg, rgb(255 255 255 / 0.02), rgb(0 0 0 / 0.25))`,
+                    }}
+                  >
                     <button
                       type="button"
                       onClick={(e) =>
@@ -1361,14 +1367,18 @@ export function VoiceStage({
                         />
                       ) : (
                         <>
-                          <Avatar
-                            name={fresh.name}
-                            color={fresh.avatarColor}
-                            avatarUrl={fresh.avatarUrl}
-                            size={focusedSharer ? "sm" : "lg"}
-                            speaking={p.isSpeaking}
-                            speakingOffsetClassName="ring-offset-[#0B0C10]"
-                          />
+                          <span
+                            className={`relative rounded-full transition-transform duration-300 ${
+                              p.isSpeaking && !p.isMuted ? "siq-speaking-ring scale-105" : ""
+                            }`}
+                          >
+                            <Avatar
+                              name={fresh.name}
+                              color={fresh.avatarColor}
+                              avatarUrl={fresh.avatarUrl}
+                              size={focusedSharer ? "sm" : "xl"}
+                            />
+                          </span>
                           {!focusedSharer && !p.isScreenSharing && (
                             <BarVisualizer
                               state={barState}
@@ -1441,7 +1451,7 @@ export function VoiceStage({
                   </div>
 
                   {/* Clean Participant Footer */}
-                  <div className="relative z-10 flex items-center justify-between gap-2 border-t border-white/[0.06] bg-[#121319]/95 px-3 py-2">
+                  <div className="relative z-10 flex items-center justify-between gap-2 border-t border-white/[0.05] bg-black/30 px-3 py-2 backdrop-blur-sm">
                     <button
                       type="button"
                       onClick={(e) => openParticipantProfile(e, p)}
@@ -1451,7 +1461,7 @@ export function VoiceStage({
                         {fresh.name}
                       </span>
                       {p.isLocal && (
-                        <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                        <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-emerald-300">
                           you
                         </span>
                       )}
@@ -1492,7 +1502,7 @@ export function VoiceStage({
       {/* Bottom Studio Control Deck (Stays accessible inside OS Fullscreen & Full-App Mode) */}
       <div
         onMouseEnter={wakeHud}
-        className={`relative flex shrink-0 items-center justify-center border-t border-white/[0.07] bg-[#0B0C0F]/95 px-2 pt-2 pb-[max(0.625rem,env(safe-area-inset-bottom))] transition-opacity duration-200 sm:px-4 sm:py-2.5 ${
+        className={`relative flex shrink-0 items-center justify-center bg-gradient-to-t from-black/40 to-transparent px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition-opacity duration-200 sm:px-4 sm:pb-4 sm:pt-3 ${
           isBrowserFullscreen && !hudVisible
             ? "pointer-events-none opacity-0"
             : "opacity-100"

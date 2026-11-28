@@ -2,8 +2,9 @@
 
 import { mediaUrl } from "@/lib/client-api";
 import { MessageCircle, X } from "lucide-react";
-import { motion, Reorder } from "motion/react";
+import { AnimatePresence, motion, Reorder } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatedIconButton } from "@siq/shared/components/ui/AnimatedIcon";
 import { SiqMark } from "@siq/shared/components/ui/SiqMark";
 import { PlusIcon } from "@siq/shared/components/ui/animated-icons/plus";
@@ -30,6 +31,22 @@ interface ActiveEdge {
   clipTop: number;
   clipBottom: number;
   instant: boolean;
+}
+
+interface RailTip {
+  label: string;
+  sub?: string;
+  top: number;
+  left: number;
+}
+
+/** Server tiles are painted with a lit gradient of their accent colour */
+function tileStyle(accent: string): React.CSSProperties {
+  return {
+    background: `linear-gradient(150deg, color-mix(in srgb, ${accent} 88%, white 12%), color-mix(in srgb, ${accent} 58%, #050507 42%))`,
+    color: "#fff",
+    textShadow: "0 1px 2px rgb(0 0 0 / 0.45)",
+  };
 }
 
 function getInitials(name: string): string {
@@ -64,6 +81,13 @@ export function ServerRail({
   const reorderAreaRef = useRef<HTMLUListElement | null>(null);
   const draggedByPointer = useRef(false);
   const orderToSave = useRef<string[] | null>(null);
+  const [tip, setTip] = useState<RailTip | null>(null);
+
+  const showTip = (event: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>, label: string, sub?: string) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setTip({ label, sub, top: rect.top + rect.height / 2, left: rect.right + 10 });
+  };
+  const hideTip = () => setTip(null);
 
   useEffect(() => {
     setSavedOrder(loadServerTabOrder());
@@ -168,17 +192,23 @@ export function ServerRail({
         type="button"
         aria-label="Direct Messages & Friends"
         aria-current={activeTab === "home" ? "page" : undefined}
-        title="Direct Messages & Friends"
         onClick={onSelectHome}
+        onMouseEnter={(e) => showTip(e, "Direct Messages", homeBadgeCount > 0 ? `${homeBadgeCount} unread` : "Friends & DMs")}
+        onMouseLeave={hideTip}
+        onFocus={(e) => showTip(e, "Direct Messages")}
+        onBlur={hideTip}
         className="siq-workspace-tab"
       >
-        <MessageCircle aria-hidden="true" className="h-5 w-5" />
+        <span aria-hidden="true" className="siq-rail-icon siq-rail-home">
+          <MessageCircle className="h-[19px] w-[19px]" strokeWidth={2.2} />
+        </span>
         {homeBadgeCount > 0 && (
-          <span className="absolute bottom-1 right-1.5 min-w-3.5 rounded-full bg-rose-500 px-1 text-[9px] font-bold leading-[14px] tabular-nums text-white">
+          <span key={homeBadgeCount} className="siq-rail-badge tabular-nums">
             {homeBadgeCount > 9 ? "9+" : homeBadgeCount}
           </span>
         )}
       </button>
+      <span aria-hidden="true" className="siq-rail-divider" />
 
       <motion.div
         ref={serverListRef}
@@ -223,16 +253,19 @@ export function ServerRail({
                   onContextMenu={(event) => onServerContextMenu?.(event, server)}
                   aria-label={server.name}
                   aria-current={activeTab === "server" && activeServerId === server.id ? "page" : undefined}
-                  title={server.tag ? `${server.name} · ${server.tag}` : server.name}
+                  onMouseEnter={(e) =>
+                    showTip(e, server.name, unreadServerIds.has(server.id) ? "New messages" : server.tag ?? undefined)
+                  }
+                  onMouseLeave={hideTip}
+                  onFocus={(e) => showTip(e, server.name)}
+                  onBlur={hideTip}
+                  onPointerDown={hideTip}
                   className="siq-workspace-tab"
                 >
                   <span
                     aria-hidden="true"
-                    className="flex size-9 items-center justify-center overflow-hidden rounded-[11px] text-xs font-bold tracking-tight md:size-8 md:rounded-[9px]"
-                    style={server.iconUrl ? undefined : {
-                      backgroundColor: `${server.accentColor}24`,
-                      color: server.accentColor,
-                    }}
+                    className="siq-rail-icon"
+                    style={server.iconUrl ? undefined : tileStyle(server.accentColor)}
                   >
                     {server.iconUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -253,13 +286,37 @@ export function ServerRail({
         <AnimatedIconButton
           type="button"
           icon={PlusIcon}
-          iconSize={20}
+          iconSize={19}
+          iconClassName="siq-rail-icon siq-rail-add"
           onClick={onOpenCreateJoin}
+          onMouseEnter={(e) => showTip(e, "Create or join a server")}
+          onMouseLeave={hideTip}
           aria-label="Create or join a server"
-          title="Create or join a server"
           className="siq-workspace-tab"
         />
       </motion.div>
+
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {tip && (
+              <motion.div
+                key={tip.label}
+                role="tooltip"
+                initial={{ opacity: 0, x: -8, scale: 0.92 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: -6, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 520, damping: 32 }}
+                className="siq-rail-tooltip siq-glass"
+                style={{ top: tip.top, left: tip.left, translateY: "-50%" }}
+              >
+                <span>{tip.label}</span>
+                {tip.sub && <span className="text-[11px] font-medium text-zinc-400">{tip.sub}</span>}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
     </nav>
   );
 }

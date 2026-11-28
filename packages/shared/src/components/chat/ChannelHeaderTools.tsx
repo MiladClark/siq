@@ -2,7 +2,7 @@
 
 import { apiFetch } from "@/lib/client-api";
 import { Loader2, Pin, X } from "lucide-react";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { Avatar } from "@siq/shared/components/ui/Avatar";
 import { HeaderPanel } from "@siq/shared/components/ui/HeaderPanel";
@@ -131,45 +131,91 @@ export function ChannelHeaderTools({
         aria-controls={open ? "workspace-header-pins" : undefined}
         aria-haspopup="dialog"
         data-header-trigger="pins"
-        className="siq-header-trigger flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-[#16171D] text-zinc-300 transition-colors hover:border-white/[0.18] hover:text-white"
+        className="siq-header-trigger siq-press group flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.1] bg-white/[0.04] text-zinc-300 hover:border-white/[0.18] hover:bg-white/[0.07] hover:text-white"
       >
-        <Pin className="h-4 w-4" />
+        <Pin
+          className={`h-4 w-4 transition-transform duration-300 [transition-timing-function:var(--siq-ease-spring)] ${
+            open ? "-rotate-45" : "motion-safe:group-hover:-rotate-12"
+          }`}
+        />
       </button>
 
       <AnimatePresence>
         {open && (
           <HeaderPanel kind="pins" label="Pinned Messages">
-            <div className="flex items-center justify-between border-b border-white/[0.07] px-3.5 py-2.5">
-              <div className="flex items-center gap-2">
-                <Pin className="h-3.5 w-3.5 text-emerald-400" />
-                <span className="text-xs font-semibold text-zinc-100">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-3.5 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="grid h-7 w-7 place-items-center rounded-[9px] bg-emerald-500/10 shadow-[0_0_18px_-6px_rgb(var(--siq-accent-rgb)/0.75)] ring-1 ring-inset ring-emerald-500/25"
+                >
+                  <Pin className="h-3.5 w-3.5 -rotate-45 text-emerald-300" />
+                </span>
+                <span className="text-[13px] font-semibold tracking-tight text-zinc-50">
                   Pinned Messages
                 </span>
               </div>
-              <span className="text-[11px] font-medium tabular-nums text-zinc-500">
+              <motion.span
+                key={pinnedMessages.length}
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 520, damping: 22 }}
+                className="min-w-6 rounded-full bg-white/[0.05] px-1.5 py-0.5 text-center text-[11px] font-semibold tabular-nums text-zinc-400 ring-1 ring-inset ring-white/[0.07]"
+              >
                 {pinnedMessages.length}
-              </span>
+              </motion.span>
             </div>
 
-            <div className="min-h-0 max-h-[360px] divide-y divide-white/[0.05] overflow-y-auto">
+            <div className="min-h-0 max-h-[360px] space-y-1.5 overflow-y-auto p-2">
               {pinsLoading ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-xs text-zinc-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>Loading pins...</span>
+                <div className="space-y-1.5">
+                  {[0, 1].map((row) => (
+                    <div
+                      key={row}
+                      aria-hidden="true"
+                      className="flex items-start gap-2.5 rounded-xl border border-white/[0.04] bg-white/[0.015] px-3 py-2.5"
+                    >
+                      <span className="siq-skeleton h-7 w-7 shrink-0 rounded-full" />
+                      <div className="flex-1 space-y-2 pt-0.5">
+                        <span className="siq-skeleton block h-2.5 w-1/3 rounded-full" />
+                        <span className="siq-skeleton block h-2.5 w-4/5 rounded-full" />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-center gap-2 py-3 text-xs text-zinc-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                    <span>Loading pins...</span>
+                  </div>
                 </div>
               ) : pinnedMessages.length === 0 ? (
-                <div className="px-4 py-8 text-center text-xs text-zinc-500">
-                  No pinned messages in #{channelName} yet.
-                </div>
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30, delay: 0.08 }}
+                  className="flex flex-col items-center gap-3 px-4 py-7 text-center text-xs text-zinc-500"
+                >
+                  <span aria-hidden="true" className="siq-hero-tile h-12 w-12 !rounded-2xl">
+                    <Pin className="h-5 w-5 -rotate-45" />
+                  </span>
+                  <span>No pinned messages in #{channelName} yet.</span>
+                </motion.div>
               ) : (
-                pinnedMessages.map((msg) => {
+                pinnedMessages.map((msg, index) => {
                   const author = resolveAuthor(msg);
                   const canUnpin =
                     msg.author.id === currentUser.id || currentUser.role === "admin";
                   return (
-                    <div
+                    <motion.div
                       key={msg.id}
-                      className="group flex items-start gap-2.5 px-3.5 py-3 transition-colors hover:bg-white/[0.03]"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 440,
+                        damping: 32,
+                        delay: 0.06 + Math.min(index, 8) * 0.04,
+                      }}
+                      className="group relative flex items-start gap-2.5 rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5 transition-colors duration-150 before:absolute before:inset-y-3 before:left-0 before:w-[2px] before:rounded-r-full before:bg-emerald-400 before:opacity-0 before:shadow-[0_0_10px_rgb(var(--siq-accent-rgb)/0.9)] before:transition-opacity hover:border-white/[0.1] hover:bg-white/[0.045] hover:before:opacity-100"
                     >
                       <Avatar
                         name={author.displayName}
@@ -205,7 +251,7 @@ export function ChannelHeaderTools({
                               onJumpToMessage(msg.id);
                               onClose();
                             }}
-                            className="rounded-md bg-white/[0.06] px-2 py-0.5 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20"
+                            className="siq-press rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-500/20 hover:bg-emerald-500/20 hover:shadow-[0_0_14px_-4px_rgb(var(--siq-accent-rgb)/0.7)]"
                           >
                             Jump
                           </button>
@@ -213,7 +259,7 @@ export function ChannelHeaderTools({
                             <button
                               type="button"
                               onClick={() => void handleUnpin(msg)}
-                              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-zinc-500 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
+                              className="siq-press inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-rose-500/15 hover:text-rose-300"
                             >
                               <X className="h-3 w-3" />
                               <span>Unpin</span>
@@ -221,7 +267,7 @@ export function ChannelHeaderTools({
                           )}
                         </div>
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 })
               )}
