@@ -488,12 +488,6 @@ body {
 }
 
 .siq-header-trigger[aria-expanded="true"] {
-  z-index: 2;
-  border-color: var(--workspace-outline);
-  border-bottom-color: transparent;
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 0;
-  background: var(--header-panel-surface);
   color: var(--color-emerald-300);
 }
 
@@ -546,9 +540,6 @@ body {
     position: relative;
   }
 
-  .siq-header-trigger[aria-expanded="true"] {
-    border-bottom-color: var(--header-panel-surface);
-  }
 
   .siq-header-panel {
     --header-panel-right-space: 0px;
@@ -569,13 +560,6 @@ body {
     --header-panel-right-space: 156px;
   }
 
-  .siq-voice-trigger[aria-expanded="true"] {
-    border-color: var(--workspace-outline);
-    border-top-color: var(--header-panel-surface);
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-    background: var(--header-panel-surface);
-  }
 
   .siq-header-panel[data-header-panel="voice"] {
     inset: auto auto calc(100dvh - var(--voice-anchor-top) - 1px) var(--voice-anchor-left);
@@ -1590,14 +1574,23 @@ body {
   display: none;
 }
 
-/* The trigger melts into the liquid pill drawn behind it */
-.siq-header-trigger[aria-expanded="true"],
-.siq-voice-trigger[aria-expanded="true"] {
-  z-index: 2;
+/* While its liquid panel is on screen the trigger melts into the pill drawn behind it */
+.siq-header-trigger[data-liquid="on"],
+.siq-voice-trigger[data-liquid="on"] {
   border-color: transparent !important;
-  border-radius: 10px !important;
   background: transparent !important;
+  box-shadow: none !important;
   color: var(--color-emerald-300) !important;
+}
+
+/* Closing: the button only gets its own look back once the liquid has folded into it */
+.siq-header-trigger[data-liquid="returning"],
+.siq-voice-trigger[data-liquid="returning"] {
+  transition:
+    color 160ms ease,
+    background-color 260ms ease 300ms,
+    border-color 260ms ease 300ms,
+    box-shadow 260ms ease 300ms;
 }
 
 .siq-liquid-canvas {

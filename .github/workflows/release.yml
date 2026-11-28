@@ -81,7 +81,7 @@ jobs:
               sha256,
               sizeBytes: buf.length,
               required: false,
-              releaseNotes: `SIQ Desktop ${tag} — SIQ Voice Engine v3 (lag-free AI noise cancellation on a background worker, cleaner speech, faster chat) and the new Nocturne UI with liquid header panels and smoother animations.`,
+              releaseNotes: `SIQ Desktop ${tag} — Liquid header panels now fold back into their button when closing (no stray oval) and the button fades back in once the panel is gone. Includes SIQ Voice Engine v3 and the Nocturne UI.`,
               releasedAt: new Date().toISOString(),
               downloadUrl: `https://github.com/${repo}/releases/download/${tag}/SIQ-Windows-Portable.exe`,
             };

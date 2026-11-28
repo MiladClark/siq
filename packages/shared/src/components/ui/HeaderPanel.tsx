@@ -1,9 +1,11 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
+import { animate, motion, useMotionValue, usePresence, useReducedMotion } from "motion/react";
 import {
   type CSSProperties,
   type ReactNode,
+  useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -17,25 +19,38 @@ export type HeaderPanelKind = "search" | "pins" | "notifications" | "invite" | "
  *
  * Two rounded rects are drawn inside an SVG gooey filter: a "pill" that sits exactly behind the
  * trigger button and a "body" for the panel. Blur + alpha threshold melts them into one liquid
- * shape (smooth fillets, no sharp or zero-radius corner anywhere). The body grows with Sileo's
- * spring, the pill stretches to meet it, and the content fades in from a blur once the shape
- * has mostly formed. Closing reverses it without bounce.
+ * shape (smooth fillets, no sharp or zero-radius corner anywhere).
+ *
+ * One spring value drives everything: at 0 the body is folded into the trigger's own rect, at 1 it
+ * fills the panel. Opening inflates the button into the panel; closing folds it back into the
+ * button (no thin strip is ever left behind, so the filter never produces a stray oval). The
+ * content is clipped to the body while it grows, the liquid fades as one piece once it is back
+ * inside the button, and only then does the button's own look return (see globals.css).
  */
 const ROUNDNESS = 18;
 const BLUR = ROUNDNESS * 0.5;
 const GAP = 10; // must match the panel offset in globals.css (.siq-header-panel)
-const PAD = BLUR * 3;
+const PAD = BLUR * 3 + 12; // blur margin plus room for the open spring's small overshoot
+const STRETCH = GAP + BLUR * 2; // how far the pill reaches toward the body when open
 const FILL_TOP = "#1B1C24";
 const FILL_BOTTOM = "#121319";
 const OPEN_SPRING = { type: "spring", bounce: 0.25, duration: 0.6 } as const;
 const CLOSE_SPRING = { type: "spring", bounce: 0, duration: 0.42 } as const;
-// The pill dissolves in the last moments of the close, so the real trigger takes over smoothly
-const PILL_FADE = { duration: 0.14, delay: 0.28 } as const;
+// The folded liquid fades out while the button's own chrome waits (globals.css: 300ms delay)
+const LIQUID_FADE = { duration: 0.18, delay: 0.26, ease: "easeOut" } as const;
+const TRIGGER_RETURN_MS = 700;
+
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 interface Geometry {
   width: number;
   height: number;
-  pill: { x: number; y: number; w: number; h: number };
+  pill: Rect;
 }
 
 function sameGeometry(a: Geometry | null, b: Geometry) {
@@ -47,6 +62,50 @@ function sameGeometry(a: Geometry | null, b: Geometry) {
     Math.abs(a.pill.y - b.pill.y) < 0.5 &&
     Math.abs(a.pill.w - b.pill.w) < 0.5 &&
     Math.abs(a.pill.h - b.pill.h) < 0.5
+  );
+}
+
+/** SVG canvas covering the panel and the trigger pill, plus blur margin (panel coordinates) */
+function canvasFor(g: Geometry): Rect {
+  const minX = Math.min(0, g.pill.x) - PAD;
+  const minY = Math.min(0, g.pill.y) - PAD;
+  const maxX = Math.max(g.width, g.pill.x + g.pill.w) + PAD;
+  const maxY = Math.max(g.height, g.pill.y + g.pill.h) + PAD;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+const lerp = (from: number, to: number, t: number) => from + (to - from) * t;
+
+function setRect(el: SVGRectElement | null, x: number, y: number, w: number, h: number) {
+  if (!el) return;
+  el.setAttribute("x", x.toFixed(2));
+  el.setAttribute("y", y.toFixed(2));
+  el.setAttribute("width", Math.max(0, w).toFixed(2));
+  el.setAttribute("height", Math.max(0, h).toFixed(2));
+}
+
+function findTrigger(kind: HeaderPanelKind) {
+  return document.querySelector<HTMLElement>(`[data-header-trigger="${kind}"]`);
+}
+
+const returnTimers = new WeakMap<HTMLElement, number>();
+
+/** Melts the trigger into the liquid pill (see globals.css) */
+function captureTrigger(trigger: HTMLElement) {
+  window.clearTimeout(returnTimers.get(trigger));
+  trigger.dataset.liquid = "on";
+}
+
+/** Gives the trigger its own look back, after a delay, once the liquid has folded into it */
+function releaseTrigger(trigger: HTMLElement) {
+  if (trigger.dataset.liquid !== "on") return;
+  trigger.dataset.liquid = "returning";
+  window.clearTimeout(returnTimers.get(trigger));
+  returnTimers.set(
+    trigger,
+    window.setTimeout(() => {
+      if (trigger.dataset.liquid === "returning") delete trigger.dataset.liquid;
+    }, TRIGGER_RETURN_MS)
   );
 }
 
@@ -67,14 +126,65 @@ export function HeaderPanel({
    */
   pillContent?: ReactNode;
 }) {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useReducedMotion() ?? false;
+  const [isPresent, safeToRemove] = usePresence();
   // The voice panel rises out of the sidebar dock; every other panel drops from the header
   const opensUp = kind === "voice";
   const sectionRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const pillRef = useRef<SVGRectElement | null>(null);
+  const bodyRef = useRef<SVGRectElement | null>(null);
+  const geoRef = useRef<Geometry | null>(null);
   const [geo, setGeo] = useState<Geometry | null>(null);
+  // 0 = folded into the trigger, 1 = fully open
+  const progress = useMotionValue(0);
   const filterId = `siq-liquid-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const gradientId = `${filterId}-fill`;
+
+  // Draws the liquid shape and clips the content for the current progress
+  const paint = useCallback(() => {
+    const content = contentRef.current;
+    const g = geoRef.current;
+    if (reducedMotion) {
+      if (content) content.style.clipPath = "";
+      return;
+    }
+    if (!g) return;
+    const p = progress.get();
+    const c = canvasFor(g);
+    const { pill } = g;
+
+    // Body morphs between the trigger's rect and the full panel
+    const bx = lerp(pill.x, 0, p);
+    const by = lerp(pill.y, 0, p);
+    const bw = lerp(pill.w, g.width, p);
+    const bh = lerp(pill.h, g.height, p);
+    setRect(bodyRef.current, bx - c.x, by - c.y, bw, bh);
+
+    // Pill reaches toward the body so the two melt through the gap
+    const reach = STRETCH * Math.min(Math.max(p, 0), 1);
+    setRect(
+      pillRef.current,
+      pill.x - c.x,
+      (opensUp ? pill.y - reach : pill.y) - c.y,
+      pill.w,
+      pill.h + reach
+    );
+
+    // Content shows only where the body has grown
+    if (content) {
+      const top = Math.max(0, by);
+      const left = Math.max(0, bx);
+      const right = Math.max(0, g.width - (bx + bw));
+      const bottom = Math.max(0, g.height - (by + bh));
+      content.style.clipPath =
+        `inset(${top.toFixed(1)}px ${right.toFixed(1)}px ${bottom.toFixed(1)}px ${left.toFixed(1)}px ` +
+        `round ${ROUNDNESS}px)`;
+    }
+  }, [opensUp, progress, reducedMotion]);
+
+  useEffect(() => progress.on("change", paint), [progress, paint]);
 
   useLayoutEffect(() => {
     const section = sectionRef.current;
@@ -88,8 +198,7 @@ export function HeaderPanel({
       const height = content.offsetHeight;
       const s = section.getBoundingClientRect();
       const k = width > 0 && s.width > 0 ? s.width / width : 1;
-      const trigger = document.querySelector<HTMLElement>(`[data-header-trigger="${kind}"]`);
-      const t = trigger?.getBoundingClientRect();
+      const t = findTrigger(kind)?.getBoundingClientRect();
       const pill = t
         ? { x: (t.left - s.left) / k, y: (t.top - s.top) / k, w: t.width / k, h: t.height / k }
         : {
@@ -99,7 +208,11 @@ export function HeaderPanel({
             h: 32,
           };
       const next = { width, height, pill };
-      setGeo((prev) => (sameGeometry(prev, next) ? prev : next));
+      if (!sameGeometry(geoRef.current, next)) {
+        geoRef.current = next;
+        setGeo(next);
+      }
+      paint();
     };
 
     measure();
@@ -113,37 +226,50 @@ export function HeaderPanel({
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [kind, opensUp]);
+  }, [kind, opensUp, paint]);
 
-  // SVG canvas covering both the panel body and the trigger pill (plus blur margin)
-  const canvas = geo
-    ? (() => {
-        const minX = Math.min(0, geo.pill.x) - PAD;
-        const minY = Math.min(0, geo.pill.y) - PAD;
-        const maxX = Math.max(geo.width, geo.pill.x + geo.pill.w) + PAD;
-        const maxY = Math.max(geo.height, geo.pill.y + geo.pill.h) + PAD;
-        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-      })()
-    : null;
+  // Rects are created once the canvas exists; draw them before the browser paints
+  useLayoutEffect(() => {
+    paint();
+  }, [geo, paint]);
 
-  // Pill stretches toward the body so the two melt into one shape through the gap
-  const stretch = GAP + BLUR * 2;
-  const pillClosed = geo && canvas
-    ? { x: geo.pill.x - canvas.x, y: geo.pill.y - canvas.y, width: geo.pill.w, height: geo.pill.h }
-    : null;
-  const pillOpen = geo && canvas && pillClosed
-    ? opensUp
-      ? { ...pillClosed, y: pillClosed.y - stretch, height: geo.pill.h + stretch }
-      : { ...pillClosed, height: geo.pill.h + stretch }
-    : null;
-  const bodyX = canvas ? -canvas.x : 0;
-  const bodyTop = canvas ? -canvas.y : 0;
-  const bodyOpen = geo ? { y: bodyTop, height: geo.height, opacity: 1 } : null;
-  const bodyClosed = geo
-    ? opensUp
-      ? { y: bodyTop + geo.height, height: 0, opacity: 0 }
-      : { y: bodyTop, height: 0, opacity: 0 }
-    : null;
+  // Open: inflate out of the trigger. Close: fold back in, fade the liquid, then unmount.
+  useEffect(() => {
+    if (reducedMotion) {
+      if (!isPresent) safeToRemove?.();
+      return;
+    }
+    const trigger = findTrigger(kind);
+
+    if (isPresent) {
+      if (trigger) captureTrigger(trigger);
+      const grow = animate(progress, 1, OPEN_SPRING);
+      // Reopened mid-close: bring a half-faded liquid back
+      const svg = svgRef.current;
+      const show = svg ? animate(svg, { opacity: 1 }, { duration: 0.12 }) : null;
+      return () => {
+        grow.stop();
+        show?.stop();
+        if (trigger) releaseTrigger(trigger);
+      };
+    }
+
+    if (trigger) releaseTrigger(trigger);
+    let cancelled = false;
+    const fold = animate(progress, 0, CLOSE_SPRING);
+    const svg = svgRef.current;
+    const fade = svg ? animate(svg, { opacity: 0 }, LIQUID_FADE) : null;
+    void Promise.all(fade ? [fold, fade] : [fold]).then(() => {
+      if (!cancelled) safeToRemove?.();
+    });
+    return () => {
+      cancelled = true;
+      fold.stop();
+      fade?.stop();
+    };
+  }, [isPresent, kind, progress, reducedMotion, safeToRemove]);
+
+  const canvas = geo ? canvasFor(geo) : null;
 
   return (
     <motion.section
@@ -159,8 +285,9 @@ export function HeaderPanel({
       className="siq-header-panel"
       style={style}
     >
-      {canvas && pillOpen && pillClosed && bodyOpen && bodyClosed && !reducedMotion && (
+      {canvas && !reducedMotion && (
         <svg
+          ref={svgRef}
           aria-hidden="true"
           className="siq-liquid-canvas"
           width={canvas.w}
@@ -200,26 +327,8 @@ export function HeaderPanel({
             </filter>
           </defs>
           <g filter={`url(#${filterId})`}>
-            <motion.rect
-              rx={ROUNDNESS}
-              ry={ROUNDNESS}
-              fill={`url(#${gradientId})`}
-              initial={{ ...pillClosed, opacity: 1 }}
-              animate={{ ...pillOpen, opacity: 1 }}
-              exit={{ ...pillClosed, opacity: 0, transition: { ...CLOSE_SPRING, opacity: PILL_FADE } }}
-              transition={OPEN_SPRING}
-            />
-            <motion.rect
-              x={bodyX}
-              width={geo?.width ?? 0}
-              rx={ROUNDNESS}
-              ry={ROUNDNESS}
-              fill={`url(#${gradientId})`}
-              initial={bodyClosed}
-              animate={bodyOpen}
-              exit={{ ...bodyClosed, transition: CLOSE_SPRING }}
-              transition={OPEN_SPRING}
-            />
+            <rect ref={pillRef} rx={ROUNDNESS} ry={ROUNDNESS} fill={`url(#${gradientId})`} />
+            <rect ref={bodyRef} rx={ROUNDNESS} ry={ROUNDNESS} fill={`url(#${gradientId})`} />
           </g>
         </svg>
       )}
@@ -231,7 +340,7 @@ export function HeaderPanel({
           style={{ left: geo.pill.x, top: geo.pill.y, width: geo.pill.w, height: geo.pill.h }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1, transition: { duration: 0.12 } }}
-          exit={{ opacity: 0, transition: PILL_FADE }}
+          exit={{ opacity: 0, transition: LIQUID_FADE }}
         >
           {pillContent}
         </motion.span>
@@ -240,17 +349,16 @@ export function HeaderPanel({
       <motion.div
         ref={contentRef}
         className={`siq-liquid-content ${reducedMotion ? "siq-liquid-content-static" : ""}`}
-        initial={reducedMotion ? false : { opacity: 0, filter: "blur(6px)", y: opensUp ? 6 : -6 }}
+        initial={reducedMotion ? false : { opacity: 0, filter: "blur(6px)" }}
         animate={{
           opacity: 1,
           filter: "blur(0px)",
-          y: 0,
-          transition: { delay: reducedMotion ? 0 : 0.14, duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+          transition: { delay: reducedMotion ? 0 : 0.08, duration: 0.3, ease: [0.22, 1, 0.36, 1] },
         }}
         exit={
           reducedMotion
             ? undefined
-            : { opacity: 0, filter: "blur(4px)", transition: { duration: 0.12 } }
+            : { opacity: 0, filter: "blur(4px)", transition: { duration: 0.14 } }
         }
       >
         {/* Accent light spilling from the trigger side into the panel */}
